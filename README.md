@@ -79,5 +79,5 @@ int main() {
 ```
 
 ## 🔧 Build & Setup
-Download a library release and copy FiscionX.h, core.cpp, glfw3 dll, fmod dll and .lib files into your project and include FiscionCore.h on your main file.
+Download a library release and copy FiscionCore.h, core.cpp, glfw3 dll, fmod dll and .lib files into your project and include FiscionCore.h on your main file.
 After, link the .lib files with your project and run.
