@@ -1,0 +1,17 @@
+FISCION LICENSE
+
+Copyright (c) 2025, Rian Fiscina
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to use
+and integrate it into other software projects, subject to the following conditions:
+
+1. The Software may be used for personal, educational, or commercial purposes.
+2. Copying, modifying, merging, or redistributing the Software itself is prohibited.
+3. Forking, rebranding, or republishing the Software or any modified version is not allowed.
+4. Any software that uses this Software is not required to adopt this license, but must comply with its terms regarding the use of this Software.
+5. The above copyright notice must be included in any documentation or attribution when this Software is used.
+
+THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
