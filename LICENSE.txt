@@ -12,7 +12,7 @@ Permission is hereby granted, free of charge, to any person obtaining a copy
 of this Software and associated documentation files, to use and integrate it into Derivative Works, subject to the following conditions:
 
 1. The Software may be used for personal, educational, or commercial purposes.
-2. Copying, modifying, merging, or redistributing the Source is prohibited.
+2. Copying, modifying, merging, or redistributing the Source is prohibited unless requested and permitted by the Licensor.
 3. Forking, rebranding, or republishing the Software or any modified version is forbidden.
 4. Derivative Works are not required to adopt this License, but must comply with these terms regarding the use of this Software.
 5. The above copyright notice must be included in any documentation or attribution where this Software is used.
