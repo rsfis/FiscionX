@@ -1,8 +1,36 @@
-In order to test, please have sure you've already installed Visual C++ Redistributables 2015-2019 (Which is included in this directory, right in vc_redist.x64.exe).
+# FiscionX
 
-If there is any error about shader cache loading, clean up "cache/shaders", but don't delete the entire directory!
+**FiscionX** is a modern and lightweight C++ framework built on OpenGL for game development. It offers out-of-the-box support for skinned and static 3D models, spatial audio, embedded GLB model loading, and a powerful shader system — all designed for fast prototyping and efficient runtime performance.
 
-You can verify the source code in source directory. FiscionX is an library, and you can copy FiscionCore.h and core.cpp, shaders and cache directories and paste in other projects to use freely.
+## ✨ Features
 
-Thank You!
-(Written very poorly and quickly cuz im lazy)
+- **Static and Skinned Models**
+  - Load and render both static meshes and animated characters with skeletal animation.
+  
+- **GLB 3D Model Loading**
+  - Fully supports `.glb` files with embedded textures, animations, and materials.
+  
+- **Custom & Built-in Shaders**
+  - Easily create your own GLSL shaders or use pre-made shaders included with the engine.
+  
+- **Spatial Audio with FMOD**
+  - Immersive 3D sound support using FMOD for realistic audio positioning and effects.
+  
+- **Binary Caching System**
+  - Models and shaders are cached in binary format for ultra-fast loading and reloading.
+
+- **Multimedia Support**
+  - Render **images**, **text**, and **videos** as part of your scenes with high flexibility.
+  
+- **Antialiasing**
+  - Built-in antialiasing for clean, high-quality visuals.
+
+## 🛠 Dependencies
+
+- OpenGL 4
+- FMOD
+- TinyGLTF
+- stb_image
+
+## 🔧 Build & Setup
+Download a library release and copy FiscionX.h and core.cpp into your project and include on your main file.
