@@ -26,20 +26,17 @@
   - Built-in antialiasing for clean, high-quality visuals.
 
 ## 🛠 Dependencies
-
-- OpenGL 4
-- FMOD
-- TinyGLTF
-- stb_image
+No dependencies needed! Everything is included. Just one single header.
 
 ## Code example for a simple window
-'''cpp
+```cpp
 #include <FiscionX.h>
 
 FiscionX::Camera FiscionX::Core::Camera;
 
 void update() {
-    FiscionX::Core::ClockTick(); FiscionX::Core::Camera.update(FiscionX::Core::Window, FiscionX::Core::deltaTime);
+    FiscionX::Core::ClockTick();
+    FiscionX::Core::Camera.update(FiscionX::Core::Window, FiscionX::Core::deltaTime);
 }
 
 void draw() {
@@ -75,8 +72,8 @@ int main() {
     system("pause");
     return 0;
 }
-'''
+```
 
 ## 🔧 Build & Setup
-Download a library release and copy FiscionX.h, core.cpp, glfw3 dll, fmod dll and .lib files into your project and include FiscionCore.h on your main file.
+Download a library release and copy FiscionCore.h, core.cpp, glfw3 dll, fmod dll and .lib files into your project and include FiscionCore.h on your main file.
 After, link the .lib files with your project and run.
