@@ -1,3 +1,7 @@
+FISCION LICENSE
+
+Copyright (c) 2025, Rian Fiscina
+
 Definitions:
   1. "License" shall mean this terms and conditions.
   2. "Licensor" shall mean the owner of the intelectual property of this Software.
