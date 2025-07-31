@@ -39,7 +39,8 @@
 FiscionX::Camera FiscionX::Core::Camera;
 
 void update() {
-    FiscionX::Core::ClockTick(); FiscionX::Core::Camera.update(FiscionX::Core::Window, FiscionX::Core::deltaTime);
+    FiscionX::Core::ClockTick();
+    FiscionX::Core::Camera.update(FiscionX::Core::Window, FiscionX::Core::deltaTime);
 }
 
 void draw() {
