@@ -1,6 +1,6 @@
 #include "FiscionCore.h"
 #define PROJECT_VERSION "0.6.5"
-//testezeira
+
 FiscionX::Light* dirLight;
 FiscionX::Light* pointLight;
 FiscionX::Light* spotLight;
