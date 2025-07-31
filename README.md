@@ -33,7 +33,7 @@
 - stb_image
 
 ## Code example for a simple window
-'''cpp
+```cpp
 #include <FiscionX.h>
 
 FiscionX::Camera FiscionX::Core::Camera;
@@ -75,7 +75,7 @@ int main() {
     system("pause");
     return 0;
 }
-'''
+```
 
 ## 🔧 Build & Setup
 Download a library release and copy FiscionX.h, core.cpp, glfw3 dll, fmod dll and .lib files into your project and include FiscionCore.h on your main file.
