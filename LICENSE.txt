@@ -3,9 +3,9 @@ FISCION LICENSE
 Copyright (c) 2025, Rian Fiscina
 
 Definitions:
-  1. "License" shall mean this terms and conditions.
-  2. "Licensor" shall mean the owner of the intelectual property of this Software.
-  3. "Derivative works" shall mean every other software that uses this Software.
+  1. "License" shall mean these terms and conditions.
+  2. "Licensor" shall mean the owner of the intellectual property of this Software.
+  3. "Derivative Works" shall mean every other software that integrates, links to, or depends on this Software.
   4. "Source" shall mean the source code and its files.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -14,7 +14,8 @@ of this Software and associated documentation files, to use and integrate it int
 1. The Software may be used for personal, educational, or commercial purposes.
 2. Copying, modifying, merging, or redistributing the Source is prohibited.
 3. Forking, rebranding, or republishing the Software or any modified version is forbidden.
-4. Any Derivative Work that uses this Software is not required to adopt this License, but must comply with its terms regarding the use of this Software.
+4. Derivative Works are not required to adopt this License, but must comply with these terms regarding the use of this Software.
 5. The above copyright notice must be included in any documentation or attribution where this Software is used.
 
-THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS OF THE SOFTWARE BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS OF THIS SOFTWARE BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
