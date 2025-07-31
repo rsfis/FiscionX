@@ -26,11 +26,7 @@
   - Built-in antialiasing for clean, high-quality visuals.
 
 ## 🛠 Dependencies
-
-- OpenGL 4
-- FMOD
-- TinyGLTF
-- stb_image
+No dependencies needed! Everything is included. Just one single header.
 
 ## Code example for a simple window
 ```cpp
