@@ -8,7 +8,7 @@ and integrate it into other software projects, subject to the following conditio
 
 1. The Software may be used for personal, educational, or commercial purposes.
 2. Copying, modifying, merging, or redistributing the Software itself is prohibited.
-3. Forking, rebranding, or republishing the Software or any modified version is not allowed.
+3. Forking, rebranding, or republishing the Software or any modified version is not forbidden.
 4. Any software that uses this Software is not required to adopt this license, but must comply with its terms regarding the use of this Software.
 5. The above copyright notice must be included in any documentation or attribution when this Software is used.
 
