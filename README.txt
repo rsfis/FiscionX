@@ -32,6 +32,49 @@
 - TinyGLTF
 - stb_image
 
+## Code example for a simple window
+'''cpp
+#include <FiscionX.h>
+
+void update() {
+    FiscionX::Core::ClockTick(); FiscionX::Core::Camera.update(FiscionX::Core::Window, FiscionX::Core::deltaTime);
+}
+
+void draw() {
+    glm::mat4 view = FiscionX::Core::Camera.GetView();
+    glm::mat4 projection = glm::perspective(
+        glm::radians(FiscionX::Core::Camera.fov),
+        (float)FiscionX::Core::SCREEN_WIDTH / FiscionX::Core::SCREEN_HEIGHT,
+        FiscionX::Core::NEAR_PLANE,
+        FiscionX::Core::FAR_PLANE
+    );
+    glm::mat4 viewProj = projection * view;
+
+    FiscionX::Core::RenderAllShadowPasses(view, projection, viewProj);
+    FiscionX::Core::Draw::ClearBackground(0.1f, 0.1f, 0.1f, 1.0f);
+    FiscionX::Core::SortModels();
+
+    //Your draw function
+
+    FiscionX::Core::Draw::SwapBuffers();
+}
+
+int main() {
+    FiscionX::Core::Set3DSettings(4096, 4096, 4096, 15.0f, 0.01f, 100.0f);
+    FiscionX::Core::NewWindow(1280, 720, "FiscionX");
+
+    FiscionX::Core::CreateAllShadowMaps();
+
+    while (!glfwWindowShouldClose(FiscionX::Core::Window)) {
+        update();
+        draw();
+    }
+    FiscionX::Core::Terminate();
+    system("pause");
+    return 0;
+}
+'''
+
 ## 🔧 Build & Setup
-Download a library release and copy FiscionX.h, core.cpp, glfw3 dll, fmod dll and .lib files into your project and include FiscionX.h on your main file.
+Download a library release and copy FiscionX.h, core.cpp, glfw3 dll, fmod dll and .lib files into your project and include FiscionCore.h on your main file.
 After, link the .lib files with your project and run.
