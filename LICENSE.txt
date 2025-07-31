@@ -9,8 +9,7 @@ Definitions:
   4. "Source" shall mean the source code and its files.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
-of this Software and associated documentation files, to use
-and integrate it into Derivative Works, subject to the following conditions:
+of this Software and associated documentation files, to use and integrate it into Derivative Works, subject to the following conditions:
 
 1. The Software may be used for personal, educational, or commercial purposes.
 2. Copying, modifying, merging, or redistributing the Source is prohibited.
