@@ -36,6 +36,8 @@
 '''cpp
 #include <FiscionX.h>
 
+FiscionX::Camera FiscionX::Core::Camera;
+
 void update() {
     FiscionX::Core::ClockTick(); FiscionX::Core::Camera.update(FiscionX::Core::Window, FiscionX::Core::deltaTime);
 }
