@@ -14,21 +14,21 @@
 #include <math.h>
 
 #define GLM_ENABLE_EXPERIMENTAL
-#include <glad/glad.h>
-#include <GLFW/glfw3.h>
-#include <glm/glm.hpp>
-#include <glm/gtc/type_ptr.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/type_ptr.hpp>
-#include <glm/gtx/quaternion.hpp>
-#include <glm/gtx/euler_angles.hpp>
+#include "dependencies/glad/glad.h"
+#include "dependencies/GLFW/glfw3.h"
+#include "dependencies/glm/glm.hpp"
+#include "dependencies/glm/gtc/type_ptr.hpp"
+#include "dependencies/glm/gtc/matrix_transform.hpp"
+//#include "dependencies/glm/gtc/type_ptr.hpp"
+#include "dependencies/glm/gtx/quaternion.hpp"
+#include "dependencies/glm/gtx/euler_angles.hpp"
 
-#include <fmod/inc/fmod.hpp>
-#include <fmod/inc/fmod_errors.h>
+#include "dependencies/fmod/inc/fmod.hpp"
+#include "dependencies/fmod/inc/fmod_errors.h"
 
-#include <stb/stb_image.h>
-#include <stb/stb_image_write.h>
-#include <tinygltf/tiny_gltf.h>
+#include "dependencies/stb/stb_image.h"
+#include "dependencies/stb/stb_image_write.h"
+#include "dependencies/tinygltf/tiny_gltf.h"
 
 #define 	FISCIONX_KEY_SPACE   32
 #define 	FISCIONX_KEY_APOSTROPHE   39 /* ' */
