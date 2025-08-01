@@ -30,7 +30,7 @@ No dependencies needed! Everything is included. Just one single header.
 
 ## Code example for a simple window
 ```cpp
-#include <FiscionX.h>
+#include "FiscionCore.h"
 
 FiscionX::Camera FiscionX::Core::Camera;
 
