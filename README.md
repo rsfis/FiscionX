@@ -75,7 +75,7 @@ int main() {
 ```
 
 ## 🔧 Build & Setup
-- Download the framework release and paste it in the include folder of your compiler.
+- Download the framework release and paste it in your project sourcee folder.
 - Paste fmod.dll, fmodL.dll and glfw3.dll in the same directory as your project release folder.
 - Paste fmod_vc.lib and fmodL_vc.lib in your project and make sure you linked these dinamic libraries into your project configurations
 - Include FiscionCore.h.
