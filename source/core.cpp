@@ -246,21 +246,15 @@ GLuint FiscionX::UI::Image::shader = 0; // Define global IMAGE shader variable
     }
 
     void FiscionX::Camera::updateVectors() {
-        glm::vec3 dir;
-        dir.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
-        dir.y = sin(glm::radians(pitch));
-        dir.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
-        front = glm::normalize(dir);
-        right = glm::normalize(glm::cross(front, glm::vec3(0, 1, 0)));
-        up = glm::normalize(glm::cross(right, front));
-    }
-
-    void FiscionX::Camera::update(GLFWwindow* window, float dt) {
-        float vel = speed * dt;
-        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) position += front * vel;
-        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) position -= front * vel;
-        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) position -= right * vel;
-        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) position += right * vel;
+        if (canLook) {
+            glm::vec3 dir;
+            dir.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
+            dir.y = sin(glm::radians(pitch));
+            dir.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
+            front = glm::normalize(dir);
+            right = glm::normalize(glm::cross(front, glm::vec3(0, 1, 0)));
+            up = glm::normalize(glm::cross(right, front));
+        }
     }
 
 // =================== Audio ====================

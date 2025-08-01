@@ -203,12 +203,12 @@ struct FiscionX {
 		float     speed = 2.0f;
 		float     sensitivity = 0.1f;
 		float     fov = 60.0f;
+		bool      canLook = true;
 
 		Camera();
 		glm::mat4 GetView();
 		void ProcessMouse(float xoffset, float yoffset);
 		void updateVectors();
-		void update(GLFWwindow* window, float dt);
 	};
 
 	struct AudioSystem {

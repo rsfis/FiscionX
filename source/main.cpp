@@ -21,7 +21,12 @@ void update() {
 
     skinnedModel->update(FiscionX::Core::deltaTime);
 
-    FiscionX::Core::Camera.update(FiscionX::Core::Window, FiscionX::Core::deltaTime);
+    // Camera
+    float camVel = FiscionX::Core::Camera.speed * FiscionX::Core::deltaTime;
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_W) == true) FiscionX::Core::Camera.position += FiscionX::Core::Camera.front * camVel;
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_S) == true) FiscionX::Core::Camera.position -= FiscionX::Core::Camera.front * camVel;
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_A) == true) FiscionX::Core::Camera.position -= FiscionX::Core::Camera.right * camVel;
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_D) == true) FiscionX::Core::Camera.position += FiscionX::Core::Camera.right * camVel;
 }
 
 void draw() {
