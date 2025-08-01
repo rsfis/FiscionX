@@ -19,7 +19,7 @@
 #include "dependencies/glm/glm.hpp"
 #include "dependencies/glm/gtc/type_ptr.hpp"
 #include "dependencies/glm/gtc/matrix_transform.hpp"
-//#include "dependencies/glm/gtc/type_ptr.hpp"
+#include "dependencies/glm/gtc/type_ptr.hpp"
 #include "dependencies/glm/gtx/quaternion.hpp"
 #include "dependencies/glm/gtx/euler_angles.hpp"
 
