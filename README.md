@@ -32,8 +32,6 @@ No dependencies needed! Everything is included. Just one single header.
 ```cpp
 #include "FiscionCore.h"
 
-FiscionX::Camera FiscionX::Core::Camera;
-
 void update() {
     FiscionX::Core::ClockTick();
 
