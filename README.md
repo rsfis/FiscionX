@@ -22,6 +22,9 @@
 - **Multimedia Support**
   - Render **images**, **text**, and **videos** as part of your scenes with high flexibility.
   
+- **Physics**
+  - Simulate realistic physics with bullet3 library.
+  
 - **Antialiasing**
   - Built-in antialiasing for clean, high-quality visuals.
 
