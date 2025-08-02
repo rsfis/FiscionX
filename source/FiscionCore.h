@@ -30,6 +30,8 @@
 #include "dependencies/stb/stb_image_write.h"
 #include "dependencies/tinygltf/tiny_gltf.h"
 
+#include "dependencies/bullet/btBulletDynamicsCommon.h"
+
 #define 	FISCIONX_KEY_SPACE   32
 #define 	FISCIONX_KEY_APOSTROPHE   39 /* ' */
 #define 	FISCIONX_KEY_COMMA   44 /* , */
@@ -365,6 +367,15 @@ struct FiscionX {
 
 	struct Input {
 		static bool GetKeyPressed(int key);
+	};
+
+	struct Physics {
+		static btBroadphaseInterface* broadphase;
+		static btDefaultCollisionConfiguration* collisionConfig;
+		static btCollisionDispatcher* dispatcher;
+		static btSequentialImpulseConstraintSolver* solver;
+		static btDiscreteDynamicsWorld* DynamicWorld;
+		static void CreatePhysicsWorld(btVector3 gravity);
 	};
 
 	struct Core {
