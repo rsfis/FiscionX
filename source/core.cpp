@@ -24,6 +24,8 @@ glm::vec3     FiscionX::Core::AMBIENT_LIGHT_GROUNDCOLOR = { 0.05f, 0.05f, 0.07f 
 GLuint FiscionX::Core::depthMapFBO;
 GLuint FiscionX::Core::depthMap;
 
+FiscionX::Camera FiscionX::Core::Camera;
+
 FiscionX::AudioSystem FiscionX::Core::AudioSystem;
 
 std::vector<FiscionX::Sound> FiscionX::Core::AllSounds;
