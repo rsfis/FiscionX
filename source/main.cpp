@@ -14,8 +14,6 @@ FiscionX::Model* kratosStaticModel;
 
 FiscionX::UI::Image* image_didi;
 
-FiscionX::Camera FiscionX::Core::Camera;
-
 void update() {
     FiscionX::Core::ClockTick();
     skinnedModel->update(FiscionX::Core::deltaTime);
