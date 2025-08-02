@@ -1502,6 +1502,23 @@ bool FiscionX::Input::GetKeyPressed(int key) {
     return false;
 }
 
+// ================ Physics ===================
+btBroadphaseInterface* FiscionX::Physics::broadphase = nullptr;
+btDefaultCollisionConfiguration* FiscionX::Physics::collisionConfig = nullptr;
+btCollisionDispatcher* FiscionX::Physics::dispatcher = nullptr;
+btSequentialImpulseConstraintSolver* FiscionX::Physics::solver = nullptr;
+btDiscreteDynamicsWorld* FiscionX::Physics::DynamicWorld = nullptr;
+
+void FiscionX::Physics::CreatePhysicsWorld(btVector3 gravity) {
+    FiscionX::Physics::broadphase = new btDbvtBroadphase();
+    FiscionX::Physics::collisionConfig = new btDefaultCollisionConfiguration();
+    FiscionX::Physics::dispatcher = new btCollisionDispatcher(collisionConfig);
+    FiscionX::Physics::solver = new btSequentialImpulseConstraintSolver();
+
+    FiscionX::Physics::DynamicWorld = new btDiscreteDynamicsWorld(dispatcher, broadphase, solver, collisionConfig);
+    FiscionX::Physics::DynamicWorld->setGravity(gravity);
+}
+
 // =================== CORE ===================
     void FiscionX::Core::CreateShadowMap(ShadowMap& sm) {
         glGenFramebuffers(1, &sm.fbo);

@@ -1,4 +1,4 @@
-#include "FiscionCore.h"
+Ôªø#include "FiscionCore.h"
 #define PROJECT_VERSION "0.6.5"
 
 FiscionX::Light* dirLight;
@@ -18,15 +18,15 @@ FiscionX::Camera FiscionX::Core::Camera;
 
 void update() {
     FiscionX::Core::ClockTick();
-
     skinnedModel->update(FiscionX::Core::deltaTime);
 
-    // Camera
+    FiscionX::Physics::DynamicWorld->stepSimulation(FiscionX::Core::deltaTime);
+
     float camVel = FiscionX::Core::Camera.speed * FiscionX::Core::deltaTime;
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_W) == true) FiscionX::Core::Camera.position += FiscionX::Core::Camera.front * camVel;
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_S) == true) FiscionX::Core::Camera.position -= FiscionX::Core::Camera.front * camVel;
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_A) == true) FiscionX::Core::Camera.position -= FiscionX::Core::Camera.right * camVel;
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_D) == true) FiscionX::Core::Camera.position += FiscionX::Core::Camera.right * camVel;
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_W)) FiscionX::Core::Camera.position += FiscionX::Core::Camera.front * camVel;
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_S)) FiscionX::Core::Camera.position -= FiscionX::Core::Camera.front * camVel;
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_A)) FiscionX::Core::Camera.position -= FiscionX::Core::Camera.right * camVel;
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_D)) FiscionX::Core::Camera.position += FiscionX::Core::Camera.right * camVel;
 }
 
 void draw() {
@@ -55,6 +55,7 @@ void draw() {
 
 int main() {
     FiscionX::Core::Set3DSettings(4096, 4096, 4096, 15.0f, 0.01f, 100.0f);
+    FiscionX::Physics::CreatePhysicsWorld(btVector3(0, -9.81f, 0));
     FiscionX::Core::NewWindow(1280, 720, "FiscionX");
 
     dirLight = new FiscionX::Light();
@@ -97,7 +98,7 @@ int main() {
 
     FiscionX::Core::CreateAllShadowMaps();
 
-    // Texto; Video; Cache para Modelos; Filtro Anisotropico e TAA; OptimizaÁ„o; GUI; Colisıes Capsule e Box; DetecÁ„o de Colisıes por Malha (Mesh Colision); SeparaÁ„o; Particulas; FÌsica;
+    // Texto; Video; Cache para Modelos; Filtro Anisotropico e TAA; Optimiza√ß√£o; GUI; Colis√µes Capsule e Box; Detec√ß√£o de Colis√µes por Malha (Mesh Colision); Separa√ß√£o; Particulas; F√≠sica;
 
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb",
