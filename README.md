@@ -75,7 +75,6 @@ int main() {
         draw();
     }
     FiscionX::Core::Terminate();
-    system("pause");
     return 0;
 }
 ```
