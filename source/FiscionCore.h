@@ -375,6 +375,7 @@ struct FiscionX {
 		static btCollisionDispatcher* dispatcher;
 		static btSequentialImpulseConstraintSolver* solver;
 		static btDiscreteDynamicsWorld* DynamicWorld;
+
 		static void CreatePhysicsWorld(btVector3 gravity);
 	};
 
