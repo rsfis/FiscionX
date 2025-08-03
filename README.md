@@ -1,6 +1,6 @@
 # FiscionX
 
-**FiscionX** is a modern and lightweight C++ framework built on OpenGL for game development. It offers out-of-the-box support for skinned and static 3D models, spatial audio, embedded GLB model loading, and a powerful shader system — all designed for fast prototyping and efficient runtime performance.
+**FiscionX** is a modern and lightweight C++ framework built on OpenGL for game development. It offers out-of-the-box support for skinned and static 3D models, spatial audio, embedded GLB model loading, physics, and a powerful shader system — all designed for fast prototyping and efficient runtime performance.
 
 ## ✨ Features
 
@@ -21,6 +21,9 @@
 
 - **Multimedia Support**
   - Render **images**, **text**, and **videos** as part of your scenes with high flexibility.
+  
+- **Physics**
+  - Simulate realistic physics with bullet3 library.
   
 - **Antialiasing**
   - Built-in antialiasing for clean, high-quality visuals.
@@ -72,7 +75,6 @@ int main() {
         draw();
     }
     FiscionX::Core::Terminate();
-    system("pause");
     return 0;
 }
 ```
