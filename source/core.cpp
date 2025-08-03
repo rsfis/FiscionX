@@ -26,6 +26,12 @@ GLuint FiscionX::Core::depthMap;
 
 FiscionX::Camera FiscionX::Core::Camera;
 
+btBroadphaseInterface* FiscionX::Physics::broadphase;
+btDefaultCollisionConfiguration* FiscionX::Physics::collisionConfig;
+btCollisionDispatcher* FiscionX::Physics::dispatcher;
+btSequentialImpulseConstraintSolver* FiscionX::Physics::solver;
+btDiscreteDynamicsWorld* FiscionX::Physics::DynamicWorld;
+
 FiscionX::AudioSystem FiscionX::Core::AudioSystem;
 
 std::vector<FiscionX::Sound> FiscionX::Core::AllSounds;
@@ -1505,20 +1511,14 @@ bool FiscionX::Input::GetKeyPressed(int key) {
 }
 
 // ================ Physics ===================
-btBroadphaseInterface* FiscionX::Physics::broadphase = nullptr;
-btDefaultCollisionConfiguration* FiscionX::Physics::collisionConfig = nullptr;
-btCollisionDispatcher* FiscionX::Physics::dispatcher = nullptr;
-btSequentialImpulseConstraintSolver* FiscionX::Physics::solver = nullptr;
-btDiscreteDynamicsWorld* FiscionX::Physics::DynamicWorld = nullptr;
-
 void FiscionX::Physics::CreatePhysicsWorld(btVector3 gravity) {
-    FiscionX::Physics::broadphase = new btDbvtBroadphase();
-    FiscionX::Physics::collisionConfig = new btDefaultCollisionConfiguration();
-    FiscionX::Physics::dispatcher = new btCollisionDispatcher(collisionConfig);
-    FiscionX::Physics::solver = new btSequentialImpulseConstraintSolver();
+    broadphase = new btDbvtBroadphase();
+    collisionConfig = new btDefaultCollisionConfiguration();
+    dispatcher = new btCollisionDispatcher(collisionConfig);
+    solver = new btSequentialImpulseConstraintSolver();
 
-    FiscionX::Physics::DynamicWorld = new btDiscreteDynamicsWorld(dispatcher, broadphase, solver, collisionConfig);
-    FiscionX::Physics::DynamicWorld->setGravity(gravity);
+    DynamicWorld = new btDiscreteDynamicsWorld(dispatcher, broadphase, solver, collisionConfig);
+    DynamicWorld->setGravity(gravity);
 }
 
 // =================== CORE ===================
