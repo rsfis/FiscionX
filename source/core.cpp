@@ -1453,12 +1453,15 @@ void FiscionX::generateTangents(
                 glUniformMatrix4fv(glGetUniformLocation(shader, ("lightSpaceMatrices[" + idx + "]").c_str()), 1, GL_FALSE, glm::value_ptr(sm.lightSpaceMatrix));
             }
         }
-        
-        updateOcclusion(view * projection);
-        glm::mat4 baseMatrix =
+         glm::mat4 baseMatrix =
             glm::translate(glm::mat4(1.0f), position)
             * glm::eulerAngleXYZ(rotation.y, rotation.x, rotation.z)
             * glm::scale(glm::mat4(1.0f), scale);
+        
+        updateOcclusion(view * projection);
+		if (physicsSyncTransformMatrix != glm::mat4(1.0f)) {
+            baseMatrix = glm::scale(physicsSyncTransformMatrix, scale);
+        }
 
         std::vector<std::pair<float, const SubMesh*>> transparentMeshes;
 

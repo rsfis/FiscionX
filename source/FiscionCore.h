@@ -310,6 +310,7 @@ struct FiscionX {
 	struct Model {
 		std::vector<SubMesh> meshes;
 		glm::vec3 position, rotation, scale;
+		glm::mat4 physicsSyncTransformMatrix = glm::mat4(1.0f);
 		bool isSkinned = false;
 
 		tinygltf::Model gltfModel;
