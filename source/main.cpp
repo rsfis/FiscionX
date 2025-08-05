@@ -1,5 +1,5 @@
 ﻿#include "FiscionCore.h"
-#define PROJECT_VERSION "0.6.5"
+#define PROJECT_VERSION "0.8.0"
 
 FiscionX::Light* dirLight;
 FiscionX::Light* pointLight;
@@ -21,10 +21,10 @@ void update() {
     FiscionX::Core::ClockTick();
     skinnedModel->update(FiscionX::Core::deltaTime);
 
+    FiscionX::Physics::DynamicWorld->stepSimulation(FiscionX::Core::deltaTime);
+
     capsuleBody->activate();
     kratosStaticModel->syncTransformWithBody(capsuleBody, FiscionX::Vector3(0, -1.25f, 0), FiscionX::Vector3(0, 0, 0));
-
-    FiscionX::Physics::DynamicWorld->stepSimulation(FiscionX::Core::deltaTime);
     
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_F)) {
 		capsuleBody->applyCentralForce(FiscionX::Vector3(2, 0, 0));
@@ -111,7 +111,7 @@ int main() {
 
     FiscionX::Core::CreateAllShadowMaps();
 
-    // Texto; Video; Cache para Modelos; Filtro Anisotropico e TAA; Optimização; GUI; Colisões Capsule e Box; Detecção de Colisões por Malha (Mesh Colision); Separação; Particulas; Física;
+    // Texto; Video; Cache para Modelos; Filtro Anisotropico e TAA; Optimização; GUI; Detecção de Colisões por Malha (Mesh Colision); Separação; Particulas;
 
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb",
@@ -147,8 +147,8 @@ int main() {
     // exSound->useEffect(FMOD_DSP_TYPE_);
     // exSound->dsp->setParameterFloat(TYPE, AMOUNT);
 
-    // === Corpo do chão ===
-	FiscionX::Physics::Shape groundShape = FiscionX::Physics::CreateBoxShape(FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(10.0f, 0.1f, 10.0f), 0.0f);
+    // Physics
+	FiscionX::Physics::Shape groundShape = FiscionX::Physics::CreateBoxShape(FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(10.0f, 0.01f, 10.0f), 0.0f);
 	groundBody = new FiscionX::Physics::Rigidbody(groundShape);
     FiscionX::Physics::DynamicWorld->addRigidBody(groundBody->body);
 
