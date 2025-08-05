@@ -326,7 +326,7 @@ FMOD::System* FMOD_SYS;
         FMOD_SYS->set3DListenerAttributes(0, &listenerPos, &velocity, &forward, &up);
     }
 
-    FiscionX::Sound::Sound(const char* path, bool loop, bool threedimensional, glm::vec3 position,
+    FiscionX::Sound::Sound(const char* path, bool loop, bool threedimensional, FiscionX::Vector3 position,
     float minDistance, float maxDistance, float vol) {
         int mode = threedimensional ? FMOD_3D_LINEARROLLOFF : FMOD_2D;
         FMOD_SYS->createSound(path, mode, nullptr, &audiofont);
@@ -425,7 +425,7 @@ void FiscionX::generateTangents(
         return boneTransforms;
     }
 
-    FiscionX::Model::Model(const std::string& path, glm::vec3 pos, glm::vec3 rot, glm::vec3 scl)
+    FiscionX::Model::Model(const std::string& path, FiscionX::Vector3 pos, FiscionX::Vector3 rot, FiscionX::Vector3 scl)
         : position(pos), rotation(rot), scale(scl)
     {
         init(path);
@@ -1267,9 +1267,9 @@ void FiscionX::generateTangents(
     }
 
     void FiscionX::Model::updateOcclusion(const glm::mat4& viewProj) {
-        glm::mat4 baseMatrix = glm::translate(glm::mat4(1.0f), position)
+        glm::mat4 baseMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(position.x, position.y, position.z))
             * glm::eulerAngleXYZ(rotation.y, rotation.x, rotation.z)
-            * glm::scale(glm::mat4(1.0f), scale);
+            * glm::scale(glm::mat4(1.0f), glm::vec3(scale.x, scale.y, scale.z));
 
         for (size_t i = 0; i < meshes.size(); ++i) {
             const auto& mesh = meshes[i];
@@ -1483,13 +1483,13 @@ void FiscionX::generateTangents(
             }
         }
          glm::mat4 baseMatrix =
-            glm::translate(glm::mat4(1.0f), position)
+            glm::translate(glm::mat4(1.0f), glm::vec3(position.x, position.y, position.z))
             * glm::eulerAngleXYZ(rotation.y, rotation.x, rotation.z)
-            * glm::scale(glm::mat4(1.0f), scale);
+            * glm::scale(glm::mat4(1.0f), glm::vec3(scale.x, scale.y, scale.z));
         
         updateOcclusion(view * projection);
 		if (physicsSyncTransformMatrix != glm::mat4(1.0f)) {
-            baseMatrix = glm::scale(physicsSyncTransformMatrix, scale);
+            baseMatrix = glm::scale(physicsSyncTransformMatrix, glm::vec3(scale.x, scale.y, scale.z));
         }
 
         std::vector<std::pair<float, const SubMesh*>> transparentMeshes;
@@ -1568,16 +1568,12 @@ void FiscionX::Physics::CreatePhysicsWorld(FiscionX::Vector3 gravity) {
     DynamicWorld = new btDiscreteDynamicsWorld(dispatcher, broadphase, solver, collisionConfig);
     DynamicWorld->setGravity(btVector3(gravity.x, gravity.y, gravity.z));
 
-    std::cout << "dynamic world configurated" << "\n";
     debugShader = LoadShader(vertexDebug, fragmentDebug);
-    std::cout << "cratred shader" << "\n";
     debugDrawer = new GLDebugDrawer();
     debugDrawer->setDebugMode(
         btIDebugDraw::DBG_DrawWireframe | btIDebugDraw::DBG_DrawAabb
     );
-    std::cout << "set debug mode" << "\n";
     FiscionX::Physics::DynamicWorld->setDebugDrawer(debugDrawer);
-    std::cout << "added debug drawer to dynamic world" << "\n";
 }
 
 void FiscionX::Physics::GLDebugDrawer::drawLine(const btVector3& from, const btVector3& to, const btVector3& color) {
@@ -2157,8 +2153,8 @@ void FiscionX::Core::SortModels() {
             return !aBlend && bBlend;
 
         if (aBlend && bBlend) {
-            float da = glm::length2(a->position - FiscionX::Core::Camera.position);
-            float db = glm::length2(b->position - FiscionX::Core::Camera.position);
+            float da = glm::length2(glm::vec3(a->position.x, a->position.y, a->position.z) - FiscionX::Core::Camera.position);
+            float db = glm::length2(glm::vec3(b->position.x, b->position.y, b->position.z) - FiscionX::Core::Camera.position);
             return da > db;
         }
 

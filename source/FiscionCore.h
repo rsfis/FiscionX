@@ -232,7 +232,7 @@ struct FiscionX {
 	struct Sound {
 		FMOD::Sound* audiofont;
 		bool paused = false;
-		glm::vec3 pos;
+		FiscionX::Vector3 pos;
 		float minDist;
 		float maxDist;
 		bool looping;
@@ -240,7 +240,7 @@ struct FiscionX {
 		FMOD::Channel* curr_channel;
 		FMOD::DSP* dsp;
 
-		Sound(const char* path, bool loop = false, bool threedimensional = false, glm::vec3 position = glm::vec3(0, 0, 0),
+		Sound(const char* path, bool loop = false, bool threedimensional = false, FiscionX::Vector3 position = FiscionX::Vector3(0, 0, 0),
 			float minDistance = 1.0f, float maxDistance = 1000.0f, float vol = 1.0f);
 		void updateValues();
 		void useEffect(FMOD_DSP_TYPE type);
@@ -387,7 +387,7 @@ struct FiscionX {
 
 	struct Model {
 		std::vector<SubMesh> meshes;
-		glm::vec3 position, rotation, scale;
+		FiscionX::Vector3 position, rotation, scale;
 		glm::mat4 physicsSyncTransformMatrix = glm::mat4(1.0f);
 		bool isSkinned = false;
 
@@ -424,7 +424,7 @@ struct FiscionX {
 		float boundingRadius = 1.0f;
 
 		const std::vector<glm::mat4>& getBoneTransforms() const;
-		Model(const std::string& path, glm::vec3 pos, glm::vec3 rot, glm::vec3 scl);
+		Model(const std::string& path, Vector3 pos, Vector3 rot, Vector3 scl);
 		void playAnim(const std::string& name, bool repeat, const std::string& next = "");
 		void update(float deltaTime);
 		GLuint getBaseColorTexture(const tinygltf::Model& model, int materialIndex);

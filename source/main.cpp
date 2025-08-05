@@ -115,34 +115,34 @@ int main() {
 
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb",
-        glm::vec3(0, 0, 0),
-        glm::vec3(0),
-        glm::vec3(0.01f)
+        FiscionX::Vector3(0, 0, 0),
+        FiscionX::Vector3(0, 0, 0),
+        FiscionX::Vector3(0.01f, 0.01f, 0.01f)
     );
     kratosStaticModel = new FiscionX::Model(
         "assets/models/kratos.glb",
-        glm::vec3(0, 0, 7.0f),
-        glm::vec3(0),
-        glm::vec3(0.1f)
+        FiscionX::Vector3(0, 0, 7.0f),
+        FiscionX::Vector3(0),
+        FiscionX::Vector3(0.1f, 0.1f, 0.1f)
     );
     boxModel = new FiscionX::Model(
         "assets/models/wall.glb",
-        glm::vec3(0, 0, 4.2f),
-        glm::vec3(0),
-        glm::vec3(0.5f)
+        FiscionX::Vector3(0, 0, 4.2f),
+        FiscionX::Vector3(0),
+        FiscionX::Vector3(0.5f, 0.5f, 0.5f)
     );
     skinnedModel = new FiscionX::Model(
         "assets/models/camel.glb",
-        glm::vec3(0.4f, 0, 1.5f),
-        glm::vec3(1, 0, 0),
-        glm::vec3(1)
+        FiscionX::Vector3(0.4f, 0, 1.5f),
+        FiscionX::Vector3(1, 0, 0),
+        FiscionX::Vector3(1, 1, 1)
     );
 
     skinnedModel->playAnim("Armature|Idle_01", true);
 
     image_didi = new FiscionX::UI::Image("assets/images/didi.png", 0.5f, 0.5f);
 
-    exSound = new FiscionX::Sound("assets/audio/music/K.mp3", false, true, glm::vec3(0.5f, 0.3f, 0.0f), 2.0f, 10.0f, 1.0f);
+    exSound = new FiscionX::Sound("assets/audio/music/K.mp3", false, true, FiscionX::Vector3(0.5f, 0.3f, 0.0f), 2.0f, 10.0f, 1.0f);
     exSound->play();
     // exSound->useEffect(FMOD_DSP_TYPE_);
     // exSound->dsp->setParameterFloat(TYPE, AMOUNT);
