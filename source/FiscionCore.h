@@ -173,9 +173,15 @@ struct File {
 };
 
 struct FiscionX {
+	struct Vector3 {
+		float x, y, z;
+		Vector3(float _x = 0, float _y = 0, float _z = 0) : x(_x), y(_y), z(_z) {}
+	};
+
 	struct Math {
 		static float getDistance3D(glm::vec3 pos1, glm::vec3 pos2);
 	};
+
 	struct UI{
 		struct Image {
 			GLuint texture;
@@ -274,6 +280,78 @@ struct FiscionX {
 		Light();
 	};
 
+	struct Physics {
+		struct GLDebugDrawer : public btIDebugDraw {
+			int m_debugMode = DBG_DrawWireframe;
+
+			void drawLine(const btVector3& from, const btVector3& to, const btVector3& color) override;
+
+			void setDebugMode(int debugMode) override;
+
+			int getDebugMode() const override;
+
+			// Métodos obrigatórios da classe base
+			void drawContactPoint(const btVector3&, const btVector3&, btScalar, int, const btVector3&) override;
+			void reportErrorWarning(const char* warningString) override;
+			void draw3dText(const btVector3&, const char*) override;
+		};
+
+		static btBroadphaseInterface* broadphase;
+		static btDefaultCollisionConfiguration* collisionConfig;
+		static btCollisionDispatcher* dispatcher;
+		static btSequentialImpulseConstraintSolver* solver;
+		static btDiscreteDynamicsWorld* DynamicWorld;
+
+		static GLuint debugVAO, debugVBO;
+		static GLuint debugShader;
+		static std::vector<float> debugLines;
+		static GLDebugDrawer* debugDrawer;
+
+		struct Shape {
+			btCollisionShape* shape = nullptr;
+			btRigidBody::btRigidBodyConstructionInfo info;
+			btDefaultMotionState motion;
+			Shape(btCollisionShape* _shape, btRigidBody::btRigidBodyConstructionInfo _info, btDefaultMotionState _motion);
+		};
+
+		struct Rigidbody {
+			btRigidBody* body;
+			Shape shape;
+			Rigidbody(Shape _shape);
+
+			void activate();
+			void applyForce(Vector3 force, Vector3 relPos);
+			void applyImpulse(Vector3 impulse, Vector3 relPos);
+			void applyTorque(Vector3 torque);
+			void applyCentralForce(Vector3 force);
+			void applyCentralImpulse(Vector3 impulse);
+			void applyTorqueImpulse(Vector3 torqueImpulse);
+			void setLinearVelocity(Vector3 velocity);
+			void setAngularVelocity(Vector3 velocity);
+			void setTransform(Vector3 position, Vector3 rotationDegrees);
+			void setLinearFactor(Vector3 factor);
+			void setAngularFactor(Vector3 factor);
+			void setCollisionShape(Shape* newShape);
+			void clearForces();
+			Vector3 getPosition();
+			Vector3 getRotation();
+			void setMass(float mass, Vector3 inertia);
+			void setFriction(float friction);
+			void setRollingFriction(float friction);
+			void setDamping(float damping);
+		};
+
+		static void DrawDebugWorld(glm::mat4 projection, glm::mat4 view);
+
+		static void CreatePhysicsWorld(Vector3 gravity);
+		static Shape CreateCapsuleShape(Vector3 position, Vector3 rotation, float radius, float height, float mass);
+		static Shape CreateBoxShape(Vector3 position, Vector3 rotation, Vector3 scale, float mass);
+		// static Shape CreatePlaneShape(Vector3 position, Vector3 rotation, Vector3 extends, float mass);
+		static Shape CreateCyllinderShape(Vector3 position, Vector3 rotation, float radius, float height, float mass);
+		static Shape CreateSphereShape(Vector3 position, Vector3 rotation, float radius, float mass);
+		static Shape CreateConeShape(Vector3 position, Vector3 rotation, float radius, float height, float mass);
+	};
+
 	struct SubMesh {
 		GLuint vao = 0, vbo = 0, ebo = 0;
 		GLuint jbo = 0, wbo = 0;
@@ -355,6 +433,7 @@ struct FiscionX {
 		GLuint getNormalMapTexture(const tinygltf::Model& model, int materialIndex);
 		void init(const std::string& path);
 		void updateOcclusion(const glm::mat4& viewProj);
+		void syncTransformWithBody(Physics::Rigidbody* body, Vector3 positionOffset, Vector3 rotationDegreesOffset);
 		void drawSubMesh(
 			const SubMesh& mesh,
 			GLuint shader,
@@ -368,16 +447,6 @@ struct FiscionX {
 
 	struct Input {
 		static bool GetKeyPressed(int key);
-	};
-
-	struct Physics {
-		static btBroadphaseInterface* broadphase;
-		static btDefaultCollisionConfiguration* collisionConfig;
-		static btCollisionDispatcher* dispatcher;
-		static btSequentialImpulseConstraintSolver* solver;
-		static btDiscreteDynamicsWorld* DynamicWorld;
-
-		static void CreatePhysicsWorld(btVector3 gravity);
 	};
 
 	struct Core {
