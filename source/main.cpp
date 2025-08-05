@@ -14,102 +14,23 @@ FiscionX::Model* kratosStaticModel;
 
 FiscionX::UI::Image* image_didi;
 
-btRigidBody* groundBody;
-btRigidBody* capsuleBody;
-
-GLuint debugVAO = 0, debugVBO = 0;
-GLuint debugShader = 0;
-std::vector<float> debugLines;
-
-const char* vertexDebug = R"(
-#version 330 core
-layout (location = 0) in vec3 aPos;
-layout (location = 1) in vec3 aColor;
-
-out vec3 fragColor;
-
-uniform mat4 viewProj;
-
-void main() {
-    fragColor = aColor;
-    gl_Position = viewProj * vec4(aPos, 1.0);
-}
-)";
-
-const char* fragmentDebug = R"(
-#version 330 core
-in vec3 fragColor;
-out vec4 color;
-
-void main() {
-    color = vec4(fragColor, 1.0);
-}
-)";
-
-struct GLDebugDrawer : public btIDebugDraw {
-    int m_debugMode = DBG_DrawWireframe;
-
-    void drawLine(const btVector3& from, const btVector3& to, const btVector3& color) override {
-        debugLines.push_back(from.getX());
-        debugLines.push_back(from.getY());
-        debugLines.push_back(from.getZ());
-        debugLines.push_back(color.getX());
-        debugLines.push_back(color.getY());
-        debugLines.push_back(color.getZ());
-
-        debugLines.push_back(to.getX());
-        debugLines.push_back(to.getY());
-        debugLines.push_back(to.getZ());
-        debugLines.push_back(color.getX());
-        debugLines.push_back(color.getY());
-        debugLines.push_back(color.getZ());
-    }
-
-    void setDebugMode(int debugMode) override {
-        m_debugMode = debugMode;
-    }
-
-    int getDebugMode() const override {
-        return m_debugMode;
-    }
-
-    // Métodos obrigatórios da classe base
-    void drawContactPoint(const btVector3&, const btVector3&, btScalar, int, const btVector3&) override {}
-    void reportErrorWarning(const char* warningString) override {
-        std::cerr << "Bullet Warning: " << warningString << std::endl;
-    }
-    void draw3dText(const btVector3&, const char*) override {}
-};
+FiscionX::Physics::Rigidbody* groundBody;
+FiscionX::Physics::Rigidbody* capsuleBody;
 
 void update() {
     FiscionX::Core::ClockTick();
     skinnedModel->update(FiscionX::Core::deltaTime);
 
     capsuleBody->activate();
+    kratosStaticModel->syncTransformWithBody(capsuleBody, FiscionX::Vector3(0, -1.25f, 0), FiscionX::Vector3(0, 0, 0));
+
     FiscionX::Physics::DynamicWorld->stepSimulation(FiscionX::Core::deltaTime);
-
-    // SYNC KRATOS POSITION AND ROTATION TO CAPSULE'S BODY
-    btTransform trans;
-    capsuleBody->getMotionState()->getWorldTransform(trans);
-    btVector3 pos = trans.getOrigin();
-    //kratosStaticModel->position = glm::vec3(pos.getX(), pos.getY(), pos.getZ());
-
-    btScalar matrix[16];
-    trans.getOpenGLMatrix(matrix);
-    glm::mat4 modelMatrix = glm::make_mat4(matrix);
-
-    float capsuleHeight = 2.0f;
-    float verticalOffset = -capsuleHeight / 2.0f;
-
-    modelMatrix = glm::translate(modelMatrix, glm::vec3(0.0f, verticalOffset, 0.0f));
-
-    kratosStaticModel->physicsSyncTransformMatrix = modelMatrix;
-
+    
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_F)) {
-		capsuleBody->applyCentralForce(btVector3(1, 0, 0));
+		capsuleBody->applyCentralForce(FiscionX::Vector3(2, 0, 0));
 	}
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_R)) {
-        capsuleBody->applyCentralForce(btVector3(0, 0, 1));
+        capsuleBody->applyCentralForce(FiscionX::Vector3(0, 0, 2));
     }
 
     float camVel = FiscionX::Core::Camera.speed * FiscionX::Core::deltaTime;
@@ -140,54 +61,15 @@ void draw() {
 
     image_didi->draw(-0.5f, -0.5f);
 
-    glDisable(GL_DEPTH_TEST);
-    glMatrixMode(GL_PROJECTION);
-    glLoadMatrixf(glm::value_ptr(projection));
-    glMatrixMode(GL_MODELVIEW);
-    glLoadMatrixf(glm::value_ptr(view));
-    FiscionX::Physics::DynamicWorld->debugDrawWorld();
-    glUseProgram(debugShader);
-    if (!debugLines.empty()) {
-        if (debugVAO == 0) {
-            glGenVertexArrays(1, &debugVAO);
-            glGenBuffers(1, &debugVBO);
-        }
-
-        glBindVertexArray(debugVAO);
-        glBindBuffer(GL_ARRAY_BUFFER, debugVBO);
-        glBufferData(GL_ARRAY_BUFFER, debugLines.size() * sizeof(float), debugLines.data(), GL_DYNAMIC_DRAW);
-
-        glEnableVertexAttribArray(0); // position
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(1); // color
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
-
-        glUseProgram(debugShader);
-        glm::mat4 vp = projection * view;
-        glUniformMatrix4fv(glGetUniformLocation(debugShader, "viewProj"), 1, GL_FALSE, glm::value_ptr(vp));
-
-        glDrawArrays(GL_LINES, 0, debugLines.size() / 6);
-
-        glBindVertexArray(0);
-        glUseProgram(0);
-        debugLines.clear();
-    }
-    glEnable(GL_DEPTH_TEST);
+    FiscionX::Physics::DrawDebugWorld(projection, view);
 
     FiscionX::Core::Draw::SwapBuffers();
 }
 
 int main() {
     FiscionX::Core::Set3DSettings(4096, 4096, 4096, 15.0f, 0.01f, 100.0f);
-    FiscionX::Physics::CreatePhysicsWorld(btVector3(0, -9.81f, 0));
     FiscionX::Core::NewWindow(1280, 720, "FiscionX");
-
-    debugShader = LoadShader(vertexDebug, fragmentDebug);
-
-    if (debugShader == 0) {
-        std::cerr << "[FATAL] Falha ao compilar/linkar o shader de debug!" << std::endl;
-        exit(EXIT_FAILURE); // evita crash depois
-    }
+    FiscionX::Physics::CreatePhysicsWorld(FiscionX::Vector3(0, -9.81f, 0));
 
     dirLight = new FiscionX::Light();
     dirLight->type = FiscionX::LIGHT_DIRECTIONAL;
@@ -266,37 +148,17 @@ int main() {
     // exSound->dsp->setParameterFloat(TYPE, AMOUNT);
 
     // === Corpo do chão ===
-    btCollisionShape* groundShape = new btStaticPlaneShape(btVector3(0, 1, 0), 0);
-    btDefaultMotionState* groundMotion = new btDefaultMotionState(btTransform::getIdentity());
-    btRigidBody::btRigidBodyConstructionInfo groundInfo(0, groundMotion, groundShape);
-    groundBody = new btRigidBody(groundInfo);
-    FiscionX::Physics::DynamicWorld->addRigidBody(groundBody);
+	FiscionX::Physics::Shape groundShape = FiscionX::Physics::CreateBoxShape(FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(10.0f, 0.1f, 10.0f), 0.0f);
+	groundBody = new FiscionX::Physics::Rigidbody(groundShape);
+    FiscionX::Physics::DynamicWorld->addRigidBody(groundBody->body);
 
     // === Cápsula ===
-    btCollisionShape* capsuleShape = new btCapsuleShape(0.5f, 1.5f);
-    btTransform capsuleStart;
-    capsuleStart.setIdentity();
-	capsuleStart.setRotation(btQuaternion(0, 0, 0));
-    capsuleStart.setOrigin(btVector3(0, 5, 0));
-    btScalar mass = 1.0f;
-    btVector3 inertia(0, 0, 0);
-	btScalar friction(0.3f);
-    capsuleShape->calculateLocalInertia(mass, inertia);
-    btDefaultMotionState* capsuleMotion = new btDefaultMotionState(capsuleStart);
-    btRigidBody::btRigidBodyConstructionInfo capsuleInfo(mass, capsuleMotion, capsuleShape, inertia);
-    capsuleBody = new btRigidBody(capsuleInfo);
-	capsuleBody->setFriction(friction);
-	capsuleBody->setRollingFriction(friction/5);
-    capsuleBody->setDamping(0.05f, 0.05f); // resistencia do ar
-    capsuleBody->setCcdMotionThreshold(0.001f);
-    capsuleBody->setCcdSweptSphereRadius(0.3f);
-    FiscionX::Physics::DynamicWorld->addRigidBody(capsuleBody);
-
-    GLDebugDrawer* debugDrawer = new GLDebugDrawer();
-    debugDrawer->setDebugMode(
-        btIDebugDraw::DBG_DrawWireframe | btIDebugDraw::DBG_DrawAabb
-    );
-    FiscionX::Physics::DynamicWorld->setDebugDrawer(debugDrawer);
+	FiscionX::Physics::Shape capsuleShape = FiscionX::Physics::CreateCapsuleShape(FiscionX::Vector3(0, 5, 0), FiscionX::Vector3(0, 0, 0), 0.5f, 1.5f, 1.0f);
+    capsuleBody = new FiscionX::Physics::Rigidbody(capsuleShape);
+	capsuleBody->setFriction(0.5f);
+	capsuleBody->setRollingFriction(0.3f);
+    capsuleBody->setDamping(0.05f);
+    FiscionX::Physics::DynamicWorld->addRigidBody(capsuleBody->body);
 
     while (!glfwWindowShouldClose(FiscionX::Core::Window)) {
         update();

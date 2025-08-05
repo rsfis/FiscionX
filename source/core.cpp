@@ -1,6 +1,31 @@
 ﻿#include "FiscionCore.h"
 #define ENGINE_VERSION "1.0.0"
 
+const char* vertexDebug = R"(
+    #version 330 core
+    layout (location = 0) in vec3 aPos;
+    layout (location = 1) in vec3 aColor;
+
+    out vec3 fragColor;
+
+    uniform mat4 viewProj;
+
+    void main() {
+            fragColor = aColor;
+        gl_Position = viewProj * vec4(aPos, 1.0);
+    }
+)";
+
+const char* fragmentDebug = R"(
+    #version 330 core
+    in vec3 fragColor;
+    out vec4 color;
+
+    void main() {
+        color = vec4(fragColor, 1.0);
+    }
+)";
+
 // GLOBALS
 GLFWwindow* FiscionX::Core::Window;
 int FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT;
@@ -31,6 +56,10 @@ btDefaultCollisionConfiguration* FiscionX::Physics::collisionConfig;
 btCollisionDispatcher* FiscionX::Physics::dispatcher;
 btSequentialImpulseConstraintSolver* FiscionX::Physics::solver;
 btDiscreteDynamicsWorld* FiscionX::Physics::DynamicWorld;
+GLuint FiscionX::Physics::debugVAO = 0, FiscionX::Physics::debugVBO = 0;
+GLuint FiscionX::Physics::debugShader = 0;
+std::vector<float> FiscionX::Physics::debugLines;
+FiscionX::Physics::GLDebugDrawer* FiscionX::Physics::debugDrawer;
 
 FiscionX::AudioSystem FiscionX::Core::AudioSystem;
 
@@ -1505,6 +1534,22 @@ void FiscionX::generateTangents(
         }
     }
 
+    void FiscionX::Model::syncTransformWithBody(FiscionX::Physics::Rigidbody* body, FiscionX::Vector3 positionOffset, FiscionX::Vector3 rotationDegreesOffset) {
+        btTransform trans;
+        body->body->getMotionState()->getWorldTransform(trans);
+        btVector3 pos = trans.getOrigin();
+
+        btScalar matrix[16];
+        trans.getOpenGLMatrix(matrix);
+        glm::mat4 modelMatrix = glm::make_mat4(matrix);
+        modelMatrix = glm::translate(modelMatrix, glm::vec3(positionOffset.x, positionOffset.y, positionOffset.z));
+		modelMatrix = glm::rotate(modelMatrix, glm::radians(rotationDegreesOffset.x), glm::vec3(1.0f, 0.0f, 0.0f));
+        modelMatrix = glm::rotate(modelMatrix, glm::radians(rotationDegreesOffset.y), glm::vec3(0.0f, 1.0f, 0.0f));
+        modelMatrix = glm::rotate(modelMatrix, glm::radians(rotationDegreesOffset.z), glm::vec3(0.0f, 0.0f, 1.0f));
+
+        this->physicsSyncTransformMatrix = modelMatrix;
+    }
+
 // ================= INPUT ===================
 bool FiscionX::Input::GetKeyPressed(int key) {
     if (glfwGetKey(FiscionX::Core::Window, key) == GLFW_PRESS) {
@@ -1514,14 +1559,289 @@ bool FiscionX::Input::GetKeyPressed(int key) {
 }
 
 // ================ Physics ===================
-void FiscionX::Physics::CreatePhysicsWorld(btVector3 gravity) {
+void FiscionX::Physics::CreatePhysicsWorld(FiscionX::Vector3 gravity) {
     broadphase = new btDbvtBroadphase();
     collisionConfig = new btDefaultCollisionConfiguration();
     dispatcher = new btCollisionDispatcher(collisionConfig);
     solver = new btSequentialImpulseConstraintSolver();
 
     DynamicWorld = new btDiscreteDynamicsWorld(dispatcher, broadphase, solver, collisionConfig);
-    DynamicWorld->setGravity(gravity);
+    DynamicWorld->setGravity(btVector3(gravity.x, gravity.y, gravity.z));
+
+    std::cout << "dynamic world configurated" << "\n";
+    debugShader = LoadShader(vertexDebug, fragmentDebug);
+    std::cout << "cratred shader" << "\n";
+    debugDrawer = new GLDebugDrawer();
+    debugDrawer->setDebugMode(
+        btIDebugDraw::DBG_DrawWireframe | btIDebugDraw::DBG_DrawAabb
+    );
+    std::cout << "set debug mode" << "\n";
+    FiscionX::Physics::DynamicWorld->setDebugDrawer(debugDrawer);
+    std::cout << "added debug drawer to dynamic world" << "\n";
+}
+
+void FiscionX::Physics::GLDebugDrawer::drawLine(const btVector3& from, const btVector3& to, const btVector3& color) {
+    debugLines.push_back(from.getX());
+    debugLines.push_back(from.getY());
+    debugLines.push_back(from.getZ());
+    debugLines.push_back(color.getX());
+    debugLines.push_back(color.getY());
+    debugLines.push_back(color.getZ());
+
+    debugLines.push_back(to.getX());
+    debugLines.push_back(to.getY());
+    debugLines.push_back(to.getZ());
+    debugLines.push_back(color.getX());
+    debugLines.push_back(color.getY());
+    debugLines.push_back(color.getZ());
+}
+
+void FiscionX::Physics::GLDebugDrawer::setDebugMode(int debugMode) {
+    m_debugMode = debugMode;
+}
+
+int FiscionX::Physics::GLDebugDrawer::getDebugMode() const {
+    return m_debugMode;
+}
+
+void FiscionX::Physics::GLDebugDrawer::drawContactPoint(const btVector3&, const btVector3&, btScalar, int, const btVector3&) {}
+void FiscionX::Physics::GLDebugDrawer::reportErrorWarning(const char* warningString) {
+    std::cerr << "Bullet Warning: " << warningString << std::endl;
+}
+void FiscionX::Physics::GLDebugDrawer::draw3dText(const btVector3&, const char*) {}
+
+void FiscionX::Physics::DrawDebugWorld(glm::mat4 projection, glm::mat4 view) {
+    glDisable(GL_DEPTH_TEST);
+    glMatrixMode(GL_PROJECTION);
+    glLoadMatrixf(glm::value_ptr(projection));
+    glMatrixMode(GL_MODELVIEW);
+    glLoadMatrixf(glm::value_ptr(view));
+    FiscionX::Physics::DynamicWorld->debugDrawWorld();
+    glUseProgram(debugShader);
+    if (!debugLines.empty()) {
+        if (debugVAO == 0) {
+            glGenVertexArrays(1, &debugVAO);
+            glGenBuffers(1, &debugVBO);
+        }
+
+        glBindVertexArray(debugVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, debugVBO);
+        glBufferData(GL_ARRAY_BUFFER, debugLines.size() * sizeof(float), debugLines.data(), GL_DYNAMIC_DRAW);
+
+        glEnableVertexAttribArray(0); // position
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(1); // color
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+
+        glUseProgram(debugShader);
+        glm::mat4 vp = projection * view;
+        glUniformMatrix4fv(glGetUniformLocation(debugShader, "viewProj"), 1, GL_FALSE, glm::value_ptr(vp));
+
+        glDrawArrays(GL_LINES, 0, debugLines.size() / 6);
+
+        glBindVertexArray(0);
+        glUseProgram(0);
+        debugLines.clear();
+    }
+    glEnable(GL_DEPTH_TEST);
+}
+
+FiscionX::Physics::Rigidbody::Rigidbody(FiscionX::Physics::Shape _shape) : shape(_shape) {
+    body = new btRigidBody(shape.info);
+    body->setCcdMotionThreshold(0.001f);
+    body->setCcdSweptSphereRadius(0.3f);
+}
+
+void FiscionX::Physics::Rigidbody::activate() {
+    if (body) {
+        body->activate();
+    }
+}
+
+void FiscionX::Physics::Rigidbody::setMass(float mass, FiscionX::Vector3 inertia) {
+    if (body) {
+        btVector3 _inertia(inertia.x, inertia.y, inertia.z);
+        if (mass != 0.0f)
+            shape.shape->calculateLocalInertia(mass, _inertia);
+        body->setMassProps(mass, _inertia);
+    }
+}
+
+void FiscionX::Physics::Rigidbody::setFriction(float friction) {
+    if (body) {
+        body->setFriction(friction);
+    }
+}
+
+void FiscionX::Physics::Rigidbody::setRollingFriction(float friction) {
+    if (body) {
+        body->setRollingFriction(friction / 5);
+    }
+}
+
+void FiscionX::Physics::Rigidbody::setDamping(float damping) {
+    body->setDamping(damping, damping);
+}
+
+void FiscionX::Physics::Rigidbody::applyForce(Vector3 force, Vector3 relPos) {
+    if (body) {
+        body->applyForce(btVector3(force.x, force.y, force.z), btVector3(relPos.x, relPos.y, relPos.z));
+    }
+}
+
+void FiscionX::Physics::Rigidbody::applyImpulse(Vector3 impulse, Vector3 relPos) {
+    if (body) {
+		body->applyImpulse(btVector3(impulse.x, impulse.y, impulse.z), btVector3(relPos.x, relPos.y, relPos.z));
+    }
+}
+
+void FiscionX::Physics::Rigidbody::applyTorque(Vector3 torque) {
+    if (body) {
+		body->applyTorque(btVector3(torque.x, torque.y, torque.z));
+    }
+}
+
+void FiscionX::Physics::Rigidbody::applyCentralForce(FiscionX::Vector3 force) {
+    if (body) {
+		body->applyCentralForce(btVector3(force.x, force.y, force.z));
+    }
+}
+
+void FiscionX::Physics::Rigidbody::applyCentralImpulse(FiscionX::Vector3 impulse) {
+    if (body) {
+        body->applyCentralImpulse(btVector3(impulse.x, impulse.y, impulse.z));
+    }
+}
+
+void FiscionX::Physics::Rigidbody::applyTorqueImpulse(FiscionX::Vector3 torqueImpulse) {
+    if (body) {
+		body->applyTorqueImpulse(btVector3(torqueImpulse.x, torqueImpulse.y, torqueImpulse.z));
+    }
+}
+
+void FiscionX::Physics::Rigidbody::setLinearVelocity(FiscionX::Vector3 velocity) {
+    if (body) {
+		body->setLinearVelocity(btVector3(velocity.x, velocity.y, velocity.z));
+    }
+}
+
+void FiscionX::Physics::Rigidbody::setAngularVelocity(FiscionX::Vector3 velocity) {
+    if (body) {
+		body->setAngularVelocity(btVector3(velocity.x, velocity.y, velocity.z));
+    }
+}
+
+void FiscionX::Physics::Rigidbody::setTransform(FiscionX::Vector3 position, FiscionX::Vector3 rotationDegrees) {
+    if (body) {
+        btTransform transform;
+        transform.setOrigin(btVector3(position.x, position.y, position.z));
+
+        // Converte de graus para radianos
+        float xRad = glm::radians(rotationDegrees.x);
+        float yRad = glm::radians(rotationDegrees.y);
+        float zRad = glm::radians(rotationDegrees.z);
+
+        btQuaternion rot;
+        rot.setEulerZYX(zRad, yRad, xRad);
+        transform.setRotation(rot);
+
+        body->setWorldTransform(transform);
+    }
+}
+
+void FiscionX::Physics::Rigidbody::setLinearFactor(FiscionX::Vector3 factor) {
+    if (body) {
+		body->setLinearFactor(btVector3(factor.x, factor.y, factor.z));
+    }
+}
+
+void FiscionX::Physics::Rigidbody::setAngularFactor(FiscionX::Vector3 factor) {
+    if (body) {
+		body->setAngularFactor(btVector3(factor.x, factor.y, factor.z));
+    }
+}
+
+void FiscionX::Physics::Rigidbody::setCollisionShape(FiscionX::Physics::Shape* newShape) {
+    if (body) {
+		body->setCollisionShape(newShape->shape);
+    }
+}
+
+FiscionX::Physics::Shape::Shape(btCollisionShape* _shape, btRigidBody::btRigidBodyConstructionInfo _info, btDefaultMotionState _motion) : shape(_shape), info(_info), motion(_motion) {}
+
+FiscionX::Physics::Shape FiscionX::Physics::CreateCapsuleShape(FiscionX::Vector3 position, FiscionX::Vector3 rotation, float radius, float height, float mass) {
+    btCollisionShape* newshape = new btCapsuleShape(radius, height);
+    btTransform start;
+    start.setIdentity();
+    start.setRotation(btQuaternion(rotation.x, rotation.y, rotation.z));
+    start.setOrigin(btVector3(position.x, position.y, position.z));
+    btVector3 inertia(0, 0, 0);
+    newshape->calculateLocalInertia(mass, inertia);
+    btDefaultMotionState* motion = new btDefaultMotionState(start);
+    btRigidBody::btRigidBodyConstructionInfo info(mass, motion, newshape, inertia);
+
+    FiscionX::Physics::Shape* pshape = new FiscionX::Physics::Shape(newshape, info, *motion);
+    return *pshape;
+}
+
+FiscionX::Physics::Shape FiscionX::Physics::CreateBoxShape(Vector3 position, Vector3 rotation, Vector3 scale, float mass) {
+    btCollisionShape* newshape = new btBoxShape(btVector3(scale.x, scale.y, scale.z));
+    btTransform start;
+    start.setIdentity();
+    start.setRotation(btQuaternion(rotation.x, rotation.y, rotation.z));
+    start.setOrigin(btVector3(position.x, position.y, position.z));
+    btVector3 inertia(0, 0, 0);
+    newshape->calculateLocalInertia(mass, inertia);
+    btDefaultMotionState* motion = new btDefaultMotionState(start);
+    btRigidBody::btRigidBodyConstructionInfo info(mass, motion, newshape, inertia);
+
+    FiscionX::Physics::Shape pshape(newshape, info, *motion);
+    return pshape;
+}
+
+FiscionX::Physics::Shape FiscionX::Physics::CreateConeShape(Vector3 position, Vector3 rotation, float radius, float height, float mass) {
+    btCollisionShape* newshape = new btConeShape(radius, height);
+    btTransform start;
+    start.setIdentity();
+    start.setRotation(btQuaternion(rotation.x, rotation.y, rotation.z));
+    start.setOrigin(btVector3(position.x, position.y, position.z));
+    btVector3 inertia(0, 0, 0);
+    newshape->calculateLocalInertia(mass, inertia);
+    btDefaultMotionState* motion = new btDefaultMotionState(start);
+    btRigidBody::btRigidBodyConstructionInfo info(mass, motion, newshape, inertia);
+
+    FiscionX::Physics::Shape pshape(newshape, info, *motion);
+    return pshape;
+}
+
+FiscionX::Physics::Shape FiscionX::Physics::CreateCyllinderShape(Vector3 position, Vector3 rotation, float radius, float height, float mass) {
+    btCollisionShape* newshape = new btCylinderShape(btVector3(radius, height, radius));
+    btTransform start;
+    start.setIdentity();
+    start.setRotation(btQuaternion(rotation.x, rotation.y, rotation.z));
+    start.setOrigin(btVector3(position.x, position.y, position.z));
+    btVector3 inertia(0, 0, 0);
+    newshape->calculateLocalInertia(mass, inertia);
+    btDefaultMotionState* motion = new btDefaultMotionState(start);
+    btRigidBody::btRigidBodyConstructionInfo info(mass, motion, newshape, inertia);
+
+    FiscionX::Physics::Shape pshape(newshape, info, *motion);
+    return pshape;
+}
+
+FiscionX::Physics::Shape FiscionX::Physics::CreateSphereShape(Vector3 position, Vector3 rotation, float radius, float mass) {
+    btCollisionShape* newshape = new btSphereShape(radius);
+    btTransform start;
+    start.setIdentity();
+    start.setRotation(btQuaternion(rotation.x, rotation.y, rotation.z));
+    start.setOrigin(btVector3(position.x, position.y, position.z));
+    btVector3 inertia(0, 0, 0);
+    newshape->calculateLocalInertia(mass, inertia);
+    btDefaultMotionState* motion = new btDefaultMotionState(start);
+    btRigidBody::btRigidBodyConstructionInfo info(mass, motion, newshape, inertia);
+
+    FiscionX::Physics::Shape pshape(newshape, info, *motion);
+    return pshape;
 }
 
 // =================== CORE ===================
