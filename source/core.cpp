@@ -56,6 +56,7 @@ btDefaultCollisionConfiguration* FiscionX::Physics::collisionConfig;
 btCollisionDispatcher* FiscionX::Physics::dispatcher;
 btSequentialImpulseConstraintSolver* FiscionX::Physics::solver;
 btDiscreteDynamicsWorld* FiscionX::Physics::DynamicWorld;
+float FiscionX::Physics::maxCollisionDistance = 50.0f;
 GLuint FiscionX::Physics::debugVAO = 0, FiscionX::Physics::debugVBO = 0;
 GLuint FiscionX::Physics::debugShader = 0;
 std::vector<float> FiscionX::Physics::debugLines;
@@ -1559,7 +1560,7 @@ bool FiscionX::Input::GetKeyPressed(int key) {
 }
 
 // ================ Physics ===================
-void FiscionX::Physics::CreatePhysicsWorld(FiscionX::Vector3 gravity) {
+void FiscionX::Physics::CreatePhysicsWorld(FiscionX::Vector3 gravity, int maxIterations) {
     broadphase = new btDbvtBroadphase();
     collisionConfig = new btDefaultCollisionConfiguration();
     dispatcher = new btCollisionDispatcher(collisionConfig);
@@ -1567,6 +1568,7 @@ void FiscionX::Physics::CreatePhysicsWorld(FiscionX::Vector3 gravity) {
 
     DynamicWorld = new btDiscreteDynamicsWorld(dispatcher, broadphase, solver, collisionConfig);
     DynamicWorld->setGravity(btVector3(gravity.x, gravity.y, gravity.z));
+    DynamicWorld->getSolverInfo().m_numIterations = maxIterations;
 
     debugShader = LoadShader(vertexDebug, fragmentDebug);
     debugDrawer = new GLDebugDrawer();
@@ -1838,6 +1840,34 @@ FiscionX::Physics::Shape FiscionX::Physics::CreateSphereShape(Vector3 position, 
 
     FiscionX::Physics::Shape pshape(newshape, info, *motion);
     return pshape;
+}
+
+bool FiscionX::Physics::CheckCollisionBetween(FiscionX::Physics::Rigidbody* bodyA, FiscionX::Physics::Rigidbody* bodyB) {
+    int numManifolds = DynamicWorld->getDispatcher()->getNumManifolds();
+
+    btVector3 posA = bodyA->body->getWorldTransform().getOrigin();
+    btVector3 posB = bodyB->body->getWorldTransform().getOrigin();
+
+    if ((posA - posB).length2() > FiscionX::Physics::maxCollisionDistance * FiscionX::Physics::maxCollisionDistance) {
+        return false;
+    }
+
+    for (int i = 0; i < numManifolds; ++i) {
+        btPersistentManifold* manifold = DynamicWorld->getDispatcher()->getManifoldByIndexInternal(i);
+        const btCollisionObject* objA = manifold->getBody0();
+        const btCollisionObject* objB = manifold->getBody1();
+
+        if ((objA == bodyA->body && objB == bodyB->body) || (objA == bodyB->body && objB == bodyA->body)) {
+            int numContacts = manifold->getNumContacts();
+            for (int j = 0; j < numContacts; ++j) {
+                const btManifoldPoint& pt = manifold->getContactPoint(j);
+                if (pt.getDistance() < 0.0f) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
 }
 
 // =================== CORE ===================

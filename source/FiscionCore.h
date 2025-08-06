@@ -301,6 +301,7 @@ struct FiscionX {
 		static btCollisionDispatcher* dispatcher;
 		static btSequentialImpulseConstraintSolver* solver;
 		static btDiscreteDynamicsWorld* DynamicWorld;
+		static float maxCollisionDistance;
 
 		static GLuint debugVAO, debugVBO;
 		static GLuint debugShader;
@@ -343,13 +344,15 @@ struct FiscionX {
 
 		static void DrawDebugWorld(glm::mat4 projection, glm::mat4 view);
 
-		static void CreatePhysicsWorld(Vector3 gravity);
+		static void CreatePhysicsWorld(Vector3 gravity, int maxIterations);
 		static Shape CreateCapsuleShape(Vector3 position, Vector3 rotation, float radius, float height, float mass);
 		static Shape CreateBoxShape(Vector3 position, Vector3 rotation, Vector3 scale, float mass);
 		// static Shape CreatePlaneShape(Vector3 position, Vector3 rotation, Vector3 extends, float mass);
 		static Shape CreateCyllinderShape(Vector3 position, Vector3 rotation, float radius, float height, float mass);
 		static Shape CreateSphereShape(Vector3 position, Vector3 rotation, float radius, float mass);
 		static Shape CreateConeShape(Vector3 position, Vector3 rotation, float radius, float height, float mass);
+
+		static bool CheckCollisionBetween(Rigidbody* bodyA, Rigidbody* bodyB);
 	};
 
 	struct SubMesh {

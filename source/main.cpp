@@ -26,6 +26,9 @@ void update() {
     capsuleBody->activate();
     kratosStaticModel->syncTransformWithBody(capsuleBody, FiscionX::Vector3(0, -1.25f, 0), FiscionX::Vector3(0, 0, 0));
     
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_E)) {
+        std::cout << "Is capsule colliding with ground: " << FiscionX::Physics::CheckCollisionBetween(groundBody, capsuleBody) << std::endl;
+    }
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_F)) {
 		capsuleBody->applyCentralForce(FiscionX::Vector3(2, 0, 0));
 	}
@@ -69,7 +72,7 @@ void draw() {
 int main() {
     FiscionX::Core::Set3DSettings(4096, 4096, 4096, 15.0f, 0.01f, 100.0f);
     FiscionX::Core::NewWindow(1280, 720, "FiscionX");
-    FiscionX::Physics::CreatePhysicsWorld(FiscionX::Vector3(0, -9.81f, 0));
+    FiscionX::Physics::CreatePhysicsWorld(FiscionX::Vector3(0, -9.81f, 0), 10);
 
     dirLight = new FiscionX::Light();
     dirLight->type = FiscionX::LIGHT_DIRECTIONAL;
