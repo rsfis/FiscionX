@@ -16,15 +16,15 @@ subject to the following restrictions:
 #ifndef BT_CONVEX_CONVEX_ALGORITHM_H
 #define BT_CONVEX_CONVEX_ALGORITHM_H
 
-#include "btActivatingCollisionAlgorithm.h"
-#include "BulletCollision/NarrowPhaseCollision/btGjkPairDetector.h"
-#include "BulletCollision/NarrowPhaseCollision/btPersistentManifold.h"
-#include "BulletCollision/BroadphaseCollision/btBroadphaseProxy.h"
-#include "BulletCollision/NarrowPhaseCollision/btVoronoiSimplexSolver.h"
-#include "btCollisionCreateFunc.h"
-#include "btCollisionDispatcher.h"
-#include "LinearMath/btTransformUtil.h"  //for btConvexSeparatingDistanceUtil
-#include "BulletCollision/NarrowPhaseCollision/btPolyhedralContactClipping.h"
+#include "dependencies/bullet/BulletCollision/CollisionDispatch/btActivatingCollisionAlgorithm.h"
+#include "dependencies/bullet/BulletCollision/NarrowPhaseCollision/btGjkPairDetector.h"
+#include "dependencies/bullet/BulletCollision/NarrowPhaseCollision/btPersistentManifold.h"
+#include "dependencies/bullet/BulletCollision/BroadphaseCollision/btBroadphaseProxy.h"
+#include "dependencies/bullet/BulletCollision/NarrowPhaseCollision/btVoronoiSimplexSolver.h"
+#include "dependencies/bullet/BulletCollision/CollisionDispatch/btCollisionCreateFunc.h"
+#include "dependencies/bullet/BulletCollision/CollisionDispatch/btCollisionDispatcher.h"
+#include "dependencies/bullet/LinearMath/btTransformUtil.h"  //for btConvexSeparatingDistanceUtil
+#include "dependencies/bullet/BulletCollision/NarrowPhaseCollision/btPolyhedralContactClipping.h"
 
 class btConvexPenetrationDepthSolver;
 

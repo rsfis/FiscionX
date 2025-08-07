@@ -1765,7 +1765,41 @@ void FiscionX::Physics::Rigidbody::setCollisionShape(FiscionX::Physics::Shape* n
     }
 }
 
-FiscionX::Physics::Shape::Shape(btCollisionShape* _shape, btRigidBody::btRigidBodyConstructionInfo _info, btDefaultMotionState _motion) : shape(_shape), info(_info), motion(_motion) {}
+void FiscionX::Physics::Rigidbody::lockAxis(FiscionX::Vector3 axis) {
+    if (body) {
+		body->setAngularFactor(btVector3(axis.x, axis.y, axis.z));
+    }
+}
+
+void FiscionX::Physics::Rigidbody::setBouncingFactor(float factor) {
+    if (body) {
+        body->setRestitution(factor);
+    }
+}
+
+FiscionX::Vector3 FiscionX::Physics::Rigidbody::getPosition() {
+    if (body) {
+		btTransform transform;
+		body->getMotionState()->getWorldTransform(transform);
+		btVector3 pos = transform.getOrigin();
+		return FiscionX::Vector3(pos.getX(), pos.getY(), pos.getZ());
+    }
+}
+
+FiscionX::Vector3 FiscionX::Physics::Rigidbody::getRotation() {
+    if (body) {
+        btTransform transform;
+        body->getMotionState()->getWorldTransform(transform);
+        btQuaternion rot = transform.getRotation();
+        btScalar roll, pitch, yaw;
+        rot.getEulerZYX(yaw, pitch, roll);
+        return FiscionX::Vector3(roll, pitch, yaw);
+    }
+}
+
+// =================== Physics::Shape ===================
+FiscionX::Physics::Shape::Shape(btCollisionShape* _shape, btRigidBody::btRigidBodyConstructionInfo _info, btDefaultMotionState _motion, btGImpactMeshShape* _gshape)
+    : shape(_shape), gshape(_gshape), info(_info), motion(_motion) {}
 
 FiscionX::Physics::Shape FiscionX::Physics::CreateCapsuleShape(FiscionX::Vector3 position, FiscionX::Vector3 rotation, float radius, float height, float mass) {
     btCollisionShape* newshape = new btCapsuleShape(radius, height);
@@ -1778,7 +1812,7 @@ FiscionX::Physics::Shape FiscionX::Physics::CreateCapsuleShape(FiscionX::Vector3
     btDefaultMotionState* motion = new btDefaultMotionState(start);
     btRigidBody::btRigidBodyConstructionInfo info(mass, motion, newshape, inertia);
 
-    FiscionX::Physics::Shape* pshape = new FiscionX::Physics::Shape(newshape, info, *motion);
+    FiscionX::Physics::Shape* pshape = new FiscionX::Physics::Shape(newshape, info, *motion, nullptr);
     return *pshape;
 }
 
@@ -1793,7 +1827,7 @@ FiscionX::Physics::Shape FiscionX::Physics::CreateBoxShape(Vector3 position, Vec
     btDefaultMotionState* motion = new btDefaultMotionState(start);
     btRigidBody::btRigidBodyConstructionInfo info(mass, motion, newshape, inertia);
 
-    FiscionX::Physics::Shape pshape(newshape, info, *motion);
+    FiscionX::Physics::Shape pshape(newshape, info, *motion, nullptr);
     return pshape;
 }
 
@@ -1808,7 +1842,7 @@ FiscionX::Physics::Shape FiscionX::Physics::CreateConeShape(Vector3 position, Ve
     btDefaultMotionState* motion = new btDefaultMotionState(start);
     btRigidBody::btRigidBodyConstructionInfo info(mass, motion, newshape, inertia);
 
-    FiscionX::Physics::Shape pshape(newshape, info, *motion);
+    FiscionX::Physics::Shape pshape(newshape, info, *motion, nullptr);
     return pshape;
 }
 
@@ -1823,7 +1857,7 @@ FiscionX::Physics::Shape FiscionX::Physics::CreateCyllinderShape(Vector3 positio
     btDefaultMotionState* motion = new btDefaultMotionState(start);
     btRigidBody::btRigidBodyConstructionInfo info(mass, motion, newshape, inertia);
 
-    FiscionX::Physics::Shape pshape(newshape, info, *motion);
+    FiscionX::Physics::Shape pshape(newshape, info, *motion, nullptr);
     return pshape;
 }
 
@@ -1838,7 +1872,122 @@ FiscionX::Physics::Shape FiscionX::Physics::CreateSphereShape(Vector3 position, 
     btDefaultMotionState* motion = new btDefaultMotionState(start);
     btRigidBody::btRigidBodyConstructionInfo info(mass, motion, newshape, inertia);
 
-    FiscionX::Physics::Shape pshape(newshape, info, *motion);
+    FiscionX::Physics::Shape pshape(newshape, info, *motion, nullptr);
+    return pshape;
+}
+
+btTriangleMesh* FiscionX::Physics::LoadMeshFromFile(const char* path, FiscionX::Vector3 scale) {
+    tinygltf::Model model;
+    tinygltf::TinyGLTF loader;
+    std::string err, warn;
+
+    if (!loader.LoadBinaryFromFile(&model, &err, &warn, path)) {
+        std::cerr << "Failed to load GLB: " << err << std::endl;
+        return nullptr;
+    }
+
+    btTriangleMesh* triMesh = new btTriangleMesh();
+    glm::mat4 globalScale = glm::scale(glm::mat4(1.0f), glm::vec3(scale.x, scale.y, scale.z));
+
+    std::function<void(int, glm::mat4)> processNode;
+    processNode = [&](int nodeIndex, glm::mat4 parentTransform) {
+        const auto& node = model.nodes[nodeIndex];
+
+        glm::mat4 local(1.0f);
+        if (!node.matrix.empty()) {
+            local = glm::make_mat4(node.matrix.data());
+        }
+        else {
+            glm::vec3 T(0.0f), S(1.0f);
+            glm::quat R(1, 0, 0, 0);
+            if (!node.translation.empty()) T = glm::make_vec3(node.translation.data());
+            if (!node.rotation.empty()) R = glm::make_quat(node.rotation.data());
+            if (!node.scale.empty()) S = glm::make_vec3(node.scale.data());
+            local = glm::translate(glm::mat4(1.0f), T)
+                * glm::mat4_cast(R)
+                * glm::scale(glm::mat4(1.0f), S);
+        }
+
+        glm::mat4 globalTransform = parentTransform * local;
+
+        if (node.mesh >= 0) {
+            const auto& mesh = model.meshes[node.mesh];
+            for (const auto& prim : mesh.primitives) {
+                if (prim.mode != TINYGLTF_MODE_TRIANGLES) continue;
+
+                const auto& posAcc = model.accessors[prim.attributes.at("POSITION")];
+                const auto& posView = model.bufferViews[posAcc.bufferView];
+                const auto& posBuf = model.buffers[posView.buffer];
+                const float* posData = reinterpret_cast<const float*>(
+                    &posBuf.data[posView.byteOffset + posAcc.byteOffset]);
+
+                std::vector<glm::vec3> vertices(posAcc.count);
+                for (size_t i = 0; i < posAcc.count; ++i) {
+                    glm::vec4 v(posData[i * 3 + 0], posData[i * 3 + 1], posData[i * 3 + 2], 1.0f);
+                    v = globalScale * globalTransform * v;
+                    vertices[i] = glm::vec3(v);
+                }
+
+                const auto& idxAcc = model.accessors[prim.indices];
+                const auto& idxView = model.bufferViews[idxAcc.bufferView];
+                const auto& idxBuf = model.buffers[idxView.buffer];
+                const void* idxData = &idxBuf.data[idxView.byteOffset + idxAcc.byteOffset];
+
+                for (size_t i = 0; i < idxAcc.count; i += 3) {
+                    uint32_t i0, i1, i2;
+                    switch (idxAcc.componentType) {
+                    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+                        i0 = ((uint8_t*)idxData)[i + 0];
+                        i1 = ((uint8_t*)idxData)[i + 1];
+                        i2 = ((uint8_t*)idxData)[i + 2];
+                        break;
+                    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+                        i0 = ((uint16_t*)idxData)[i + 0];
+                        i1 = ((uint16_t*)idxData)[i + 1];
+                        i2 = ((uint16_t*)idxData)[i + 2];
+                        break;
+                    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
+                        i0 = ((uint32_t*)idxData)[i + 0];
+                        i1 = ((uint32_t*)idxData)[i + 1];
+                        i2 = ((uint32_t*)idxData)[i + 2];
+                        break;
+                    default:
+                        std::cerr << "Unsupported index type\n";
+                        return nullptr;
+                    }
+
+                    triMesh->addTriangle(
+                        btVector3(vertices[i0].x, vertices[i0].y, vertices[i0].z),
+                        btVector3(vertices[i1].x, vertices[i1].y, vertices[i1].z),
+                        btVector3(vertices[i2].x, vertices[i2].y, vertices[i2].z)
+                    );
+                }
+            }
+        }
+
+        for (int child : node.children) {
+            processNode(child, globalTransform);
+        }
+        };
+
+    for (int nodeIndex : model.scenes[model.defaultScene].nodes) {
+        processNode(nodeIndex, glm::mat4(1.0f));
+    }
+
+    return triMesh;
+}
+
+FiscionX::Physics::Shape FiscionX::Physics::CreateMeshShape(const char* path, FiscionX::Vector3 position, FiscionX::Vector3 rotation, FiscionX::Vector3 scale, float mass) {
+    btGImpactMeshShape* newshape = new btGImpactMeshShape(FiscionX::Physics::LoadMeshFromFile(path, scale));
+    btTransform start;
+    start.setIdentity();
+    start.setRotation(btQuaternion(rotation.x, rotation.y, rotation.z));
+    start.setOrigin(btVector3(position.x, position.y, position.z));
+    btVector3 inertia(0, 0, 0);
+    newshape->calculateLocalInertia(mass, inertia);
+    btDefaultMotionState* motion = new btDefaultMotionState(start);
+    btRigidBody::btRigidBodyConstructionInfo info(mass, motion, newshape, inertia);
+    FiscionX::Physics::Shape pshape(nullptr, info, *motion, newshape);
     return pshape;
 }
 
