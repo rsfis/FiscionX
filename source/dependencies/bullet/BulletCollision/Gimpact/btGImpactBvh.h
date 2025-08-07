@@ -24,7 +24,7 @@ subject to the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 */
 
-#include "LinearMath/btAlignedObjectArray.h"
+#include "dependencies/bullet/LinearMath/btAlignedObjectArray.h"
 
 #include "btBoxCollision.h"
 #include "btTriangleShapeEx.h"

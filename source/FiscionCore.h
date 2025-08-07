@@ -31,6 +31,8 @@
 #include "dependencies/tinygltf/tiny_gltf.h"
 
 #include "dependencies/bullet/btBulletDynamicsCommon.h"
+#include "dependencies/bullet/BulletCollision/Gimpact/btGImpactCollisionAlgorithm.h"
+#include "dependencies/bullet/BulletCollision/Gimpact/btGImpactShape.h"
 
 #define 	FISCIONX_KEY_SPACE   32
 #define 	FISCIONX_KEY_APOSTROPHE   39 /* ' */
@@ -310,9 +312,10 @@ struct FiscionX {
 
 		struct Shape {
 			btCollisionShape* shape = nullptr;
+			btGImpactMeshShape* gshape = nullptr;
 			btRigidBody::btRigidBodyConstructionInfo info;
 			btDefaultMotionState motion;
-			Shape(btCollisionShape* _shape, btRigidBody::btRigidBodyConstructionInfo _info, btDefaultMotionState _motion);
+			Shape(btCollisionShape* _shape, btRigidBody::btRigidBodyConstructionInfo _info, btDefaultMotionState _motion, btGImpactMeshShape* _gshape);
 		};
 
 		struct Rigidbody {
@@ -340,6 +343,8 @@ struct FiscionX {
 			void setFriction(float friction);
 			void setRollingFriction(float friction);
 			void setDamping(float damping);
+			void lockAxis(Vector3 axis);
+			void setBouncingFactor(float factor);
 		};
 
 		static void DrawDebugWorld(glm::mat4 projection, glm::mat4 view);
@@ -347,10 +352,12 @@ struct FiscionX {
 		static void CreatePhysicsWorld(Vector3 gravity, int maxIterations);
 		static Shape CreateCapsuleShape(Vector3 position, Vector3 rotation, float radius, float height, float mass);
 		static Shape CreateBoxShape(Vector3 position, Vector3 rotation, Vector3 scale, float mass);
-		// static Shape CreatePlaneShape(Vector3 position, Vector3 rotation, Vector3 extends, float mass);
 		static Shape CreateCyllinderShape(Vector3 position, Vector3 rotation, float radius, float height, float mass);
 		static Shape CreateSphereShape(Vector3 position, Vector3 rotation, float radius, float mass);
 		static Shape CreateConeShape(Vector3 position, Vector3 rotation, float radius, float height, float mass);
+
+		static btTriangleMesh* LoadMeshFromFile(const char* path, FiscionX::Vector3 scale);
+		static Shape CreateMeshShape(const char* path, FiscionX::Vector3 position, FiscionX::Vector3 rotation, FiscionX::Vector3 scale, float mass);
 
 		static bool CheckCollisionBetween(Rigidbody* bodyA, Rigidbody* bodyB);
 	};

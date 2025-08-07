@@ -16,6 +16,7 @@ FiscionX::UI::Image* image_didi;
 
 FiscionX::Physics::Rigidbody* groundBody;
 FiscionX::Physics::Rigidbody* capsuleBody;
+FiscionX::Physics::Rigidbody* carBody;
 
 void update() {
     FiscionX::Core::ClockTick();
@@ -25,7 +26,7 @@ void update() {
 
     capsuleBody->activate();
     kratosStaticModel->syncTransformWithBody(capsuleBody, FiscionX::Vector3(0, -1.25f, 0), FiscionX::Vector3(0, 0, 0));
-    
+	
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_E)) {
         std::cout << "Is capsule colliding with ground: " << FiscionX::Physics::CheckCollisionBetween(groundBody, capsuleBody) << std::endl;
     }
@@ -153,15 +154,25 @@ int main() {
     // Physics
 	FiscionX::Physics::Shape groundShape = FiscionX::Physics::CreateBoxShape(FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(10.0f, 0.01f, 10.0f), 0.0f);
 	groundBody = new FiscionX::Physics::Rigidbody(groundShape);
+    groundBody->setBouncingFactor(0.0f);
     FiscionX::Physics::DynamicWorld->addRigidBody(groundBody->body);
 
     // === Cápsula ===
-	FiscionX::Physics::Shape capsuleShape = FiscionX::Physics::CreateCapsuleShape(FiscionX::Vector3(0, 5, 0), FiscionX::Vector3(0, 0, 0), 0.5f, 1.5f, 1.0f);
+	FiscionX::Physics::Shape capsuleShape = FiscionX::Physics::CreateCapsuleShape(FiscionX::Vector3(0, 8, 0), FiscionX::Vector3(0, 0, 0), 0.5f, 1.5f, 1.0f);
     capsuleBody = new FiscionX::Physics::Rigidbody(capsuleShape);
 	capsuleBody->setFriction(0.5f);
 	capsuleBody->setRollingFriction(0.3f);
     capsuleBody->setDamping(0.05f);
+	capsuleBody->lockAxis(FiscionX::Vector3(1, 1, 1));
+    capsuleBody->setBouncingFactor(0.0f);
     FiscionX::Physics::DynamicWorld->addRigidBody(capsuleBody->body);
+
+    // == Mesh Collider ==
+    FiscionX::Physics::Shape carShape = FiscionX::Physics::CreateMeshShape("assets/models/car_scene.glb", FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(0.01f, 0.01f, 0.01f), 0.0f);
+    carShape.gshape->updateBound();
+    carBody = new FiscionX::Physics::Rigidbody(carShape);
+    carBody->setBouncingFactor(0.0f);
+    FiscionX::Physics::DynamicWorld->addRigidBody(carBody->body);
 
     while (!glfwWindowShouldClose(FiscionX::Core::Window)) {
         update();
