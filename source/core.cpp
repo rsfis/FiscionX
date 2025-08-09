@@ -1573,7 +1573,7 @@ void FiscionX::Physics::CreatePhysicsWorld(FiscionX::Vector3 gravity, int maxIte
     debugShader = LoadShader(vertexDebug, fragmentDebug);
     debugDrawer = new GLDebugDrawer();
     debugDrawer->setDebugMode(
-        btIDebugDraw::DBG_DrawWireframe | btIDebugDraw::DBG_DrawAabb
+        btIDebugDraw::DBG_DrawWireframe 
     );
     FiscionX::Physics::DynamicWorld->setDebugDrawer(debugDrawer);
 }
@@ -2019,6 +2019,67 @@ bool FiscionX::Physics::CheckCollisionBetween(FiscionX::Physics::Rigidbody* body
     return false;
 }
 
+// Vehicle
+FiscionX::Physics::Vehicle::Vehicle(FiscionX::Physics::Rigidbody* chassiBody) {
+    tuning = new btRaycastVehicle::btVehicleTuning;
+    raycaster = new btDefaultVehicleRaycaster(FiscionX::Physics::DynamicWorld);
+    vehicle = new btRaycastVehicle(*tuning, chassiBody->body, raycaster);
+    chassiBody->body->setActivationState(DISABLE_DEACTIVATION);
+}
+
+void FiscionX::Physics::Vehicle::addWheel(FiscionX::Vector3 relativePosition, FiscionX::Vector3 wheelDirectionCS0, FiscionX::Vector3 wheelAxleCS,
+    float suspensionRestLength, float wheelRadius, bool isFrontWheel) {
+
+    vehicle->addWheel(btVector3(relativePosition.x, relativePosition.y, relativePosition.z), 
+        btVector3(wheelDirectionCS0.x, wheelDirectionCS0.y, wheelDirectionCS0.z),
+        btVector3(wheelAxleCS.x, wheelAxleCS.y, wheelAxleCS.z),
+        suspensionRestLength, wheelRadius, *tuning, isFrontWheel);
+}
+
+int FiscionX::Physics::Vehicle::getNumWheels() {
+    return vehicle->getNumWheels();
+}
+
+FiscionX::Physics::Vehicle::WheelInfo& FiscionX::Physics::Vehicle::getWheelInfo(int index) {
+    FiscionX::Physics::Vehicle::WheelInfo* info = new FiscionX::Physics::Vehicle::WheelInfo;
+	info->info = &vehicle->getWheelInfo(index);
+    return *info;
+}
+
+void FiscionX::Physics::Vehicle::update(float deltaTime) {
+    vehicle->updateVehicle(FiscionX::Core::deltaTime);
+    vehicle->updateSuspension(FiscionX::Core::deltaTime);
+    vehicle->updateFriction(FiscionX::Core::deltaTime);
+}
+
+void FiscionX::Physics::Vehicle::applyEngineForce(float force, int wheelIndex) {
+	vehicle->applyEngineForce(force, wheelIndex);
+}
+void FiscionX::Physics::Vehicle::setSteeringValue(float value, int wheelIndex) {
+	vehicle->setSteeringValue(value, wheelIndex);
+}
+void FiscionX::Physics::Vehicle::setBrake(float brake, int wheelIndex) {
+	vehicle->setBrake(brake, wheelIndex);
+}
+float FiscionX::Physics::Vehicle::getCurrentSpeedKmh() {
+	return vehicle->getCurrentSpeedKmHour();
+}
+FiscionX::Vector3 FiscionX::Physics::Vehicle::getWheelWorldPosition(int index) {
+    FiscionX::Physics::Vehicle::WheelInfo* info = new FiscionX::Physics::Vehicle::WheelInfo;
+    info->info = &vehicle->getWheelInfo(index);
+    
+    return FiscionX::Vector3(info->info->m_worldTransform.getOrigin().getX(),
+        info->info->m_worldTransform.getOrigin().getY(),
+		info->info->m_worldTransform.getOrigin().getZ());
+}
+FiscionX::Vector3 FiscionX::Physics::Vehicle::getWheelRotation(int index) {
+    FiscionX::Physics::Vehicle::WheelInfo* info = new FiscionX::Physics::Vehicle::WheelInfo;
+    info->info = &vehicle->getWheelInfo(index);
+
+    return FiscionX::Vector3(info->info->m_worldTransform.getRotation().getX(),
+        info->info->m_worldTransform.getRotation().getY(),
+        info->info->m_worldTransform.getRotation().getZ());
+}
 // =================== CORE ===================
     void FiscionX::Core::CreateShadowMap(ShadowMap& sm) {
         glGenFramebuffers(1, &sm.fbo);

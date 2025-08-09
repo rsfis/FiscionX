@@ -33,6 +33,7 @@
 #include "dependencies/bullet/btBulletDynamicsCommon.h"
 #include "dependencies/bullet/BulletCollision/Gimpact/btGImpactCollisionAlgorithm.h"
 #include "dependencies/bullet/BulletCollision/Gimpact/btGImpactShape.h"
+#include "dependencies/bullet/BulletDynamics/Vehicle/btRaycastVehicle.h"
 
 #define 	FISCIONX_KEY_SPACE   32
 #define 	FISCIONX_KEY_APOSTROPHE   39 /* ' */
@@ -345,6 +346,31 @@ struct FiscionX {
 			void setDamping(float damping);
 			void lockAxis(Vector3 axis);
 			void setBouncingFactor(float factor);
+		};
+
+		struct Vehicle {
+			btRaycastVehicle::btVehicleTuning* tuning;
+			btVehicleRaycaster* raycaster;
+			btRaycastVehicle* vehicle;
+
+			struct WheelInfo {
+				btWheelInfo* info;
+			};
+
+			Vehicle(Rigidbody* chassiBody);
+			void addWheel(FiscionX::Vector3 relativePosition, FiscionX::Vector3 wheelDirectionCS0, FiscionX::Vector3 wheelAxleCS,
+				float suspensionRestLength, float wheelRadius, bool);
+			int getNumWheels();
+			WheelInfo& getWheelInfo(int index);
+
+			void update(float deltaTime);
+
+			void applyEngineForce(float force, int wheelIndex);
+			void setSteeringValue(float value, int wheelIndex);
+			void setBrake(float brake, int wheelIndex);
+			FiscionX::Vector3 getWheelWorldPosition(int wheelIndex);
+			FiscionX::Vector3 getWheelRotation(int wheelIndex);
+			float getCurrentSpeedKmh();
 		};
 
 		static void DrawDebugWorld(glm::mat4 projection, glm::mat4 view);
