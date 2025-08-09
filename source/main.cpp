@@ -1,5 +1,5 @@
 ﻿#include "FiscionCore.h"
-#define PROJECT_VERSION "0.8.0"
+#define PROJECT_VERSION "0.9.0"
 
 FiscionX::Light* dirLight;
 FiscionX::Light* pointLight;
@@ -16,13 +16,49 @@ FiscionX::UI::Image* image_didi;
 
 FiscionX::Physics::Rigidbody* groundBody;
 FiscionX::Physics::Rigidbody* capsuleBody;
-FiscionX::Physics::Rigidbody* carBody;
+FiscionX::Physics::Rigidbody* staticCarBody;
+FiscionX::Physics::Rigidbody* carChassiBody;
+FiscionX::Physics::Vehicle* vehicle;
 
 void update() {
     FiscionX::Core::ClockTick();
     skinnedModel->update(FiscionX::Core::deltaTime);
 
     FiscionX::Physics::DynamicWorld->stepSimulation(FiscionX::Core::deltaTime);
+
+    vehicle->update(deltaTime);
+	
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_I)) {
+        vehicle->applyEngineForce(800, 0);
+        vehicle->applyEngineForce(800, 1);
+    }
+    else {
+        vehicle->setBrake(2, 0);
+        vehicle->setBrake(2, 1);
+        vehicle->applyEngineForce(0, 0);
+        vehicle->applyEngineForce(0, 1);
+    }
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_K)) {
+        vehicle->setBrake(10, 0);
+        vehicle->setBrake(10, 1);
+        vehicle->applyEngineForce(-1000, 0);
+        vehicle->applyEngineForce(-1000, 1);
+    }
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_J)) { 
+        vehicle->setSteeringValue(0.5f, 0);
+        vehicle->setSteeringValue(0.5f, 1);
+    }
+    else if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_L)) {
+        vehicle->setSteeringValue(-0.4f, 0);
+        vehicle->setSteeringValue(-0.4f, 1);
+    }
+    else {
+        vehicle->setSteeringValue(0, 0);
+        vehicle->setSteeringValue(0, 1);
+    }
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_T)) {
+        carChassiBody->setTransform(FiscionX::Vector3(3, 10, -4), FiscionX::Vector3(0, 0, 0));
+    }
 
     capsuleBody->activate();
     kratosStaticModel->syncTransformWithBody(capsuleBody, FiscionX::Vector3(0, -1.25f, 0), FiscionX::Vector3(0, 0, 0));
@@ -115,7 +151,7 @@ int main() {
 
     FiscionX::Core::CreateAllShadowMaps();
 
-    // Texto; Video; Cache para Modelos; Filtro Anisotropico e TAA; Optimização; GUI; Detecção de Colisões por Malha (Mesh Colision); Separação; Particulas;
+    // Texto; Video; Botões; Sliders; Viewports; Cache para Modelos; Filtro Anisotropico e TAA; Particulas;
 
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb",
@@ -152,7 +188,7 @@ int main() {
     // exSound->dsp->setParameterFloat(TYPE, AMOUNT);
 
     // Physics
-	FiscionX::Physics::Shape groundShape = FiscionX::Physics::CreateBoxShape(FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(10.0f, 0.01f, 10.0f), 0.0f);
+	FiscionX::Physics::Shape groundShape = FiscionX::Physics::CreateBoxShape(FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(30.0f, 0.01f, 30.0f), 0.0f);
 	groundBody = new FiscionX::Physics::Rigidbody(groundShape);
     groundBody->setBouncingFactor(0.0f);
     FiscionX::Physics::DynamicWorld->addRigidBody(groundBody->body);
@@ -168,11 +204,59 @@ int main() {
     FiscionX::Physics::DynamicWorld->addRigidBody(capsuleBody->body);
 
     // == Mesh Collider ==
-    FiscionX::Physics::Shape carShape = FiscionX::Physics::CreateMeshShape("assets/models/car_scene.glb", FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(0.01f, 0.01f, 0.01f), 0.0f);
-    carShape.gshape->updateBound();
-    carBody = new FiscionX::Physics::Rigidbody(carShape);
-    carBody->setBouncingFactor(0.0f);
-    FiscionX::Physics::DynamicWorld->addRigidBody(carBody->body);
+    FiscionX::Physics::Shape staticCarShape = FiscionX::Physics::CreateMeshShape("assets/models/car_scene.glb", FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(0.01f, 0.01f, 0.01f), 0.0f);
+    staticCarShape.gshape->updateBound();
+    staticCarBody = new FiscionX::Physics::Rigidbody(staticCarShape);
+    staticCarBody->setBouncingFactor(0.0f);
+    FiscionX::Physics::DynamicWorld->addRigidBody(staticCarBody->body);
+
+    // ==== Car ====
+    FiscionX::Physics::Shape carShape = FiscionX::Physics::CreateBoxShape(
+        FiscionX::Vector3(-10, 4, 0),
+        FiscionX::Vector3(0, 0, 0),
+        FiscionX::Vector3(0.8f, 0.5f, 1.7f),
+        880.0f
+	);
+	carChassiBody = new FiscionX::Physics::Rigidbody(carShape);
+    FiscionX::Physics::DynamicWorld->addRigidBody(carChassiBody->body);
+
+    vehicle = new FiscionX::Physics::Vehicle(carChassiBody);
+
+    FiscionX::Vector3 wheelDirectionCS0(0, -1, 0);
+    FiscionX::Vector3 wheelAxleCS(-1, 0, 0);
+
+    float suspensionRestLength = 0.6;
+    float wheelRadius = 0.5;
+    
+    vehicle->addWheel(FiscionX::Vector3(1.0, 0.1f, 1.5), wheelDirectionCS0, wheelAxleCS,
+        suspensionRestLength, wheelRadius, true); // front left
+
+    vehicle->addWheel(FiscionX::Vector3(-1.0, 0.1f, 1.5), wheelDirectionCS0, wheelAxleCS,
+        suspensionRestLength, wheelRadius, true); // frontt right
+
+    vehicle->addWheel(FiscionX::Vector3(1.0, 0.1f, -1.5), wheelDirectionCS0, wheelAxleCS,
+        suspensionRestLength, wheelRadius, false); // back left
+
+    vehicle->addWheel(FiscionX::Vector3(-1.0, 0.1f, -1.5), wheelDirectionCS0, wheelAxleCS,
+        suspensionRestLength, wheelRadius, false); // back right
+
+    
+    FiscionX::Physics::DynamicWorld->addVehicle(vehicle->vehicle);
+
+    for (int i = 0; i < vehicle->getNumWheels(); ++i) {
+        FiscionX::Physics::Vehicle::WheelInfo& wheel = vehicle->getWheelInfo(i);
+        
+        wheel.info->m_suspensionStiffness = 14.0f;             // holds well the weight
+        wheel.info->m_wheelsDampingCompression = 2.0f;         // absorves impacts
+        wheel.info->m_wheelsDampingRelaxation = 3.5f;          // relaxes smoothly
+
+		wheel.info->m_maxSuspensionTravelCm = 150.0f;          // vertical spacement for the wheel to move
+        wheel.info->m_maxSuspensionForce = 10000.0f;           // max suspension force
+
+        wheel.info->m_frictionSlip = 1500.0f;                  // great traction
+        wheel.info->m_rollInfluence = 0.1f;                    // great grip on the ground
+		wheel.info->m_bIsFrontWheel = (i < 2);                 // front
+    }
 
     while (!glfwWindowShouldClose(FiscionX::Core::Window)) {
         update();
