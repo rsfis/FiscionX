@@ -80,8 +80,8 @@ int main() {
 ```
 
 ## 🔧 Build & Setup
-- Download the framework release and paste it in your project source folder.
-- Paste fmod.dll, fmodL.dll and glfw3.dll in the same directory as your project release folder.
-- Paste fmod_vc.lib and fmodL_vc.lib in your project and make sure you linked these static libraries into your project configurations
-- Put the tiny_gltf.cpp, stb_image.cpp and stb_image_write.cpp on your project dependencies.
-- Include FiscionCore.h.
+- Download the newest release
+- Unpack the files
+- Paste the .cpp, .h and the "dependencies" directory into your source project folder.
+- Paste .dll and .lib files into the release or debug folder of your project, or exacly where the output executable is located.
+- Link the static libraries (.lib) and the FiscionX cpp (core.cpp, tiny_gltf.cpp, stb_image.cpp and stb_image_write.cpp) and headers (FiscionCore.h and FiscionShaders.h) files to your compiler.
