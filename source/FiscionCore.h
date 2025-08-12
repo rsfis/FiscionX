@@ -493,9 +493,9 @@ struct FiscionX {
 		glm::vec3 boundingCenter = glm::vec3(0.0f);
 		float boundingRadius = 1.0f;
 
-		bool isAffectedByLight = true;  // Se recebe iluminação difusa/especular
-		bool castsShadows = true;       // Se projeta sombras nos outros
-		bool acceptsShadows = true;     // Se recebe sombras projetadas nele
+		bool isAffectedByLight = true;
+		bool castsShadows = true;
+		bool acceptsShadows = true;
 
 		const std::vector<glm::mat4>& getBoneTransforms() const;
 		Model(const std::string& path, Vector3 pos, Vector3 rot, Vector3 scl);
