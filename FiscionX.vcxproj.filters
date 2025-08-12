@@ -13,41 +13,6 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
-    <Filter Include="Arquivos de Origem\shaders">
-      <UniqueIdentifier>{274a64c9-2bea-40cd-b5f3-ea55f6142eb1}</UniqueIdentifier>
-    </Filter>
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="shaders\depth_2d_skinned_vert.glsl">
-      <Filter>Arquivos de Origem\shaders</Filter>
-    </None>
-    <None Include="shaders\depth_2d_static_vert.glsl">
-      <Filter>Arquivos de Origem\shaders</Filter>
-    </None>
-    <None Include="shaders\depth_cube_skinned_vert.glsl">
-      <Filter>Arquivos de Origem\shaders</Filter>
-    </None>
-    <None Include="shaders\depth_cube_static_vert.glsl">
-      <Filter>Arquivos de Origem\shaders</Filter>
-    </None>
-    <None Include="shaders\depth_fragment.glsl">
-      <Filter>Arquivos de Origem\shaders</Filter>
-    </None>
-    <None Include="shaders\fragment.glsl">
-      <Filter>Arquivos de Origem\shaders</Filter>
-    </None>
-    <None Include="shaders\image_fragment.glsl">
-      <Filter>Arquivos de Origem\shaders</Filter>
-    </None>
-    <None Include="shaders\image_vertex.glsl">
-      <Filter>Arquivos de Origem\shaders</Filter>
-    </None>
-    <None Include="shaders\vertex_skinned.glsl">
-      <Filter>Arquivos de Origem\shaders</Filter>
-    </None>
-    <None Include="shaders\vertex_static.glsl">
-      <Filter>Arquivos de Origem\shaders</Filter>
-    </None>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\core.cpp">
@@ -68,6 +33,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="source\FiscionCore.h">
+      <Filter>Arquivos de Origem</Filter>
+    </ClInclude>
+    <ClInclude Include="source\FiscionShaders.h">
       <Filter>Arquivos de Origem</Filter>
     </ClInclude>
   </ItemGroup>

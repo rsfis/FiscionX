@@ -574,12 +574,16 @@ struct FiscionX {
 		static int FPS;
 		static float lastFPSTime;
 
+		static bool enableShaderCache;
+		static bool enableModelCache;
+
 		static void CreateShadowMap(ShadowMap& sm, int LIGHT_TYPE);
 		static void CreateAllShadowMaps();
 		static glm::mat4 ComputeLightSpaceMatrix(const Light& L);
 		static void RenderAllShadowPasses(glm::mat4 view, glm::mat4 projection, glm::mat4 viewProj);
 
 		static void SetCursorMode(int mode);
+		static void SetCacheSettings(bool _enableShaderCache, bool _enableModelCache);
 		static void NewWindow(int width, int height, const char* window_label);
 		static void Set3DSettings(const int _DIRECTIONAL_LIGHT_SHADOW_SIZE, const int _SPOT_LIGHT_SHADOW_SIZE,
 			const int _POINT_LIGHT_SHADOW_SIZE, const float _SHADOW_VIEW_RADIUS, const float _NEAR_PLANE, const float _FAR_PLANE);

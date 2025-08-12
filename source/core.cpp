@@ -1,30 +1,6 @@
 ﻿#include "FiscionCore.h"
+#include "FiscionShaders.h"
 #define ENGINE_VERSION "0.8.2"
-
-const char* vertexDebug = R"(
-    #version 330 core
-    layout (location = 0) in vec3 aPos;
-    layout (location = 1) in vec3 aColor;
-
-    out vec3 fragColor;
-
-    uniform mat4 viewProj;
-
-    void main() {
-            fragColor = aColor;
-        gl_Position = viewProj * vec4(aPos, 1.0);
-    }
-)";
-
-const char* fragmentDebug = R"(
-    #version 330 core
-    in vec3 fragColor;
-    out vec4 color;
-
-    void main() {
-        color = vec4(fragColor, 1.0);
-    }
-)";
 
 // GLOBALS
 GLFWwindow* FiscionX::Core::Window;
@@ -77,6 +53,9 @@ float FiscionX::Core::lastFrame;
 float FiscionX::Core::deltaTime;
 int FiscionX::Core::FPS;
 float FiscionX::Core::lastFPSTime;
+
+bool FiscionX::Core::enableShaderCache = true;
+bool FiscionX::Core::enableModelCache = true;
 
 float lastX = 640, lastY = 360;
 bool firstMouse = true;
@@ -2464,6 +2443,11 @@ void FiscionX::Core::SetCursorMode(int mode) {
     }
 }
 
+void FiscionX::Core::SetCacheSettings(bool _enableShaderCache, bool _enableModelCache) {
+	FiscionX::Core::enableShaderCache = _enableShaderCache;
+	FiscionX::Core::enableModelCache = _enableModelCache;
+}
+
 void FiscionX::Core::NewWindow(int width, int height, const char* window_label) {
     std::cout << "FiscionX - " << ENGINE_VERSION << std::endl;
 
@@ -2497,6 +2481,7 @@ void FiscionX::Core::NewWindow(int width, int height, const char* window_label) 
     glEnable(GL_DEPTH_TEST);
 
     // ====== SHADERS ======
+	/*
     File* depthFragFile = new File("shaders/depth_fragment.glsl");
     const char* depthFrag = depthFragFile->file.c_str();
     File* depth2DStaticVertFile = new File("shaders/depth_2d_static_vert.glsl");
@@ -2517,14 +2502,15 @@ void FiscionX::Core::NewWindow(int width, int height, const char* window_label) 
     const char* imageVertexShader = imageVertexShaderFile->file.c_str();
     File* imageFragmentShaderFile = new File("shaders/image_fragment.glsl");
     const char* imageFragmentShader = imageFragmentShaderFile->file.c_str();
+	*/
 
-    depthShaderStatic = LoadShader(depth2DStaticVert, depthFrag);
-    depthShaderSkinned = LoadShader(depth2DSkinnedVert, depthFrag);
-    depthShaderCubeStatic = LoadShader(depthCubeStaticVert, depthFrag);
-    depthShaderCubeSkinned = LoadShader(depthCubeSkinnedVert, depthFrag);
-    shaderStatic = LoadShader(vertexStatic, fragmentShader);
-    shaderSkinned = LoadShader(vertexSkinned, fragmentShader);
-    UI::Image::shader = LoadShader(imageVertexShader, imageFragmentShader);
+    depthShaderStatic = LoadShader(depth2DstaticVertex, depth_fragment);
+    depthShaderSkinned = LoadShader(depth2DskinnedVertex, depth_fragment);
+    depthShaderCubeStatic = LoadShader(depthCubeStaticVertex, depth_fragment);
+    depthShaderCubeSkinned = LoadShader(depthCubeSkinnedVertex, depth_fragment);
+    shaderStatic = LoadShader(vertexStatic, fragment);
+    shaderSkinned = LoadShader(vertexSkinned, fragment);
+    UI::Image::shader = LoadShader(imageVertex, imageFragment);
 
     // Configure Shadow Mapping
     glGenFramebuffers(1, &depthMapFBO);
@@ -2627,109 +2613,111 @@ void FiscionX::Core::Draw::SwapBuffers() {
 
 // =================== Shader Loader ===================
 GLuint LoadShader(const char* vertexSrc, const char* fragmentSrc) {
-    std::hash<std::string> hasher;
-    size_t vertexHash = hasher(std::string(vertexSrc));
-    size_t fragHash = hasher(std::string(fragmentSrc));
-    std::string binaryPath = "cache/shaders/" + std::to_string(vertexHash + fragHash) + ".bin";
+	std::hash<std::string> hasher;
+	size_t vertexHash = hasher(std::string(vertexSrc));
+	size_t fragHash = hasher(std::string(fragmentSrc));
+	std::string binaryPath = "cache/shaders/" + std::to_string(vertexHash + fragHash) + ".bin";
 
-    // ───── Tentativa de carregar shader binário ─────
-    if (std::filesystem::exists(binaryPath)) {
-        std::ifstream in(binaryPath, std::ios::binary);
-        if (in) {
-            GLenum format;
-            in.read(reinterpret_cast<char*>(&format), sizeof(format));
+	// ───── Tentativa de carregar shader binário ─────
+	if (std::filesystem::exists(binaryPath) && FiscionX::Core::enableShaderCache == true) {
+		std::ifstream in(binaryPath, std::ios::binary);
+		if (in) {
+			GLenum format;
+			in.read(reinterpret_cast<char*>(&format), sizeof(format));
 
-            in.seekg(0, std::ios::end);
-            size_t fileSize = static_cast<size_t>(in.tellg());
-            size_t size = fileSize - sizeof(format);
-            in.seekg(sizeof(format), std::ios::beg);
+			in.seekg(0, std::ios::end);
+			size_t fileSize = static_cast<size_t>(in.tellg());
+			size_t size = fileSize - sizeof(format);
+			in.seekg(sizeof(format), std::ios::beg);
 
-            std::vector<char> binary(size);
-            in.read(binary.data(), size);
-            in.close();
+			std::vector<char> binary(size);
+			in.read(binary.data(), size);
+			in.close();
 
-            GLuint program = glCreateProgram();
-            glProgramBinary(program, format, binary.data(), static_cast<GLint>(size));
+			GLuint program = glCreateProgram();
+			glProgramBinary(program, format, binary.data(), static_cast<GLint>(size));
 
-            GLint success = 0;
-            glGetProgramiv(program, GL_LINK_STATUS, &success);
-            if (success) {
-                return program;
-            }
-            else {
-                glDeleteProgram(program);
-                std::cerr << "ERR 0x010: Shader program couldn't be loaded from " << binaryPath << std::endl;
-                std::cerr << "SLN 0x001: Deleting binary file and recompiling\n";
+			GLint success = 0;
+			glGetProgramiv(program, GL_LINK_STATUS, &success);
+			if (success) {
+				return program;
+			}
+			else {
+				glDeleteProgram(program);
+				std::cerr << "ERR 0x010: Shader program couldn't be loaded from " << binaryPath << std::endl;
+				std::cerr << "SLN 0x001: Deleting binary file and recompiling\n";
 
-                // Cleaning
-                std::filesystem::remove(binaryPath);
-            }
-        }
-    }
+				// Cleaning
+				std::filesystem::remove(binaryPath);
+			}
+		}
+	}
 
-    // ───── Compilar do zero ─────
-    GLuint vs = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vs, 1, &vertexSrc, nullptr);
-    glCompileShader(vs);
-    GLint success;
-    glGetShaderiv(vs, GL_COMPILE_STATUS, &success);
-    if (!success) {
-        char infoLog[512];
-        glGetShaderInfoLog(vs, 512, nullptr, infoLog);
-        std::cerr << "ERR 0x004::VERTEX_SHADER_COMPILATION_FAILED\n" << infoLog << std::endl;
-        glfwTerminate();
-        system("pause");
-        std::exit(-4);
-    }
+	// ───── Compilar do zero ─────
+	GLuint vs = glCreateShader(GL_VERTEX_SHADER);
+	glShaderSource(vs, 1, &vertexSrc, nullptr);
+	glCompileShader(vs);
+	GLint success;
+	glGetShaderiv(vs, GL_COMPILE_STATUS, &success);
+	if (!success) {
+		char infoLog[512];
+		glGetShaderInfoLog(vs, 512, nullptr, infoLog);
+		std::cerr << "ERR 0x004::VERTEX_SHADER_COMPILATION_FAILED\n" << infoLog << std::endl;
+		glfwTerminate();
+		system("pause");
+		std::exit(-4);
+	}
 
-    GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(fs, 1, &fragmentSrc, nullptr);
-    glCompileShader(fs);
-    glGetShaderiv(fs, GL_COMPILE_STATUS, &success);
-    if (!success) {
-        char infoLog[512];
-        glGetShaderInfoLog(fs, 512, nullptr, infoLog);
-        std::cerr << "ERR 0x005::FRAGMENT_SHADER_COMPILATION_FAILED\n" << infoLog << std::endl;
-        glfwTerminate();
-        system("pause");
-        std::exit(-5);
-    }
+	GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
+	glShaderSource(fs, 1, &fragmentSrc, nullptr);
+	glCompileShader(fs);
+	glGetShaderiv(fs, GL_COMPILE_STATUS, &success);
+	if (!success) {
+		char infoLog[512];
+		glGetShaderInfoLog(fs, 512, nullptr, infoLog);
+		std::cerr << "ERR 0x005::FRAGMENT_SHADER_COMPILATION_FAILED\n" << infoLog << std::endl;
+		glfwTerminate();
+		system("pause");
+		std::exit(-5);
+	}
 
-    GLuint program = glCreateProgram();
-    glAttachShader(program, vs);
-    glAttachShader(program, fs);
-    glLinkProgram(program);
-    glGetProgramiv(program, GL_LINK_STATUS, &success);
-    if (!success) {
-        char infoLog[512];
-        glGetProgramInfoLog(program, 512, nullptr, infoLog);
-        std::cerr << "ERR 0x006::SHADER_PROGRAM_LINKING_FAILED\n" << infoLog << std::endl;
-        glfwTerminate();
-        system("pause");
-        std::exit(-6);
-    }
+	GLuint program = glCreateProgram();
+	glAttachShader(program, vs);
+	glAttachShader(program, fs);
+	glLinkProgram(program);
+	glGetProgramiv(program, GL_LINK_STATUS, &success);
+	if (!success) {
+		char infoLog[512];
+		glGetProgramInfoLog(program, 512, nullptr, infoLog);
+		std::cerr << "ERR 0x006::SHADER_PROGRAM_LINKING_FAILED\n" << infoLog << std::endl;
+		glfwTerminate();
+		system("pause");
+		std::exit(-6);
+	}
 
-    glDeleteShader(vs);
-    glDeleteShader(fs);
+	glDeleteShader(vs);
+	glDeleteShader(fs);
 
-    // ───── Tentar salvar o binário ─────
-    GLint numFormats = 0;
-    glGetIntegerv(GL_NUM_PROGRAM_BINARY_FORMATS, &numFormats);
-    if (numFormats > 0) {
-        GLint length = 0;
-        glGetProgramiv(program, GL_PROGRAM_BINARY_LENGTH, &length);
+	// ───── Tentar salvar o binário ─────
+	if (FiscionX::Core::enableShaderCache) {
+		GLint numFormats = 0;
+		glGetIntegerv(GL_NUM_PROGRAM_BINARY_FORMATS, &numFormats);
+		if (numFormats > 0) {
+			GLint length = 0;
+			glGetProgramiv(program, GL_PROGRAM_BINARY_LENGTH, &length);
 
-        if (length > 0) {
-            std::vector<char> binary(length);
-            GLenum format = 0;
-            glGetProgramBinary(program, length, nullptr, &format, binary.data());
+			if (length > 0) {
+				std::vector<char> binary(length);
+				GLenum format = 0;
+				glGetProgramBinary(program, length, nullptr, &format, binary.data());
 
-            std::ofstream out(binaryPath, std::ios::binary);
-            out.write(reinterpret_cast<const char*>(&format), sizeof(format));
-            out.write(binary.data(), binary.size());
-            out.close();
-        }
-    }
+				std::ofstream out(binaryPath, std::ios::binary);
+				out.write(reinterpret_cast<const char*>(&format), sizeof(format));
+				out.write(binary.data(), binary.size());
+				out.close();
+			}
+		}
+	}
 
     return program;
 }

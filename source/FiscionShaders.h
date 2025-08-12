@@ -1,3 +1,108 @@
+const char* vertexDebug = R"(
+#version 330 core
+layout (location = 0) in vec3 aPos;
+layout (location = 1) in vec3 aColor;
+
+out vec3 fragColor;
+
+uniform mat4 viewProj;
+
+void main() {
+    fragColor = aColor;
+    gl_Position = viewProj * vec4(aPos, 1.0);
+}
+)";
+
+const char* fragmentDebug = R"(
+#version 330 core
+in vec3 fragColor;
+out vec4 color;
+
+void main() {
+    color = vec4(fragColor, 1.0);
+}
+)";
+
+const char* depth2DskinnedVertex = R"(
+#version 420 core
+
+layout(location = 0) in vec3 aPos;
+layout(location = 4) in uvec4 aJoint;
+layout(location = 5) in vec4  aWeight;
+
+layout(std140, binding = 0) uniform Skin { mat4 bones[100]; };
+
+uniform mat4 model;
+uniform mat4 lightSpaceMatrix;
+
+void main() {
+    mat4 skinMat =
+        aWeight.x * bones[aJoint.x]
+        + aWeight.y * bones[aJoint.y]
+        + aWeight.z * bones[aJoint.z]
+        + aWeight.w * bones[aJoint.w];
+    vec4 skinnedPos = skinMat * vec4(aPos, 1.0);
+    gl_Position = lightSpaceMatrix * model * skinnedPos;
+}
+)";
+
+const char* depth2DstaticVertex = R"(
+#version 420 core
+
+layout(location = 0) in vec3 aPos;
+
+uniform mat4 model;
+uniform mat4 lightSpaceMatrix;
+
+void main() {
+	gl_Position = lightSpaceMatrix * model * vec4(aPos, 1.0);
+}
+)";
+
+const char* depthCubeSkinnedVertex = R"(
+#version 420 core
+
+layout(location = 0) in vec3  aPos;
+layout(location = 4) in uvec4 aJoint;
+layout(location = 5) in vec4  aWeight;
+
+layout(std140, binding = 0) uniform Skin { mat4 bones[100]; };
+
+uniform mat4 model;
+uniform mat4 shadowMatrices[15];
+
+void main() {
+    mat4 skinMat =
+        aWeight.x * bones[aJoint.x]
+        + aWeight.y * bones[aJoint.y]
+        + aWeight.z * bones[aJoint.z]
+        + aWeight.w * bones[aJoint.w];
+    vec4 skinnedPos = skinMat * vec4(aPos, 1.0);
+    vec4 worldPos = model * skinnedPos;
+    gl_Position = shadowMatrices[gl_InstanceID] * worldPos;
+}
+)";
+
+const char* depthCubeStaticVertex = R"(
+#version 420 core
+
+layout(location = 0) in vec3 aPos;
+
+uniform mat4 model;
+uniform mat4 shadowMatrices[15];
+
+void main() {
+	vec4 worldPos = model * vec4(aPos, 1.0);
+	gl_Position = shadowMatrices[gl_InstanceID] * worldPos;
+}
+)";
+
+const char* depth_fragment = R"(
+#version 420 core
+void main() {}
+)";
+
+const char* fragment = R"(
 #version 330 core
 
 // tipos de luz
@@ -186,7 +291,165 @@ void main() {
     result = max(result, baseColor * 0.7);
     result = mix(result, result + transLight, transAmt);
     FragColor = vec4(result, (alphaMode == 2 ? baseSample.a : 1.0) * alpha);
-} else {
+  } else {
     FragColor = vec4(result, (alphaMode == 2 ? baseSample.a : 1.0) * alpha);
+  }
 }
+)";
+
+const char* imageFragment = R"(
+#version 330 core
+in vec2 TexCoord;
+out vec4 FragColor;
+
+uniform sampler2D tex;
+uniform float alpha;
+
+void main() {
+    vec4 color = texture(tex, TexCoord);
+    FragColor = vec4(color.rgb, color.a * alpha);
 }
+)";
+
+const char* imageVertex = R"(
+#version 330 core
+
+layout (location = 0) in vec2 aPos;
+layout (location = 1) in vec2 aTex;
+
+out vec2 TexCoord;
+
+uniform vec2 position;
+uniform vec2 scale;
+uniform float rotation;
+uniform float aspect_ratio;
+
+void main()
+{
+    // Passo 1: trazer para centro ([-1,1] quad -> [-0.5, 0.5])
+    vec2 centered = aPos * 0.5;
+
+    // Passo 2: aplicar rotação
+    float rad = radians(rotation);
+    mat2 rot = mat2(cos(rad), -sin(rad),
+                    sin(rad),  cos(rad));
+    vec2 rotated = rot * centered;
+
+    // Passo 3: corrigir aspect ratio (depois da rotação!)
+    rotated.y *= aspect_ratio;
+
+    // Passo 4: aplicar escala
+    vec2 scaled = rotated * scale;
+
+    // Passo 5: aplicar posição final
+    vec2 translated = scaled + position;
+
+    gl_Position = vec4(translated, 0.0, 1.0);
+    TexCoord = aTex;
+}
+)";
+
+const char* vertexSkinned = R"(
+#version 330 core
+
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec3 aNormal;
+layout(location = 2) in vec4 aTangent;
+layout(location = 3) in vec2 aTexCoord;
+layout(location = 4) in uvec4 aJoint;
+layout(location = 5) in vec4 aWeight;
+
+layout(std140) uniform Skin {
+    mat4 bones[100];
+};
+
+out VS_OUT {
+    vec3 FragPos;
+    vec3 Normal;
+    vec3 Tangent;
+    vec3 Bitangent;
+    vec2 TexCoords;
+    vec4 FragPosLightSpace[15];
+} vs_out;
+
+uniform mat4 model;
+uniform mat4 view;
+uniform mat4 projection;
+uniform mat4 lightSpaceMatrices[15];
+
+vec4 skinPosition(vec4 pos) {
+    mat4 skinMat =
+          aWeight.x * bones[aJoint.x]
+        + aWeight.y * bones[aJoint.y]
+        + aWeight.z * bones[aJoint.z]
+        + aWeight.w * bones[aJoint.w];
+    return skinMat * pos;
+}
+
+void main() {
+    vec4 skinned = skinPosition(vec4(aPos, 1.0));
+    vec4 worldPos = model * skinned;
+    vs_out.FragPos = worldPos.xyz;
+
+    mat3 normalMatrix = mat3(transpose(inverse(model)));
+    vs_out.Normal = normalize(normalMatrix * aNormal);
+
+    vec3 T = normalize(mat3(model) * aTangent.xyz);
+    vec3 N = normalize(vs_out.Normal);
+    vec3 B = cross(N, T) * aTangent.w;
+    vs_out.Tangent = T;
+    vs_out.Bitangent = B;
+
+    vs_out.TexCoords = aTexCoord;
+
+    for (int i = 0; i < 15; ++i) {
+        vs_out.FragPosLightSpace[i] = lightSpaceMatrices[i] * worldPos;
+    }
+
+    gl_Position = projection * view * worldPos;
+}
+)";
+
+const char* vertexStatic = R"(
+#version 330 core
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec3 aNormal;
+layout(location = 2) in vec4 aTangent;
+layout(location = 3) in vec2 aTexCoord;
+
+out VS_OUT {
+    vec3 FragPos;
+    vec3 Normal;
+    vec3 Tangent;
+    vec3 Bitangent;
+    vec2 TexCoords;
+    vec4 FragPosLightSpace[15];
+} vs_out;
+
+uniform mat4 model;
+uniform mat4 view;
+uniform mat4 projection;
+uniform mat4 lightSpaceMatrices[15]; // um por luz
+
+void main() {
+    vec4 worldPos = model * vec4(aPos, 1.0);
+    vs_out.FragPos = worldPos.xyz;
+
+    mat3 normalMatrix = mat3(transpose(inverse(model)));
+    vs_out.Normal = normalize(normalMatrix * aNormal);
+
+    vec3 T = normalize(mat3(model) * aTangent.xyz);
+    vec3 N = normalize(vs_out.Normal);
+    vec3 B = cross(N, T) * aTangent.w;
+    vs_out.Tangent = T;
+    vs_out.Bitangent = B;
+
+    vs_out.TexCoords = aTexCoord;
+
+    for (int i = 0; i < 15; ++i) {
+        vs_out.FragPosLightSpace[i] = lightSpaceMatrices[i] * worldPos;
+    }
+
+    gl_Position = projection * view * worldPos;
+}
+)";
