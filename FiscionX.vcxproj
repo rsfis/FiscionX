@@ -19,18 +19,6 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <None Include="shaders\depth_2d_skinned_vert.glsl" />
-    <None Include="shaders\depth_2d_static_vert.glsl" />
-    <None Include="shaders\depth_cube_skinned_vert.glsl" />
-    <None Include="shaders\depth_cube_static_vert.glsl" />
-    <None Include="shaders\depth_fragment.glsl" />
-    <None Include="shaders\fragment.glsl" />
-    <None Include="shaders\image_fragment.glsl" />
-    <None Include="shaders\image_vertex.glsl" />
-    <None Include="shaders\vertex_skinned.glsl" />
-    <None Include="shaders\vertex_static.glsl" />
-  </ItemGroup>
-  <ItemGroup>
     <ClCompile Include="source\core.cpp" />
     <ClCompile Include="source\main.cpp" />
     <ClCompile Include="source\stb_image.cpp" />
@@ -39,6 +27,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="source\FiscionCore.h" />
+    <ClInclude Include="source\FiscionShaders.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>

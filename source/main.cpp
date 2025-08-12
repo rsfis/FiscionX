@@ -124,6 +124,7 @@ void draw() {
 
 int main() {
     FiscionX::Core::Set3DSettings(4096, 1024, 512, 15.0f, 0.01f, 100.0f);
+    FiscionX::Core::SetCacheSettings(true, true);
     FiscionX::Core::NewWindow(1280, 720, "FiscionX");
 	FiscionX::Core::SetCursorMode(FISCIONX_CURSOR_DISABLED);
     FiscionX::Physics::CreatePhysicsWorld(FiscionX::Vector3(0, -9.81f, 0), 10);
