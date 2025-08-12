@@ -1,5 +1,5 @@
 ﻿#include "FiscionCore.h"
-#define PROJECT_VERSION "0.9.0"
+#define PROJECT_VERSION "0.8.2"
 
 FiscionX::Light* dirLight;
 FiscionX::Light* pointLight;
@@ -22,10 +22,16 @@ FiscionX::Physics::Vehicle* vehicle;
 
 void update() {
     FiscionX::Core::ClockTick();
+
+    FiscionX::Core::AudioSystem.listenerPos = { FiscionX::Core::Camera.position[0], FiscionX::Core::Camera.position[1], FiscionX::Core::Camera.position[2] };
+    FiscionX::Core::AudioSystem.forward = { -FiscionX::Core::Camera.front[0], FiscionX::Core::Camera.front[1], -FiscionX::Core::Camera.front[2] };
+    FiscionX::Core::AudioSystem.up = { -FiscionX::Core::Camera.up[0], FiscionX::Core::Camera.up[1], -FiscionX::Core::Camera.up[2] };
+
     skinnedModel->update(FiscionX::Core::deltaTime);
 
     FiscionX::Physics::DynamicWorld->stepSimulation(FiscionX::Core::deltaTime);
 
+    // VEHICLE
     vehicle->update(deltaTime);
 	
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_I)) {
@@ -60,6 +66,7 @@ void update() {
         carChassiBody->setTransform(FiscionX::Vector3(3, 10, -4), FiscionX::Vector3(0, 0, 0));
     }
 
+    // CAPSULE & KRATOS
     capsuleBody->activate();
     kratosStaticModel->syncTransformWithBody(capsuleBody, FiscionX::Vector3(0, -1.25f, 0), FiscionX::Vector3(0, 0, 0));
 	
@@ -73,6 +80,15 @@ void update() {
         capsuleBody->applyCentralForce(FiscionX::Vector3(0, 0, 2));
     }
 
+    // RAYCAST
+	bool rayCameraCollidingWithCapsuleBody = FiscionX::Physics::Raycast::CheckCollisionWithBody(capsuleBody, FiscionX::Vector3(FiscionX::Core::Camera.position.x, FiscionX::Core::Camera.position.y, FiscionX::Core::Camera.position.z), FiscionX::Vector3(FiscionX::Core::Camera.position.x + FiscionX::Core::Camera.front.x * 5, FiscionX::Core::Camera.position.y + FiscionX::Core::Camera.front.y * 5, FiscionX::Core::Camera.position.z + FiscionX::Core::Camera.front.z * 5));
+    const btRigidBody* firstBodyCollidedWithRay = FiscionX::Physics::Raycast::GetFirstBodyCollided(FiscionX::Vector3(FiscionX::Core::Camera.position.x, FiscionX::Core::Camera.position.y, FiscionX::Core::Camera.position.z), FiscionX::Vector3(FiscionX::Core::Camera.position.x + FiscionX::Core::Camera.front.x * 5, FiscionX::Core::Camera.position.y + FiscionX::Core::Camera.front.y * 5, FiscionX::Core::Camera.position.z + FiscionX::Core::Camera.front.z * 5));
+	
+    if (FiscionX::Input::GetMouseButtonPressed(FISCIONX_MOUSE_BUTTON_1)) {
+		std::cout << "Is ray colliding with capsule body: " << rayCameraCollidingWithCapsuleBody << std::endl;
+    }
+
+    // CAMERA
     float camVel = FiscionX::Core::Camera.speed * FiscionX::Core::deltaTime;
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_W)) FiscionX::Core::Camera.position += FiscionX::Core::Camera.front * camVel;
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_S)) FiscionX::Core::Camera.position -= FiscionX::Core::Camera.front * camVel;
@@ -99,16 +115,17 @@ void draw() {
     kratosStaticModel->draw(FiscionX::Core::shaderStatic, glm::mat4(1.0f), 0, false, view, projection);
     skinnedModel->draw(FiscionX::Core::shaderSkinned, glm::mat4(1.0f), 0, false, view, projection);
 
-    image_didi->draw(-0.5f, -0.5f);
+    image_didi->draw(FiscionX::Vector2(- 0.5f, -0.5f));
 
-    FiscionX::Physics::DrawDebugWorld(projection, view);
+    //FiscionX::Physics::DrawDebugWorld(projection, view);
 
     FiscionX::Core::Draw::SwapBuffers();
 }
 
 int main() {
-    FiscionX::Core::Set3DSettings(4096, 4096, 4096, 15.0f, 0.01f, 100.0f);
+    FiscionX::Core::Set3DSettings(4096, 1024, 512, 15.0f, 0.01f, 100.0f);
     FiscionX::Core::NewWindow(1280, 720, "FiscionX");
+	FiscionX::Core::SetCursorMode(FISCIONX_CURSOR_DISABLED);
     FiscionX::Physics::CreatePhysicsWorld(FiscionX::Vector3(0, -9.81f, 0), 10);
 
     dirLight = new FiscionX::Light();
@@ -123,6 +140,7 @@ int main() {
     dirLight->linear = 0.0f;
     dirLight->quadratic = 0.0f;
     dirLight->hasGlow = false;
+    dirLight->enableShadows = true;
 
     pointLight = new FiscionX::Light();
     pointLight->type = FiscionX::LIGHT_POINT;
@@ -134,6 +152,7 @@ int main() {
     pointLight->quadratic = 0.012;
     pointLight->maxDistance = 10;
     pointLight->hasGlow = false;
+    pointLight->enableShadows = true;
 
     spotLight = new FiscionX::Light();
     spotLight->type = FiscionX::LIGHT_SPOT;
@@ -148,11 +167,12 @@ int main() {
     spotLight->linear = 0.09f;
     spotLight->quadratic = 0.032f;
     spotLight->hasGlow = false;
-
+    spotLight->enableShadows = true;
+    
     FiscionX::Core::CreateAllShadowMaps();
 
     // Texto; Video; Botões; Sliders; Viewports; Cache para Modelos; Filtro Anisotropico e TAA; Particulas;
-
+    
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb",
         FiscionX::Vector3(0, 0, 0),

@@ -1,5 +1,5 @@
 ﻿#include "FiscionCore.h"
-#define ENGINE_VERSION "1.0.0"
+#define ENGINE_VERSION "0.8.2"
 
 const char* vertexDebug = R"(
     #version 330 core
@@ -37,9 +37,9 @@ GLuint FiscionX::Core::depthShaderCubeSkinned;
 GLuint FiscionX::Core::shaderStatic;
 GLuint FiscionX::Core::shaderSkinned;
 
-unsigned int FiscionX::Core::SHADOW_WIDTH;
-unsigned int FiscionX::Core::SHADOW_HEIGHT;
-unsigned int FiscionX::Core::SHADOW_CUBE_SIZE;
+int FiscionX::Core::DIR_SHADOW_SIZE = 4096;
+int FiscionX::Core::SPOT_SHADOW_SIZE = 1024;
+int FiscionX::Core::POINT_SHADOW_SIZE = 512;
 float        FiscionX::Core::NEAR_PLANE;
 float         FiscionX::Core::FAR_PLANE;
 float         FiscionX::Core::SHADOW_VIEW_RADIUS;
@@ -62,6 +62,10 @@ GLuint FiscionX::Physics::debugShader = 0;
 std::vector<float> FiscionX::Physics::debugLines;
 FiscionX::Physics::GLDebugDrawer* FiscionX::Physics::debugDrawer;
 
+FiscionX::Vector2 FiscionX::Input::mousePosition;
+FiscionX::Vector2 FiscionX::Input::mouseDelta;
+FiscionX::Vector2 FiscionX::Input::scrollOffset;
+
 FiscionX::AudioSystem FiscionX::Core::AudioSystem;
 
 std::vector<FiscionX::Sound> FiscionX::Core::AllSounds;
@@ -82,7 +86,7 @@ float deltaTime = 0.0f, lastFrame = 0;
 GLuint LoadShader(const char* vertexSrc, const char* fragmentSrc);
 
 // ====================== Math ========================
-float FiscionX::Math::getDistance3D(glm::vec3 pos1, glm::vec3 pos2) {
+float FiscionX::Math::getDistance3D(FiscionX::Vector3 pos1, FiscionX::Vector3 pos2) {
     return std::sqrt(std::pow(pos2.x - pos1.x, 2) + std::pow(pos2.y - pos1.y, 2) + std::pow(pos2.z - pos1.z, 2));
 }
 
@@ -236,7 +240,7 @@ float FiscionX::Math::getDistance3D(glm::vec3 pos1, glm::vec3 pos2) {
         glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(quad), quad);
     }
 
-    void FiscionX::UI::Image::draw(float x, float y) {
+    void FiscionX::UI::Image::draw(FiscionX::Vector2 position) {
         glDisable(GL_DEPTH_TEST);
         glUseProgram(shader);
         glBindVertexArray(VAO);
@@ -244,7 +248,7 @@ float FiscionX::Math::getDistance3D(glm::vec3 pos1, glm::vec3 pos2) {
         glBindTexture(GL_TEXTURE_2D, texture);
         glUniform1i(glGetUniformLocation(shader, "tex"), 0);
 
-        glUniform2f(glGetUniformLocation(shader, "position"), x, y);
+        glUniform2f(glGetUniformLocation(shader, "position"), position.x, position.y);
         float sx = scale.x;
         float sy = scale.y;
         glUniform2f(glGetUniformLocation(shader, "scale"), sx, sy);
@@ -321,9 +325,7 @@ FMOD::System* FMOD_SYS;
 
     void FiscionX::AudioSystem::update() {
         FMOD_SYS->update();
-        listenerPos = { FiscionX::Core::Camera.position[0], FiscionX::Core::Camera.position[1], FiscionX::Core::Camera.position[2]};
-        forward = { -FiscionX::Core::Camera.front[0], FiscionX::Core::Camera.front[1], -FiscionX::Core::Camera.front[2] };
-        up = { -FiscionX::Core::Camera.up[0], FiscionX::Core::Camera.up[1], -FiscionX::Core::Camera.up[2] };
+        
         FMOD_SYS->set3DListenerAttributes(0, &listenerPos, &velocity, &forward, &up);
     }
 
@@ -376,6 +378,13 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
     lastY = ypos;
 
     FiscionX::Core::Camera.ProcessMouse(xoffset, yoffset);
+
+	FiscionX::Input::mousePosition = FiscionX::Vector2(xpos, ypos);
+	FiscionX::Input::mouseDelta = FiscionX::Vector2(xoffset, yoffset);
+}
+
+void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
+    FiscionX::Input::scrollOffset = FiscionX::Vector2(xoffset, yoffset);
 }
 
 // ==================== LIGHTS ======================
@@ -1402,6 +1411,10 @@ void FiscionX::generateTangents(
         glUniform3f(glGetUniformLocation(shader, "environmentSkyColor"), 0.3f, 0.3f, 0.35f);
         glUniform3f(glGetUniformLocation(shader, "environmentGroundColor"), 0.05f, 0.05f, 0.07f);
 
+        // SHADOW SETTINGS
+        glUniform1i(glGetUniformLocation(shader, "isAffectedByLight"), this->isAffectedByLight ? 1 : 0);
+        glUniform1i(glGetUniformLocation(shader, "acceptsShadows"), this->acceptsShadows ? 1 : 0);
+
         // Alpha Settings
         glUniform1f(glGetUniformLocation(shader, "alpha"), alpha);
 
@@ -1443,7 +1456,7 @@ void FiscionX::generateTangents(
 
     void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLuint depthMap, bool depthPass, glm::mat4 view, glm::mat4 projection) {
         int numLights = static_cast<int>(FiscionX::Core::AllLights.size());
-        
+
         glUseProgram(shader);
 
         glUniformMatrix4fv(glGetUniformLocation(shader, "view"), 1, GL_FALSE, glm::value_ptr(view));
@@ -1483,13 +1496,13 @@ void FiscionX::generateTangents(
                 glUniformMatrix4fv(glGetUniformLocation(shader, ("lightSpaceMatrices[" + idx + "]").c_str()), 1, GL_FALSE, glm::value_ptr(sm.lightSpaceMatrix));
             }
         }
-         glm::mat4 baseMatrix =
+        glm::mat4 baseMatrix =
             glm::translate(glm::mat4(1.0f), glm::vec3(position.x, position.y, position.z))
             * glm::eulerAngleXYZ(rotation.y, rotation.x, rotation.z)
             * glm::scale(glm::mat4(1.0f), glm::vec3(scale.x, scale.y, scale.z));
-        
+
         updateOcclusion(view * projection);
-		if (physicsSyncTransformMatrix != glm::mat4(1.0f)) {
+        if (physicsSyncTransformMatrix != glm::mat4(1.0f)) {
             baseMatrix = glm::scale(physicsSyncTransformMatrix, glm::vec3(scale.x, scale.y, scale.z));
         }
 
@@ -1557,6 +1570,29 @@ bool FiscionX::Input::GetKeyPressed(int key) {
         return true;
     }
     return false;
+}
+
+bool FiscionX::Input::GetKeyReleased(int key) {
+    if (glfwGetKey(FiscionX::Core::Window, key) == GLFW_RELEASE) {
+        return true;
+    }
+    return false;
+}
+
+FiscionX::Vector2 FiscionX::Input::GetMousePosition() {
+    return mousePosition;
+}
+
+FiscionX::Vector2 FiscionX::Input::GetMouseDelta() {
+    return mouseDelta;
+}
+
+FiscionX::Vector2 FiscionX::Input::GetScrollOffset() {
+    return scrollOffset;
+}
+
+bool FiscionX::Input::GetMouseButtonPressed(int button) {
+	return glfwGetMouseButton(FiscionX::Core::Window, button) == GLFW_PRESS;
 }
 
 // ================ Physics ===================
@@ -2080,13 +2116,60 @@ FiscionX::Vector3 FiscionX::Physics::Vehicle::getWheelRotation(int index) {
         info->info->m_worldTransform.getRotation().getY(),
         info->info->m_worldTransform.getRotation().getZ());
 }
+
+// Raycast
+bool FiscionX::Physics::Raycast::CheckCollisionWithBody(FiscionX::Physics::Rigidbody* body, FiscionX::Vector3 origin, FiscionX::Vector3 end)
+{
+    btCollisionWorld::ClosestRayResultCallback rayCallback(btVector3(origin.x, origin.y, origin.z), btVector3(end.x, end.y, end.z));
+    FiscionX::Physics::DynamicWorld->rayTest(btVector3(origin.x, origin.y, origin.z), btVector3(end.x, end.y, end.z), rayCallback);
+
+    if (rayCallback.hasHit())
+    {
+        const btRigidBody* hitBody = btRigidBody::upcast(rayCallback.m_collisionObject);
+
+        if (body->body == hitBody) {
+            return true;
+        }
+    }
+    else
+    {
+        return false;
+    }
+}
+
+const btRigidBody* FiscionX::Physics::Raycast::GetFirstBodyCollided(FiscionX::Vector3 origin, FiscionX::Vector3 end)
+{
+    btCollisionWorld::ClosestRayResultCallback rayCallback(btVector3(origin.x, origin.y, origin.z), btVector3(end.x, end.y, end.z));
+    FiscionX::Physics::DynamicWorld->rayTest(btVector3(origin.x, origin.y, origin.z), btVector3(end.x, end.y, end.z), rayCallback);
+
+    if (rayCallback.hasHit())
+    {
+        const btRigidBody* hitBody = btRigidBody::upcast(rayCallback.m_collisionObject);
+
+        if (hitBody)
+            return hitBody;
+    }
+    else
+    {
+        return nullptr;
+    }
+}
 // =================== CORE ===================
-    void FiscionX::Core::CreateShadowMap(ShadowMap& sm) {
+    void FiscionX::Core::CreateShadowMap(ShadowMap& sm, int LIGHT_TYPE) {
         glGenFramebuffers(1, &sm.fbo);
         glGenTextures(1, &sm.depthMap);
         glBindTexture(GL_TEXTURE_2D, sm.depthMap);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT,
-            SHADOW_WIDTH, SHADOW_HEIGHT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+        if (LIGHT_TYPE == LIGHT_DIRECTIONAL) {
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT,
+                DIR_SHADOW_SIZE, DIR_SHADOW_SIZE, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+        } else if (LIGHT_TYPE == LIGHT_SPOT) {
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT,
+                SPOT_SHADOW_SIZE, SPOT_SHADOW_SIZE, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+        } else if (LIGHT_TYPE == LIGHT_POINT) {
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT,
+                POINT_SHADOW_SIZE, POINT_SHADOW_SIZE, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+        }
+        
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE);
@@ -2110,7 +2193,7 @@ FiscionX::Vector3 FiscionX::Physics::Vehicle::getWheelRotation(int index) {
         // ======= Create and Compute Shadow Maps =======
         for (const FiscionX::Light* L : FiscionX::Core::AllLights) {
             FiscionX::ShadowMap sm;
-            FiscionX::Core::CreateShadowMap(sm);
+            FiscionX::Core::CreateShadowMap(sm, L->type);
             sm.lightSpaceMatrix = FiscionX::Core::ComputeLightSpaceMatrix(*L);
             FiscionX::Core::AllShadowMaps.push_back(sm);
         }
@@ -2156,8 +2239,9 @@ FiscionX::Vector3 FiscionX::Physics::Vehicle::getWheelRotation(int index) {
     }
 
     void FiscionX::Core::RenderAllShadowPasses(glm::mat4 view, glm::mat4 projection, glm::mat4 viewProj) {
-        // Atualizar UBO de todos os modelos skinned apenas uma vez
+        // update skin UBOs once
         for (auto& model : AllModels) {
+            if (!model->castsShadows) continue;
             if (model->isSkinned) {
                 const std::vector<glm::mat4>& bones = model->getBoneTransforms();
                 glBindBuffer(GL_UNIFORM_BUFFER, model->uboSkin);
@@ -2166,14 +2250,67 @@ FiscionX::Vector3 FiscionX::Physics::Vehicle::getWheelRotation(int index) {
             }
         }
 
+        float now = static_cast<float>(glfwGetTime());
+
+        // cache model world positions
+        std::vector<glm::vec3> modelWorldPositions;
+        modelWorldPositions.reserve(AllModels.size());
+        for (auto& m : AllModels) {
+            if (!m->castsShadows) continue;
+            glm::vec3 worldPos = glm::vec3(m->position.x, m->position.y, m->position.z);
+            modelWorldPositions.push_back(worldPos);
+        }
+
+        // track camera motion so directional shadows update when camera moves
+        static glm::vec3 _lastCameraPos = Camera.position;
+        bool cameraMoved = glm::length(_lastCameraPos - Camera.position) > 0.05f; // tweak threshold if needed
+        _lastCameraPos = Camera.position;
+
         for (size_t i = 0; i < AllLights.size(); ++i) {
-            const Light& L = *AllLights[i];
+            Light& L = *AllLights[i];             // non-const to update timing fields
             ShadowMap& sm = AllShadowMaps[i];
 
+            if (!L.enableShadows) continue;
+
+            // decide if we should rebuild this light's shadow map
+            bool moved = (L.lastPosition != glm::vec3(FLT_MAX)) && (glm::length(L.lastPosition - L.position) > 0.01f);
+            bool timeExpired = (now - L.lastShadowUpdateTime) >= L.shadowUpdatePeriod;
+            bool firstTime = (L.lastPosition == glm::vec3(FLT_MAX));
+
+            bool shouldUpdate = moved || timeExpired || firstTime;
+            // directional must also update if camera moved (because light space uses camera center)
+            if (L.type == LIGHT_DIRECTIONAL) shouldUpdate = shouldUpdate || cameraMoved;
+
+            if (!shouldUpdate) continue;
+
+            // record update
+            L.lastShadowUpdateTime = now;
+            L.lastPosition = L.position;
+
             if (L.type == LIGHT_POINT) {
+                // --- OPTIMIZED: prefilter models in range once ---
+                glm::vec3 pos = L.position;
+                std::vector<size_t> staticIndices;
+                std::vector<size_t> skinnedIndices;
+                staticIndices.reserve(AllModels.size());
+                skinnedIndices.reserve(AllModels.size());
+
+                for (size_t mi = 0; mi < AllModels.size(); ++mi) {
+                    if (!AllModels[mi]->castsShadows) continue;
+                    float dist = glm::length(modelWorldPositions[mi] - pos);
+                    if (dist <= (L.maxDistance + 1.0f)) {
+                        if (AllModels[mi]->isSkinned) skinnedIndices.push_back(mi);
+                        else staticIndices.push_back(mi);
+                    }
+                }
+
+                // if nothing is in range, skip entire cubemap generation
+                if (staticIndices.empty() && skinnedIndices.empty()) {
+                    continue;
+                }
+
                 float zFar = L.maxDistance;
                 glm::mat4 proj = glm::perspective(glm::radians(90.0f), 1.0f, NEAR_PLANE, zFar);
-                glm::vec3 pos = L.position;
 
                 std::array<glm::mat4, 6> shadowMatrices = {
                     proj * glm::lookAt(pos, pos + glm::vec3(1, 0, 0), glm::vec3(0,-1, 0)),
@@ -2184,59 +2321,121 @@ FiscionX::Vector3 FiscionX::Physics::Vehicle::getWheelRotation(int index) {
                     proj * glm::lookAt(pos, pos + glm::vec3(0, 0,-1), glm::vec3(0,-1, 0)),
                 };
 
-                glViewport(0, 0, SHADOW_CUBE_SIZE, SHADOW_CUBE_SIZE);
+                glViewport(0, 0, POINT_SHADOW_SIZE, POINT_SHADOW_SIZE);
                 glBindFramebuffer(GL_FRAMEBUFFER, sm.fbo);
 
                 for (int face = 0; face < 6; ++face) {
                     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, sm.depthMap, 0);
                     glClear(GL_DEPTH_BUFFER_BIT);
 
-                    // STATIC
-                    glUseProgram(depthShaderCubeStatic);
-                    glUniform1f(glGetUniformLocation(depthShaderCubeStatic, "farPlane"), zFar);
-                    glUniform3fv(glGetUniformLocation(depthShaderCubeStatic, "lightPos"), 1, glm::value_ptr(pos));
-                    glUniformMatrix4fv(glGetUniformLocation(depthShaderCubeStatic, ("shadowMatrices[" + std::to_string(face) + "]").c_str()), 1, GL_FALSE, glm::value_ptr(shadowMatrices[face]));
+                    // STATIC - depth-only (only loop the filtered staticIndices)
+                    if (!staticIndices.empty()) {
+                        glUseProgram(depthShaderCubeStatic);
+                        glUniform1f(glGetUniformLocation(depthShaderCubeStatic, "farPlane"), zFar);
+                        glUniform3fv(glGetUniformLocation(depthShaderCubeStatic, "lightPos"), 1, glm::value_ptr(pos));
+                        glUniformMatrix4fv(glGetUniformLocation(depthShaderCubeStatic, ("shadowMatrices[" + std::to_string(face) + "]").c_str()), 1, GL_FALSE, glm::value_ptr(shadowMatrices[face]));
 
-                    for (auto& model : AllModels)
-                        if (!model->isSkinned)
-                            model->draw(depthShaderCubeStatic, glm::mat4(1.0f), 0, true, view, projection);
+                        for (size_t idx : staticIndices) {
+                            if (!AllModels[idx]->castsShadows) continue;
+                            AllModels[idx]->draw(depthShaderCubeStatic, glm::mat4(1.0f), 0, true, view, projection);
+                        }
+                    }
 
-                    // SKINNED
-                    glUseProgram(depthShaderCubeSkinned);
-                    glUniform1f(glGetUniformLocation(depthShaderCubeSkinned, "farPlane"), zFar);
-                    glUniform3fv(glGetUniformLocation(depthShaderCubeSkinned, "lightPos"), 1, glm::value_ptr(pos));
-                    glUniformMatrix4fv(glGetUniformLocation(depthShaderCubeSkinned, ("shadowMatrices[" + std::to_string(face) + "]").c_str()), 1, GL_FALSE, glm::value_ptr(shadowMatrices[face]));
+                    // SKINNED - depth-only (only loop the filtered skinnedIndices)
+                    if (!skinnedIndices.empty()) {
+                        glUseProgram(depthShaderCubeSkinned);
+                        glUniform1f(glGetUniformLocation(depthShaderCubeSkinned, "farPlane"), zFar);
+                        glUniform3fv(glGetUniformLocation(depthShaderCubeSkinned, "lightPos"), 1, glm::value_ptr(pos));
+                        glUniformMatrix4fv(glGetUniformLocation(depthShaderCubeSkinned, ("shadowMatrices[" + std::to_string(face) + "]").c_str()), 1, GL_FALSE, glm::value_ptr(shadowMatrices[face]));
 
-                    for (auto& model : AllModels)
-                        if (model->isSkinned)
-                            model->draw(depthShaderCubeSkinned, glm::mat4(1.0f), 0, true, view, projection);
+                        for (size_t idx : skinnedIndices) {
+                            if (!AllModels[idx]->castsShadows) continue;
+                            AllModels[idx]->draw(depthShaderCubeSkinned, glm::mat4(1.0f), 0, true, view, projection);
+                        }
+                    }
                 }
 
                 glBindFramebuffer(GL_FRAMEBUFFER, 0);
             }
-            else {
+            else if (L.type == LIGHT_SPOT) {
+                // spot: distance + cone culling (kept as-is)
                 sm.lightSpaceMatrix = ComputeLightSpaceMatrix(L);
+                glm::vec3 lightPos = L.position;
 
-                glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
+                glViewport(0, 0, SPOT_SHADOW_SIZE, SPOT_SHADOW_SIZE);
                 glBindFramebuffer(GL_FRAMEBUFFER, sm.fbo);
                 glClear(GL_DEPTH_BUFFER_BIT);
                 glEnable(GL_CULL_FACE);
                 glCullFace(GL_FRONT);
 
+                // STATIC
                 glUseProgram(depthShaderStatic);
                 glUniformMatrix4fv(glGetUniformLocation(depthShaderStatic, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(sm.lightSpaceMatrix));
 
+                for (size_t mi = 0; mi < AllModels.size(); ++mi) {
+                    float dist = glm::length(modelWorldPositions[mi] - lightPos);
+                    if (dist > (L.maxDistance + 1.0f)) continue;
+
+                    glm::vec3 toModel = glm::normalize(modelWorldPositions[mi] - lightPos);
+                    float dp = glm::dot(glm::normalize(L.direction), toModel);
+                    if (dp < L.outerCutOff - 0.01f) continue;
+
+                    if (!AllModels[mi]->isSkinned) {
+                        if (!AllModels[mi]->castsShadows) continue;
+                        AllModels[mi]->draw(depthShaderStatic, glm::mat4(1.0f), 0, true, view, projection);
+                    }
+                }
+
+                // SKINNED
                 glUseProgram(depthShaderSkinned);
                 glUniformMatrix4fv(glGetUniformLocation(depthShaderSkinned, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(sm.lightSpaceMatrix));
 
-                for (auto& model : AllModels) {
-                    if (!model->isSkinned) {
-                        glUseProgram(depthShaderStatic);
-                        model->draw(depthShaderStatic, glm::mat4(1.0f), 0, true, view, projection);
+                for (size_t mi = 0; mi < AllModels.size(); ++mi) {
+                    float dist = glm::length(modelWorldPositions[mi] - lightPos);
+                    if (dist > (L.maxDistance + 1.0f)) continue;
+
+                    glm::vec3 toModel = glm::normalize(modelWorldPositions[mi] - lightPos);
+                    float dp = glm::dot(glm::normalize(L.direction), toModel);
+                    if (dp < L.outerCutOff - 0.01f) continue;
+
+                    if (AllModels[mi]->isSkinned) {
+                        if (!AllModels[mi]->castsShadows) continue;
+                        AllModels[mi]->draw(depthShaderSkinned, glm::mat4(1.0f), 0, true, view, projection);
                     }
-                    else {
-                        glUseProgram(depthShaderSkinned);
-                        model->draw(depthShaderSkinned, glm::mat4(1.0f), 0, true, view, projection);
+                }
+
+                glCullFace(GL_BACK);
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            }
+            else if (L.type == LIGHT_DIRECTIONAL) {
+                // directional (mantive como estava)
+                sm.lightSpaceMatrix = ComputeLightSpaceMatrix(L);
+
+                glViewport(0, 0, DIR_SHADOW_SIZE, DIR_SHADOW_SIZE);
+                glBindFramebuffer(GL_FRAMEBUFFER, sm.fbo);
+                glClear(GL_DEPTH_BUFFER_BIT);
+                glEnable(GL_CULL_FACE);
+                glCullFace(GL_FRONT);
+
+                // STATIC
+                glUseProgram(depthShaderStatic);
+                glUniformMatrix4fv(glGetUniformLocation(depthShaderStatic, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(sm.lightSpaceMatrix));
+
+                for (size_t mi = 0; mi < AllModels.size(); ++mi) {
+                    if (!AllModels[mi]->castsShadows) continue;
+                    if (!AllModels[mi]->isSkinned) {
+                        AllModels[mi]->draw(depthShaderStatic, glm::mat4(1.0f), 0, true, view, projection);
+                    }
+                }
+
+                // SKINNED
+                glUseProgram(depthShaderSkinned);
+                glUniformMatrix4fv(glGetUniformLocation(depthShaderSkinned, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(sm.lightSpaceMatrix));
+
+                for (size_t mi = 0; mi < AllModels.size(); ++mi) {
+                    if (!AllModels[mi]->castsShadows) continue;
+                    if (AllModels[mi]->isSkinned) {
+                        AllModels[mi]->draw(depthShaderSkinned, glm::mat4(1.0f), 0, true, view, projection);
                     }
                 }
 
@@ -2246,15 +2445,21 @@ FiscionX::Vector3 FiscionX::Physics::Vehicle::getWheelRotation(int index) {
         }
     }
 
-void FiscionX::Core::Set3DSettings(const unsigned int _SHADOW_WIDTH, const unsigned int _SHADOW_HEIGHT,
-    const unsigned int _SHADOW_CUBE_SIZE, const float _SHADOW_VIEW_RADIUS, const float _NEAR_PLANE, const float _FAR_PLANE) {
+void FiscionX::Core::Set3DSettings(const int _DIRECTIONAL_LIGHT_SHADOW_SIZE, const int _SPOT_LIGHT_SHADOW_SIZE,
+    const int _POINT_LIGHT_SHADOW_SIZE, const float _SHADOW_VIEW_RADIUS, const float _NEAR_PLANE, const float _FAR_PLANE) {
 
-    SHADOW_WIDTH = _SHADOW_WIDTH;
-    SHADOW_HEIGHT = _SHADOW_HEIGHT;
-    SHADOW_CUBE_SIZE = _SHADOW_CUBE_SIZE;
+    DIR_SHADOW_SIZE = _DIRECTIONAL_LIGHT_SHADOW_SIZE;
+    SPOT_SHADOW_SIZE = _SPOT_LIGHT_SHADOW_SIZE;
+    POINT_SHADOW_SIZE = _POINT_LIGHT_SHADOW_SIZE;
     NEAR_PLANE = _NEAR_PLANE;
     FAR_PLANE = _FAR_PLANE;
     SHADOW_VIEW_RADIUS = _SHADOW_VIEW_RADIUS;
+}
+
+void FiscionX::Core::SetCursorMode(int mode) {
+    if (FiscionX::Core::Window) {
+        glfwSetInputMode(FiscionX::Core::Window, GLFW_CURSOR, mode);
+    }
 }
 
 void FiscionX::Core::NewWindow(int width, int height, const char* window_label) {
@@ -2278,7 +2483,7 @@ void FiscionX::Core::NewWindow(int width, int height, const char* window_label) 
     glfwMakeContextCurrent(Window);
     glfwSwapInterval(0);
     glfwSetCursorPosCallback(Window, mouse_callback);
-    glfwSetInputMode(Window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+	glfwSetScrollCallback(Window, scroll_callback);
 
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
         std::cerr << "ERR 0x002 - Failed to initialize GLAD\n";
@@ -2324,7 +2529,7 @@ void FiscionX::Core::NewWindow(int width, int height, const char* window_label) 
     glGenTextures(1, &depthMap);
     glBindTexture(GL_TEXTURE_2D, depthMap);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT,
-        SHADOW_WIDTH, SHADOW_HEIGHT, 0,
+        DIR_SHADOW_SIZE, DIR_SHADOW_SIZE, 0,
         GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);

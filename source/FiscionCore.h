@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <math.h>
+#include <unordered_map>
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include "dependencies/glad/glad.h"
@@ -156,6 +157,25 @@
 #define 	FISCIONX_KEY_RIGHT_SUPER   347
 #define 	FISCIONX_KEY_MENU   348
 
+#define     FISCIONX_MOUSE_BUTTON_1   0
+#define     FISCIONX_MOUSE_BUTTON_2   1
+#define     FISCIONX_MOUSE_BUTTON_3   2
+#define	    FISCIONX_MOUSE_BUTTON_4   3
+#define     FISCIONX_MOUSE_BUTTON_5   4
+#define     FISCIONX_MOUSE_BUTTON_6   5
+#define     FISCIONX_MOUSE_BUTTON_7   6
+#define     FISCIONX_MOUSE_BUTTON_8   7
+#define     FISCIONX_MOUSE_BUTTON_LAST   FISCIONX_MOUSE_BUTTON_8
+#define     FISCIONX_MOUSE_BUTTON_LEFT   FISCIONX_MOUSE_BUTTON_1
+#define     FISCIONX_MOUSE_BUTTON_RIGHT  FISCIONX_MOUSE_BUTTON_2
+#define     FISCIONX_MOUSE_BUTTON_MIDDLE FISCIONX_MOUSE_BUTTON_3
+
+#define     FISCIONX_CURSOR_DISABLED 0x00034003
+#define     FISCIONX_CURSOR_HIDDEN 0x00034002
+#define     FISCIONX_CURSOR_NORMAL 0x00034001
+#define     FISCIONX_CURSOR_CAPTURED 0x00034004
+#define     FISCIONX_CURSOR_LOCKED 0x00034005
+
 extern float lastX, lastY;
 extern bool firstMouse;
 extern float deltaTime, lastFrame;
@@ -180,9 +200,13 @@ struct FiscionX {
 		float x, y, z;
 		Vector3(float _x = 0, float _y = 0, float _z = 0) : x(_x), y(_y), z(_z) {}
 	};
+	struct Vector2 {
+		float x, y;
+		Vector2(float _x = 0, float _y = 0) : x(_x), y(_y) {}
+	};
 
 	struct Math {
-		static float getDistance3D(glm::vec3 pos1, glm::vec3 pos2);
+		static float getDistance3D(FiscionX::Vector3 pos1, FiscionX::Vector3 pos2);
 	};
 
 	struct UI{
@@ -200,7 +224,7 @@ struct FiscionX {
 
 			Image(const char* path, float sx = 1.0f, float sy = 1.0f);
 			void flip(bool flipx, bool flipy);
-			void draw(float x = 0.0f, float y = 0.0f);
+			void draw(FiscionX::Vector2 position);
 		};
 	};
 
@@ -279,6 +303,11 @@ struct FiscionX {
 		bool        hasGlow = false;
 		glm::vec3   glowColor = glm::vec3(0);
 		float       glowRadius = 0;
+
+		bool enableShadows = true;
+		float lastShadowUpdateTime = -9999.0f;      // last time generated shadow maps
+		float shadowUpdatePeriod = 0.03f;           // seconds between updates (20 Hz default)
+		glm::vec3 lastPosition = glm::vec3(FLT_MAX); // last light position (used to detect movement)
 
 		Light();
 	};
@@ -373,6 +402,11 @@ struct FiscionX {
 			float getCurrentSpeedKmh();
 		};
 
+		static struct Raycast {
+			static bool CheckCollisionWithBody(FiscionX::Physics::Rigidbody* body, Vector3 origin, Vector3 end);
+			static const btRigidBody* GetFirstBodyCollided(Vector3 origin, Vector3 end);
+		};
+
 		static void DrawDebugWorld(glm::mat4 projection, glm::mat4 view);
 
 		static void CreatePhysicsWorld(Vector3 gravity, int maxIterations);
@@ -459,6 +493,10 @@ struct FiscionX {
 		glm::vec3 boundingCenter = glm::vec3(0.0f);
 		float boundingRadius = 1.0f;
 
+		bool isAffectedByLight = true;  // Se recebe iluminação difusa/especular
+		bool castsShadows = true;       // Se projeta sombras nos outros
+		bool acceptsShadows = true;     // Se recebe sombras projetadas nele
+
 		const std::vector<glm::mat4>& getBoneTransforms() const;
 		Model(const std::string& path, Vector3 pos, Vector3 rot, Vector3 scl);
 		void playAnim(const std::string& name, bool repeat, const std::string& next = "");
@@ -482,7 +520,16 @@ struct FiscionX {
 	};
 
 	struct Input {
+		static FiscionX::Vector2 mousePosition;
+		static FiscionX::Vector2 mouseDelta;
+		static FiscionX::Vector2 scrollOffset;
+
 		static bool GetKeyPressed(int key);
+		static bool GetKeyReleased(int key);
+		static FiscionX::Vector2 GetMousePosition();
+		static FiscionX::Vector2 GetMouseDelta();
+		static FiscionX::Vector2 GetScrollOffset();
+		static bool GetMouseButtonPressed(int button);
 	};
 
 	struct Core {
@@ -496,9 +543,14 @@ struct FiscionX {
 		static GLuint shaderStatic;
 		static GLuint shaderSkinned;
 
-		static unsigned int SHADOW_WIDTH;
-		static unsigned int SHADOW_HEIGHT;
-		static unsigned int SHADOW_CUBE_SIZE;
+		//static unsigned int SHADOW_WIDTH;
+		//static unsigned int SHADOW_HEIGHT;
+		//static unsigned int SHADOW_CUBE_SIZE;
+
+		static int DIR_SHADOW_SIZE;
+		static int SPOT_SHADOW_SIZE;
+		static int POINT_SHADOW_SIZE;
+
 		static float        NEAR_PLANE;
 		static float         FAR_PLANE;
 		static float         AMBIENT_LIGHT_INTENSITY;
@@ -522,14 +574,15 @@ struct FiscionX {
 		static int FPS;
 		static float lastFPSTime;
 
-		static void CreateShadowMap(ShadowMap& sm);
+		static void CreateShadowMap(ShadowMap& sm, int LIGHT_TYPE);
 		static void CreateAllShadowMaps();
 		static glm::mat4 ComputeLightSpaceMatrix(const Light& L);
 		static void RenderAllShadowPasses(glm::mat4 view, glm::mat4 projection, glm::mat4 viewProj);
 
+		static void SetCursorMode(int mode);
 		static void NewWindow(int width, int height, const char* window_label);
-		static void Set3DSettings(const unsigned int _SHADOW_WIDTH, const unsigned int _SHADOW_HEIGHT,
-			const unsigned int _SHADOW_CUBE_SIZE, const float _SHADOW_VIEW_RADIUS, const float _NEAR_PLANE, const float _FAR_PLANE);
+		static void Set3DSettings(const int _DIRECTIONAL_LIGHT_SHADOW_SIZE, const int _SPOT_LIGHT_SHADOW_SIZE,
+			const int _POINT_LIGHT_SHADOW_SIZE, const float _SHADOW_VIEW_RADIUS, const float _NEAR_PLANE, const float _FAR_PLANE);
 		static void ClockTick();
 		static void SortModels();
 		static void Terminate();

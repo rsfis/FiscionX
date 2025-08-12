@@ -65,12 +65,16 @@ uniform float environmentStrength;
 uniform vec3 environmentSkyColor;
 uniform vec3 environmentGroundColor;
 
+uniform int isAffectedByLight;
+uniform int acceptsShadows;
+
 uniform float alpha;
 
 const float diskRadius = 0.1;
 
 float ShadowCalculation2D(vec4 fragPosLS, sampler2D shadowMap, vec3 N, vec3 L) {
-  vec3 projCoords = fragPosLS.xyz / fragPosLS.w;
+    if (acceptsShadows == 0) return 1.0;
+vec3 projCoords = fragPosLS.xyz / fragPosLS.w;
   projCoords = projCoords * 0.5 + 0.5;
   if (projCoords.z > 1.0 || projCoords.x < 0.0 || projCoords.y < 0.0 ||
       projCoords.x > 1.0 || projCoords.y > 1.0) return 0.0;
@@ -84,7 +88,8 @@ float ShadowCalculation2D(vec4 fragPosLS, sampler2D shadowMap, vec3 N, vec3 L) {
 }
 
 float ShadowCalculationPoint(int idx, vec3 fragPos) {
-  vec3 fragToLight = fragPos - lightPos[idx];
+    if (acceptsShadows == 0) return 0.9;
+vec3 fragToLight = fragPos - lightPos[idx];
   float currentDepth = length(fragToLight);
   float bias = 0.1, shadow = 0.0;
   for (int i = 0; i < PCF_SAMPLES; ++i) {
@@ -175,5 +180,13 @@ void main() {
   result = max(result, baseColor * 0.7);
   result = mix(result, result + transLight, transAmt);
 
-  FragColor = vec4(result, (alphaMode == 2 ? baseSample.a : 1.0) * alpha);
+  if (isAffectedByLight == 0) {
+    result = ambientSum;
+    result += baseColor * ambientHemi * environmentStrength * 1.3;
+    result = max(result, baseColor * 0.7);
+    result = mix(result, result + transLight, transAmt);
+    FragColor = vec4(result, (alphaMode == 2 ? baseSample.a : 1.0) * alpha);
+} else {
+    FragColor = vec4(result, (alphaMode == 2 ? baseSample.a : 1.0) * alpha);
+}
 }
