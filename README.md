@@ -80,7 +80,7 @@ int main() {
 ```
 
 ## 🔧 Build & Setup
-- Download the framework release and paste it in your project sourcee folder.
+- Download the framework release and paste it in your project source folder.
 - Paste fmod.dll, fmodL.dll and glfw3.dll in the same directory as your project release folder.
 - Paste fmod_vc.lib and fmodL_vc.lib in your project and make sure you linked these static libraries into your project configurations
 - Put the tiny_gltf.cpp, stb_image.cpp and stb_image_write.cpp on your project dependencies.
