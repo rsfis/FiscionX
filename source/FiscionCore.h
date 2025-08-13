@@ -288,9 +288,9 @@ struct FiscionX {
 
 	struct Light {
 		int         type = LIGHT_DIRECTIONAL;
-		glm::vec3   position = glm::vec3(0);
-		glm::vec3   direction = glm::vec3(0);
-		glm::vec3   color = glm::vec3(1.0f);
+		FiscionX::Vector3 position = FiscionX::Vector3(0, 0, 0);
+		FiscionX::Vector3 direction = FiscionX::Vector3(0, 0, 0);
+		FiscionX::Vector3 color = FiscionX::Vector3(1.0f, 1.0f, 1.0f);
 		float       intensity = 1.0f;
 
 		float       maxDistance = 300.0f;
@@ -301,7 +301,7 @@ struct FiscionX {
 		float       quadratic = 0;
 
 		bool        hasGlow = false;
-		glm::vec3   glowColor = glm::vec3(0);
+		FiscionX::Vector3   glowColor = FiscionX::Vector3(0, 0, 0);
 		float       glowRadius = 0;
 
 		bool enableShadows = true;

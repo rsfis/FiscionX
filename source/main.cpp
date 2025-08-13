@@ -131,8 +131,8 @@ int main() {
 
     dirLight = new FiscionX::Light();
     dirLight->type = FiscionX::LIGHT_DIRECTIONAL;
-    dirLight->direction = glm::normalize(glm::vec3(0.0f, -1.0f, -1.0f));
-    dirLight->color = glm::vec3(1.0f, 1.0f, 1.0f);
+    dirLight->direction = FiscionX::Vector3(0.0f, -1.0f, -1.0f);
+    dirLight->color = FiscionX::Vector3(1.0f, 1.0f, 1.0f);
     dirLight->intensity = 1.2f;
     dirLight->maxDistance = 0.0f;
     dirLight->cutOff = 0.0f;
@@ -145,8 +145,8 @@ int main() {
 
     pointLight = new FiscionX::Light();
     pointLight->type = FiscionX::LIGHT_POINT;
-    pointLight->position = glm::vec3(0.559f, 3.526f, -2.51f);
-    pointLight->color = glm::vec3(1, 1, 1);
+    pointLight->position = FiscionX::Vector3(0.559f, 3.526f, -2.51f);
+    pointLight->color = FiscionX::Vector3(1, 1, 1);
     pointLight->intensity = 25;
     pointLight->constant = 1;
     pointLight->linear = 0.003;
@@ -157,9 +157,9 @@ int main() {
 
     spotLight = new FiscionX::Light();
     spotLight->type = FiscionX::LIGHT_SPOT;
-    spotLight->position = glm::vec3(0.0f, 1.0f, -4.0f);
-    spotLight->direction = glm::vec3(0.0f, 0.0f, 1.0f);
-    spotLight->color = glm::vec3(0.0f, 1, 0);
+    spotLight->position = FiscionX::Vector3(0.0f, 1.0f, -4.0f);
+    spotLight->direction = FiscionX::Vector3(0.0f, 0.0f, 1.0f);
+    spotLight->color = FiscionX::Vector3(0.0f, 1, 0);
     spotLight->intensity = 2.0f;
     spotLight->maxDistance = 15.0f;
     spotLight->cutOff = glm::cos(glm::radians(25.0f));
@@ -205,8 +205,8 @@ int main() {
 
     exSound = new FiscionX::Sound("assets/audio/music/K.mp3", false, true, FiscionX::Vector3(0.5f, 0.3f, 0.0f), 2.0f, 10.0f, 1.0f);
     exSound->play();
-    // exSound->useEffect(FMOD_DSP_TYPE_);
-    // exSound->dsp->setParameterFloat(TYPE, AMOUNT);
+    //exSound->useEffect(FMOD_DSP_TYPE_DISTORTION);
+    //exSound->dsp->setParameterFloat(FMOD_DSP_DISTORTION_LEVEL, 1.0f);
 
     // Physics
 	FiscionX::Physics::Shape groundShape = FiscionX::Physics::CreateBoxShape(FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(30.0f, 0.01f, 30.0f), 0.0f);

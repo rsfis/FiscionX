@@ -327,6 +327,8 @@ void FiscionX::Sound::useEffect(FMOD_DSP_TYPE type) {
 	curr_channel->addDSP(0, dsp);
 }
 
+
+
 void FiscionX::Sound::updateValues() {
 	audiofont->set3DMinMaxDistance(minDist, maxDist);
 	if (looping) { audiofont->setMode(FMOD_LOOP_NORMAL); }
@@ -1404,9 +1406,9 @@ void FiscionX::Model::drawSubMesh(
 		const Light& L = *FiscionX::Core::AllLights[i];
 		std::string idx = std::to_string(i);
 		glUniform1i(glGetUniformLocation(shader, ("lightType[" + idx + "]").c_str()), L.type);
-		glUniform3fv(glGetUniformLocation(shader, ("lightPos[" + idx + "]").c_str()), 1, glm::value_ptr(L.position));
-		glUniform3fv(glGetUniformLocation(shader, ("lightDir[" + idx + "]").c_str()), 1, glm::value_ptr(L.direction));
-		glUniform3fv(glGetUniformLocation(shader, ("lightColor[" + idx + "]").c_str()), 1, glm::value_ptr(L.color));
+		glUniform3fv(glGetUniformLocation(shader, ("lightPos[" + idx + "]").c_str()), 1, glm::value_ptr(glm::vec3(L.position.x, L.position.y, L.position.z)));
+		glUniform3fv(glGetUniformLocation(shader, ("lightDir[" + idx + "]").c_str()), 1, glm::value_ptr(glm::vec3(L.direction.x, L.direction.y, L.direction.z)));
+		glUniform3fv(glGetUniformLocation(shader, ("lightColor[" + idx + "]").c_str()), 1, glm::value_ptr(glm::vec3(L.color.x, L.color.y, L.color.z)));
 		glUniform1f(glGetUniformLocation(shader, ("lightIntensity[" + idx + "]").c_str()), L.intensity);
 		glUniform1f(glGetUniformLocation(shader, ("lightMaxDistance[" + idx + "]").c_str()), L.maxDistance);
 		glUniform1f(glGetUniformLocation(shader, ("lightCutOff[" + idx + "]").c_str()), L.cutOff);
@@ -1415,7 +1417,7 @@ void FiscionX::Model::drawSubMesh(
 		glUniform1f(glGetUniformLocation(shader, ("lightLinear[" + idx + "]").c_str()), L.linear);
 		glUniform1f(glGetUniformLocation(shader, ("lightQuadratic[" + idx + "]").c_str()), L.quadratic);
 		glUniform1i(glGetUniformLocation(shader, ("lightHasGlow[" + idx + "]").c_str()), L.hasGlow);
-		glUniform3fv(glGetUniformLocation(shader, ("lightGlowColor[" + idx + "]").c_str()), 1, glm::value_ptr(L.glowColor));
+		glUniform3fv(glGetUniformLocation(shader, ("lightGlowColor[" + idx + "]").c_str()), 1, glm::value_ptr(glm::vec3(L.glowColor.x, L.glowColor.y, L.glowColor.z)));
 		glUniform1f(glGetUniformLocation(shader, ("lightGlowRadius[" + idx + "]").c_str()), L.glowRadius);
 	}
 
@@ -1449,9 +1451,9 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 		std::string idx = std::to_string(i);
 
 		glUniform1i(glGetUniformLocation(shader, ("lightType[" + idx + "]").c_str()), L.type);
-		glUniform3fv(glGetUniformLocation(shader, ("lightPos[" + idx + "]").c_str()), 1, glm::value_ptr(L.position));
-		glUniform3fv(glGetUniformLocation(shader, ("lightDir[" + idx + "]").c_str()), 1, glm::value_ptr(L.direction));
-		glUniform3fv(glGetUniformLocation(shader, ("lightColor[" + idx + "]").c_str()), 1, glm::value_ptr(L.color));
+		glUniform3fv(glGetUniformLocation(shader, ("lightPos[" + idx + "]").c_str()), 1, glm::value_ptr(glm::vec3(L.position.x, L.position.y, L.position.z)));
+		glUniform3fv(glGetUniformLocation(shader, ("lightDir[" + idx + "]").c_str()), 1, glm::value_ptr(glm::vec3(L.direction.x, L.direction.y, L.direction.z)));
+		glUniform3fv(glGetUniformLocation(shader, ("lightColor[" + idx + "]").c_str()), 1, glm::value_ptr(glm::vec3(L.color.x, L.color.y, L.color.z)));
 		glUniform1f(glGetUniformLocation(shader, ("lightIntensity[" + idx + "]").c_str()), L.intensity);
 		glUniform1f(glGetUniformLocation(shader, ("lightMaxDistance[" + idx + "]").c_str()), L.maxDistance);
 		glUniform1f(glGetUniformLocation(shader, ("lightCutOff[" + idx + "]").c_str()), L.cutOff);
@@ -1460,7 +1462,7 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 		glUniform1f(glGetUniformLocation(shader, ("lightLinear[" + idx + "]").c_str()), L.linear);
 		glUniform1f(glGetUniformLocation(shader, ("lightQuadratic[" + idx + "]").c_str()), L.quadratic);
 		glUniform1i(glGetUniformLocation(shader, ("lightHasGlow[" + idx + "]").c_str()), L.hasGlow);
-		glUniform3fv(glGetUniformLocation(shader, ("lightGlowColor[" + idx + "]").c_str()), 1, glm::value_ptr(L.glowColor));
+		glUniform3fv(glGetUniformLocation(shader, ("lightGlowColor[" + idx + "]").c_str()), 1, glm::value_ptr(glm::vec3(L.glowColor.x, L.glowColor.y, L.glowColor.z)));
 		glUniform1f(glGetUniformLocation(shader, ("lightGlowRadius[" + idx + "]").c_str()), L.glowRadius);
 
 		if (L.type == LIGHT_POINT) {
@@ -2183,7 +2185,7 @@ void FiscionX::Core::CreateAllShadowMaps() {
 glm::mat4 FiscionX::Core::ComputeLightSpaceMatrix(const Light& L) {
 	if (L.type == LIGHT_DIRECTIONAL) {
 		float orthoSize = FiscionX::Core::SHADOW_VIEW_RADIUS;
-		glm::vec3 dir = glm::normalize(L.direction);
+		glm::vec3 dir = glm::normalize(glm::vec3(L.direction.x, L.direction.y, L.direction.z));
 
 		glm::vec3 center = Camera.position + Camera.front * glm::vec3(orthoSize);
 		glm::vec3 lightPos = center - dir * 30.0f;
@@ -2206,13 +2208,13 @@ glm::mat4 FiscionX::Core::ComputeLightSpaceMatrix(const Light& L) {
 		float fov = glm::degrees(acos(L.outerCutOff)) * 2.4f;
 		glm::mat4 proj = glm::perspective(glm::radians(fov), 1.0f, 0.1f, L.maxDistance);
 		glm::vec3 up = glm::abs(L.direction.y) > 0.99f ? glm::vec3(0, 0, 1) : glm::vec3(0, 1, 0);
-		glm::mat4 view = glm::lookAt(L.position, L.position + glm::normalize(L.direction), up);
+		glm::mat4 view = glm::lookAt(glm::vec3(L.position.x, L.position.y, L.position.z), glm::vec3(L.position.x, L.position.y, L.position.z) + glm::normalize(glm::vec3(L.direction.x, L.direction.y, L.direction.z)), up);
 		return proj * view;
 	}
 
 	if (L.type == LIGHT_POINT) {
 		glm::mat4 proj = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, L.maxDistance);
-		glm::mat4 view = glm::lookAt(L.position, glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
+		glm::mat4 view = glm::lookAt(glm::vec3(L.position.x, L.position.y, L.position.z), glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
 		return proj * view;
 	}
 
@@ -2254,7 +2256,7 @@ void FiscionX::Core::RenderAllShadowPasses(glm::mat4 view, glm::mat4 projection,
 		if (!L.enableShadows) continue;
 
 		// decide if we should rebuild this light's shadow map
-		bool moved = (L.lastPosition != glm::vec3(FLT_MAX)) && (glm::length(L.lastPosition - L.position) > 0.01f);
+		bool moved = (L.lastPosition != glm::vec3(FLT_MAX)) && (glm::length(L.lastPosition - glm::vec3(L.position.x, L.position.y, L.position.z)) > 0.01f);
 		bool timeExpired = (now - L.lastShadowUpdateTime) >= L.shadowUpdatePeriod;
 		bool firstTime = (L.lastPosition == glm::vec3(FLT_MAX));
 
@@ -2266,11 +2268,11 @@ void FiscionX::Core::RenderAllShadowPasses(glm::mat4 view, glm::mat4 projection,
 
 		// record update
 		L.lastShadowUpdateTime = now;
-		L.lastPosition = L.position;
+		L.lastPosition = glm::vec3(L.position.x, L.position.y, L.position.z);
 
 		if (L.type == LIGHT_POINT) {
 			// --- OPTIMIZED: prefilter models in range once ---
-			glm::vec3 pos = L.position;
+			glm::vec3 pos = glm::vec3(L.position.x, L.position.y, L.position.z);
 			std::vector<size_t> staticIndices;
 			std::vector<size_t> skinnedIndices;
 			staticIndices.reserve(AllModels.size());
@@ -2341,7 +2343,7 @@ void FiscionX::Core::RenderAllShadowPasses(glm::mat4 view, glm::mat4 projection,
 		else if (L.type == LIGHT_SPOT) {
 			// spot: distance + cone culling (kept as-is)
 			sm.lightSpaceMatrix = ComputeLightSpaceMatrix(L);
-			glm::vec3 lightPos = L.position;
+			glm::vec3 lightPos = glm::vec3(L.position.x, L.position.y, L.position.z);
 
 			glViewport(0, 0, SPOT_SHADOW_SIZE, SPOT_SHADOW_SIZE);
 			glBindFramebuffer(GL_FRAMEBUFFER, sm.fbo);
@@ -2358,7 +2360,7 @@ void FiscionX::Core::RenderAllShadowPasses(glm::mat4 view, glm::mat4 projection,
 				if (dist > (L.maxDistance + 1.0f)) continue;
 
 				glm::vec3 toModel = glm::normalize(modelWorldPositions[mi] - lightPos);
-				float dp = glm::dot(glm::normalize(L.direction), toModel);
+				float dp = glm::dot(glm::normalize(glm::vec3(L.direction.x, L.direction.y, L.direction.z)), toModel);
 				if (dp < L.outerCutOff - 0.01f) continue;
 
 				if (!AllModels[mi]->isSkinned) {
@@ -2376,7 +2378,7 @@ void FiscionX::Core::RenderAllShadowPasses(glm::mat4 view, glm::mat4 projection,
 				if (dist > (L.maxDistance + 1.0f)) continue;
 
 				glm::vec3 toModel = glm::normalize(modelWorldPositions[mi] - lightPos);
-				float dp = glm::dot(glm::normalize(L.direction), toModel);
+				float dp = glm::dot(glm::normalize(glm::vec3(L.direction.x, L.direction.y, L.direction.z)), toModel);
 				if (dp < L.outerCutOff - 0.01f) continue;
 
 				if (AllModels[mi]->isSkinned) {
