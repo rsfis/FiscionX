@@ -792,9 +792,7 @@ void FiscionX::Model::init(const std::string& path) {
 	nodeParents.clear();
 	for (int i = 0; i < (int)nodes.size(); ++i) nodeParents[i] = -1;
 	for (int i = 0; i < (int)nodes.size(); ++i) {
-		for (int c : nodes[i].children) {
-			nodeParents[c] = i;
-		}
+		for (int c : nodes[i].children) nodeParents[c] = i;
 	}
 
 	for (size_t i = 0; i < gltfModel.animations.size(); ++i) {
@@ -825,9 +823,7 @@ void FiscionX::Model::init(const std::string& path) {
 				if (!node.translation.empty()) T = glm::make_vec3(node.translation.data());
 				if (!node.rotation.empty())    R = glm::make_quat(node.rotation.data());
 				if (!node.scale.empty())       S = glm::make_vec3(node.scale.data());
-				local = glm::translate(glm::mat4(1.0f), T)
-					* glm::mat4_cast(R)
-					* glm::scale(glm::mat4(1.0f), S);
+				local = glm::translate(glm::mat4(1.0f), T) * glm::mat4_cast(R) * glm::scale(glm::mat4(1.0f), S);
 			}
 
 			glm::mat4 globalTransform = parentTransform * local;
@@ -840,212 +836,384 @@ void FiscionX::Model::init(const std::string& path) {
 					sub.transform = globalTransform;
 
 					bool hasPosition = prim.attributes.find("POSITION") != prim.attributes.end();
+					if (!hasPosition) continue;
+
 					bool hasNormal = prim.attributes.find("NORMAL") != prim.attributes.end();
 					bool hasTangent = prim.attributes.find("TANGENT") != prim.attributes.end();
 					bool hasTexCoord = prim.attributes.find("TEXCOORD_0") != prim.attributes.end();
-					if (!hasPosition) continue;
 
+					// ==== POSITION (deve ser FLOAT na especificação, mas vamos tratar genericamente) ====
 					const tinygltf::Accessor& posAcc = gltfModel.accessors.at(prim.attributes.at("POSITION"));
-					const tinygltf::BufferView& posView = gltfModel.bufferViews.at(posAcc.bufferView);
-					const tinygltf::Buffer& posBuf = gltfModel.buffers.at(posView.buffer);
+					const tinygltf::BufferView& posBV = gltfModel.bufferViews.at(posAcc.bufferView);
+					const tinygltf::Buffer& posBuf = gltfModel.buffers.at(posBV.buffer);
+					int posComps = 3; // VEC3
+					size_t posCompSize = (posAcc.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT) ? sizeof(float) :
+						(posAcc.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT ? sizeof(uint16_t) :
+							(posAcc.componentType == TINYGLTF_COMPONENT_TYPE_SHORT ? sizeof(int16_t) :
+								(posAcc.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE ? sizeof(uint8_t) :
+									(posAcc.componentType == TINYGLTF_COMPONENT_TYPE_BYTE ? sizeof(int8_t) : sizeof(float)))));
+					size_t posStride = posAcc.ByteStride(posBV);
+					if (posStride == 0) posStride = posComps * posCompSize;
+					const uint8_t* posBase = posBuf.data.data() + posBV.byteOffset + posAcc.byteOffset;
 
-					const tinygltf::Accessor* jointsAccPtr = nullptr;
-					if (isSkinned && prim.attributes.find("JOINTS_0") != prim.attributes.end()) {
-						jointsAccPtr = &gltfModel.accessors.at(prim.attributes.at("JOINTS_0"));
-					}
-					const tinygltf::Accessor* weightsAccPtr = nullptr;
-					if (isSkinned && prim.attributes.find("WEIGHTS_0") != prim.attributes.end()) {
-						weightsAccPtr = &gltfModel.accessors.at(prim.attributes.at("WEIGHTS_0"));
-					}
-
-					std::vector<unsigned short> jointsData;
-					std::vector<float>           weightsData;
-					if (jointsAccPtr) {
-						const tinygltf::BufferView& jView = gltfModel.bufferViews.at(jointsAccPtr->bufferView);
-						const tinygltf::Buffer& jBuf = gltfModel.buffers.at(jView.buffer);
-						bool isShort = (jointsAccPtr->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT);
-						for (size_t vi = 0; vi < jointsAccPtr->count; ++vi) {
-							if (isShort) {
-								const unsigned short* src = reinterpret_cast<const unsigned short*>(
-									&jBuf.data[jView.byteOffset + jointsAccPtr->byteOffset + vi * sizeof(unsigned short) * 4]
-									);
-								jointsData.push_back(src[0]);
-								jointsData.push_back(src[1]);
-								jointsData.push_back(src[2]);
-								jointsData.push_back(src[3]);
-							}
-							else {
-								const unsigned char* src = reinterpret_cast<const unsigned char*>(
-									&jBuf.data[jView.byteOffset + jointsAccPtr->byteOffset + vi * sizeof(unsigned char) * 4]
-									);
-								jointsData.push_back((unsigned short)src[0]);
-								jointsData.push_back((unsigned short)src[1]);
-								jointsData.push_back((unsigned short)src[2]);
-								jointsData.push_back((unsigned short)src[3]);
-							}
-						}
-					}
-					else {
-						jointsData.resize(posAcc.count * 4, 0u);
-					}
-
-					if (weightsAccPtr) {
-						const tinygltf::BufferView& wView = gltfModel.bufferViews.at(weightsAccPtr->bufferView);
-						const tinygltf::Buffer& wBuf = gltfModel.buffers.at(wView.buffer);
-						for (size_t vi = 0; vi < weightsAccPtr->count; ++vi) {
-							const float* src = reinterpret_cast<const float*>(
-								&wBuf.data[wView.byteOffset + weightsAccPtr->byteOffset + vi * sizeof(float) * 4]
-								);
-							weightsData.push_back(src[0]);
-							weightsData.push_back(src[1]);
-							weightsData.push_back(src[2]);
-							weightsData.push_back(src[3]);
-						}
-					}
-					else {
-						for (size_t vi = 0; vi < posAcc.count; ++vi) {
-							weightsData.push_back(1.0f);
-							weightsData.push_back(0.0f);
-							weightsData.push_back(0.0f);
-							weightsData.push_back(0.0f);
-						}
-					}
-
-					const tinygltf::Accessor* normAccPtr = nullptr;
+					// ==== NORMAL ====
+					const tinygltf::Accessor* normAcc = nullptr;
+					const tinygltf::BufferView* normBV = nullptr;
+					const tinygltf::Buffer* normBuf = nullptr;
+					const uint8_t* normBase = nullptr;
+					size_t normStride = 0, normCompSize = 0;
+					bool normNorm = false; int normComps = 3;
+					int normCT = 0;
 					if (hasNormal) {
-						normAccPtr = &gltfModel.accessors.at(prim.attributes.at("NORMAL"));
-					}
-					const tinygltf::BufferView* normViewPtr = nullptr;
-					const tinygltf::Buffer* normBufPtr = nullptr;
-					if (normAccPtr) {
-						normViewPtr = &gltfModel.bufferViews.at(normAccPtr->bufferView);
-						normBufPtr = &gltfModel.buffers.at(normViewPtr->buffer);
+						normAcc = &gltfModel.accessors.at(prim.attributes.at("NORMAL"));
+						normBV = &gltfModel.bufferViews.at(normAcc->bufferView);
+						normBuf = &gltfModel.buffers.at(normBV->buffer);
+						normCT = normAcc->componentType;
+						normNorm = normAcc->normalized;
+						normCompSize =
+							(normCT == TINYGLTF_COMPONENT_TYPE_FLOAT ? sizeof(float) :
+								(normCT == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT ? sizeof(uint16_t) :
+									(normCT == TINYGLTF_COMPONENT_TYPE_SHORT ? sizeof(int16_t) :
+										(normCT == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE ? sizeof(uint8_t) :
+											(normCT == TINYGLTF_COMPONENT_TYPE_BYTE ? sizeof(int8_t) : sizeof(float))))));
+						normStride = normAcc->ByteStride(*normBV);
+						if (normStride == 0) normStride = normComps * normCompSize;
+						normBase = normBuf->data.data() + normBV->byteOffset + normAcc->byteOffset;
 					}
 
-					const tinygltf::Accessor* tanAccPtr = nullptr;
+					// ==== TANGENT ====
+					const tinygltf::Accessor* tanAcc = nullptr;
+					const tinygltf::BufferView* tanBV = nullptr;
+					const tinygltf::Buffer* tanBuf = nullptr;
+					const uint8_t* tanBase = nullptr;
+					size_t tanStride = 0, tanCompSize = 0;
+					bool tanNorm = false; int tanComps = 4; int tanCT = 0;
 					if (hasTangent) {
-						tanAccPtr = &gltfModel.accessors.at(prim.attributes.at("TANGENT"));
-					}
-					const tinygltf::BufferView* tanViewPtr = nullptr;
-					const tinygltf::Buffer* tanBufPtr = nullptr;
-					if (tanAccPtr) {
-						tanViewPtr = &gltfModel.bufferViews.at(tanAccPtr->bufferView);
-						tanBufPtr = &gltfModel.buffers.at(tanViewPtr->buffer);
+						tanAcc = &gltfModel.accessors.at(prim.attributes.at("TANGENT"));
+						tanBV = &gltfModel.bufferViews.at(tanAcc->bufferView);
+						tanBuf = &gltfModel.buffers.at(tanBV->buffer);
+						tanCT = tanAcc->componentType;
+						tanNorm = tanAcc->normalized;
+						tanCompSize =
+							(tanCT == TINYGLTF_COMPONENT_TYPE_FLOAT ? sizeof(float) :
+								(tanCT == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT ? sizeof(uint16_t) :
+									(tanCT == TINYGLTF_COMPONENT_TYPE_SHORT ? sizeof(int16_t) :
+										(tanCT == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE ? sizeof(uint8_t) :
+											(tanCT == TINYGLTF_COMPONENT_TYPE_BYTE ? sizeof(int8_t) : sizeof(float))))));
+						tanStride = tanAcc->ByteStride(*tanBV);
+						if (tanStride == 0) tanStride = tanComps * tanCompSize;
+						tanBase = tanBuf->data.data() + tanBV->byteOffset + tanAcc->byteOffset;
 					}
 
-					const tinygltf::Accessor* texAccPtr = nullptr;
+					// ==== TEXCOORD_0 (pode ser UBYTE/USHORT normalizado) ====
+					const tinygltf::Accessor* uvAcc = nullptr;
+					const tinygltf::BufferView* uvBV = nullptr;
+					const tinygltf::Buffer* uvBuf = nullptr;
+					const uint8_t* uvBase = nullptr;
+					size_t uvStride = 0, uvCompSize = 0;
+					bool uvNorm = false; int uvComps = 2; int uvCT = 0;
 					if (hasTexCoord) {
-						texAccPtr = &gltfModel.accessors.at(prim.attributes.at("TEXCOORD_0"));
-					}
-					const tinygltf::BufferView* texViewPtr = nullptr;
-					const tinygltf::Buffer* texBufPtr = nullptr;
-					if (texAccPtr) {
-						texViewPtr = &gltfModel.bufferViews.at(texAccPtr->bufferView);
-						texBufPtr = &gltfModel.buffers.at(texViewPtr->buffer);
+						uvAcc = &gltfModel.accessors.at(prim.attributes.at("TEXCOORD_0"));
+						uvBV = &gltfModel.bufferViews.at(uvAcc->bufferView);
+						uvBuf = &gltfModel.buffers.at(uvBV->buffer);
+						uvCT = uvAcc->componentType;
+						uvNorm = uvAcc->normalized;
+						uvCompSize =
+							(uvCT == TINYGLTF_COMPONENT_TYPE_FLOAT ? sizeof(float) :
+								(uvCT == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT ? sizeof(uint16_t) :
+									(uvCT == TINYGLTF_COMPONENT_TYPE_SHORT ? sizeof(int16_t) :
+										(uvCT == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE ? sizeof(uint8_t) :
+											(uvCT == TINYGLTF_COMPONENT_TYPE_BYTE ? sizeof(int8_t) : sizeof(float))))));
+						uvStride = uvAcc->ByteStride(*uvBV);
+						if (uvStride == 0) uvStride = uvComps * uvCompSize;
+						uvBase = uvBuf->data.data() + uvBV->byteOffset + uvAcc->byteOffset;
 					}
 
+					// ==== JOINTS_0 (UBYTE/USHORT) ====
+					const tinygltf::Accessor* jointsAcc = nullptr;
+					const tinygltf::BufferView* jointsBV = nullptr;
+					const tinygltf::Buffer* jointsBuf = nullptr;
+					const uint8_t* jointsBase = nullptr;
+					size_t jointsStride = 0, jointsCompSize = 0;
+					int jointsCT = 0; int jointsComps = 4;
+					if (isSkinned && prim.attributes.find("JOINTS_0") != prim.attributes.end()) {
+						jointsAcc = &gltfModel.accessors.at(prim.attributes.at("JOINTS_0"));
+						jointsBV = &gltfModel.bufferViews.at(jointsAcc->bufferView);
+						jointsBuf = &gltfModel.buffers.at(jointsBV->buffer);
+						jointsCT = jointsAcc->componentType;
+						jointsCompSize =
+							(jointsCT == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT ? sizeof(uint16_t) : sizeof(uint8_t));
+						jointsStride = jointsAcc->ByteStride(*jointsBV);
+						if (jointsStride == 0) jointsStride = jointsComps * jointsCompSize;
+						jointsBase = jointsBuf->data.data() + jointsBV->byteOffset + jointsAcc->byteOffset;
+					}
+
+					// ==== WEIGHTS_0 (FLOAT, ou UBYTE/USHORT normalizado) ====
+					const tinygltf::Accessor* weightsAcc = nullptr;
+					const tinygltf::BufferView* weightsBV = nullptr;
+					const tinygltf::Buffer* weightsBuf = nullptr;
+					const uint8_t* weightsBase = nullptr;
+					size_t weightsStride = 0, weightsCompSize = 0;
+					bool weightsNorm = false; int weightsCT = 0; int weightsComps = 4;
+					if (isSkinned && prim.attributes.find("WEIGHTS_0") != prim.attributes.end()) {
+						weightsAcc = &gltfModel.accessors.at(prim.attributes.at("WEIGHTS_0"));
+						weightsBV = &gltfModel.bufferViews.at(weightsAcc->bufferView);
+						weightsBuf = &gltfModel.buffers.at(weightsBV->buffer);
+						weightsCT = weightsAcc->componentType;
+						weightsNorm = weightsAcc->normalized;
+						weightsCompSize =
+							(weightsCT == TINYGLTF_COMPONENT_TYPE_FLOAT ? sizeof(float) :
+								(weightsCT == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT ? sizeof(uint16_t) : sizeof(uint8_t)));
+						weightsStride = weightsAcc->ByteStride(*weightsBV);
+						if (weightsStride == 0) weightsStride = weightsComps * weightsCompSize;
+						weightsBase = weightsBuf->data.data() + weightsBV->byteOffset + weightsAcc->byteOffset;
+					}
+
+					// ==== Monta buffer de vértices intercalado: pos(3) + normal(3) + tangent(4) + uv(2) ====
 					std::vector<float> vertices;
-					vertices.resize(posAcc.count * (3 + 3 + 4 + 2)); // pos + normal + tangent + uv
-					bool needsTangentGen = !hasTangent && hasNormal && hasTexCoord;
+					vertices.resize(posAcc.count * (3 + 3 + 4 + 2), 0.0f);
 
-					std::vector<VertexData> tangentVerts;
-					if (needsTangentGen) {
-						tangentVerts.resize(posAcc.count);
-					}
+					// Buffers auxiliares para skinning
+					std::vector<unsigned short> jointsData(posAcc.count * 4, 0);
+					std::vector<float> weightsData(posAcc.count * 4, 0.0f);
 
 					for (size_t vi = 0; vi < posAcc.count; ++vi) {
 						size_t base = vi * 12;
 
-						// POSITION
-						const float* pData = reinterpret_cast<const float*>(
-							&posBuf.data[posView.byteOffset + posAcc.byteOffset + vi * sizeof(float) * 3]
-							);
-						glm::vec3 pos(pData[0], pData[1], pData[2]);
-						vertices[base + 0] = pos.x;
-						vertices[base + 1] = pos.y;
-						vertices[base + 2] = pos.z;
-
-						// NORMAL
-						glm::vec3 normal(0.0f, 0.0f, 1.0f);
-						if (normAccPtr) {
-							const float* nData = reinterpret_cast<const float*>(
-								&normBufPtr->data[normViewPtr->byteOffset + normAccPtr->byteOffset + vi * sizeof(float) * 3]
-								);
-							normal = glm::vec3(nData[0], nData[1], nData[2]);
+						// POSITION -> sempre como float
+						{
+							const uint8_t* ptr = posBase + vi * posStride;
+							if (posAcc.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT) {
+								const float* f = reinterpret_cast<const float*>(ptr);
+								vertices[base + 0] = f[0];
+								vertices[base + 1] = f[1];
+								vertices[base + 2] = f[2];
+							}
+							else if (posAcc.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
+								const uint16_t* s = reinterpret_cast<const uint16_t*>(ptr);
+								float scale = posAcc.normalized ? (1.0f / 65535.0f) : 1.0f;
+								vertices[base + 0] = s[0] * scale;
+								vertices[base + 1] = s[1] * scale;
+								vertices[base + 2] = s[2] * scale;
+							}
+							else if (posAcc.componentType == TINYGLTF_COMPONENT_TYPE_SHORT) {
+								const int16_t* s = reinterpret_cast<const int16_t*>(ptr);
+								float scale = posAcc.normalized ? (1.0f / 32767.0f) : 1.0f;
+								vertices[base + 0] = s[0] * scale;
+								vertices[base + 1] = s[1] * scale;
+								vertices[base + 2] = s[2] * scale;
+							}
+							else if (posAcc.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) {
+								const uint8_t* b = reinterpret_cast<const uint8_t*>(ptr);
+								float scale = posAcc.normalized ? (1.0f / 255.0f) : 1.0f;
+								vertices[base + 0] = b[0] * scale;
+								vertices[base + 1] = b[1] * scale;
+								vertices[base + 2] = b[2] * scale;
+							}
+							else if (posAcc.componentType == TINYGLTF_COMPONENT_TYPE_BYTE) {
+								const int8_t* b = reinterpret_cast<const int8_t*>(ptr);
+								float scale = posAcc.normalized ? (1.0f / 127.0f) : 1.0f;
+								vertices[base + 0] = b[0] * scale;
+								vertices[base + 1] = b[1] * scale;
+								vertices[base + 2] = b[2] * scale;
+							}
 						}
-						vertices[base + 3] = normal.x;
-						vertices[base + 4] = normal.y;
-						vertices[base + 5] = normal.z;
 
-						// TANGENT (do modelo ou zerado para fallback)
-						if (tanAccPtr) {
-							const float* tData = reinterpret_cast<const float*>(
-								&tanBufPtr->data[tanViewPtr->byteOffset + tanAccPtr->byteOffset + vi * sizeof(float) * 4]
-								);
-							vertices[base + 6] = tData[0];
-							vertices[base + 7] = tData[1];
-							vertices[base + 8] = tData[2];
-							vertices[base + 9] = tData[3];
+						// NORMAL -> float, mas tratar normalized inteiros se vier
+						if (hasNormal) {
+							const uint8_t* ptr = normBase + vi * normStride;
+							if (normCT == TINYGLTF_COMPONENT_TYPE_FLOAT) {
+								const float* f = reinterpret_cast<const float*>(ptr);
+								vertices[base + 3] = f[0];
+								vertices[base + 4] = f[1];
+								vertices[base + 5] = f[2];
+							}
+							else if (normCT == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
+								const uint16_t* s = reinterpret_cast<const uint16_t*>(ptr);
+								float scale = normNorm ? (1.0f / 65535.0f) : 1.0f;
+								vertices[base + 3] = s[0] * scale * (normNorm ? 2.0f : 1.0f) - (normNorm ? 1.0f : 0.0f);
+								vertices[base + 4] = s[1] * scale * (normNorm ? 2.0f : 1.0f) - (normNorm ? 1.0f : 0.0f);
+								vertices[base + 5] = s[2] * scale * (normNorm ? 2.0f : 1.0f) - (normNorm ? 1.0f : 0.0f);
+							}
+							else if (normCT == TINYGLTF_COMPONENT_TYPE_SHORT) {
+								const int16_t* s = reinterpret_cast<const int16_t*>(ptr);
+								float scale = normNorm ? (1.0f / 32767.0f) : 1.0f;
+								vertices[base + 3] = s[0] * scale;
+								vertices[base + 4] = s[1] * scale;
+								vertices[base + 5] = s[2] * scale;
+							}
+							else if (normCT == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) {
+								const uint8_t* b = reinterpret_cast<const uint8_t*>(ptr);
+								float scale = normNorm ? (1.0f / 255.0f) : 1.0f;
+								vertices[base + 3] = b[0] * scale * (normNorm ? 2.0f : 1.0f) - (normNorm ? 1.0f : 0.0f);
+								vertices[base + 4] = b[1] * scale * (normNorm ? 2.0f : 1.0f) - (normNorm ? 1.0f : 0.0f);
+								vertices[base + 5] = b[2] * scale * (normNorm ? 2.0f : 1.0f) - (normNorm ? 1.0f : 0.0f);
+							}
+							else if (normCT == TINYGLTF_COMPONENT_TYPE_BYTE) {
+								const int8_t* b = reinterpret_cast<const int8_t*>(ptr);
+								float scale = normNorm ? (1.0f / 127.0f) : 1.0f;
+								vertices[base + 3] = b[0] * scale;
+								vertices[base + 4] = b[1] * scale;
+								vertices[base + 5] = b[2] * scale;
+							}
 						}
 						else {
-							vertices[base + 6] = 1.0f;
-							vertices[base + 7] = 0.0f;
-							vertices[base + 8] = 0.0f;
-							vertices[base + 9] = 1.0f;
+							vertices[base + 3] = 0.0f; vertices[base + 4] = 0.0f; vertices[base + 5] = 1.0f;
 						}
 
-						// UV
-						glm::vec2 uv(0.0f);
-						if (texAccPtr) {
-							const float* uvData = reinterpret_cast<const float*>(
-								&texBufPtr->data[texViewPtr->byteOffset + texAccPtr->byteOffset + vi * sizeof(float) * 2]
-								);
-							uv = glm::vec2(uvData[0], uvData[1]);
+						// TANGENT -> float/normalizado
+						if (hasTangent) {
+							const uint8_t* ptr = tanBase + vi * tanStride;
+							if (tanCT == TINYGLTF_COMPONENT_TYPE_FLOAT) {
+								const float* f = reinterpret_cast<const float*>(ptr);
+								vertices[base + 6] = f[0];
+								vertices[base + 7] = f[1];
+								vertices[base + 8] = f[2];
+								vertices[base + 9] = f[3];
+							}
+							else if (tanCT == TINYGLTF_COMPONENT_TYPE_SHORT) {
+								const int16_t* s = reinterpret_cast<const int16_t*>(ptr);
+								float scale = tanNorm ? (1.0f / 32767.0f) : 1.0f;
+								vertices[base + 6] = s[0] * scale;
+								vertices[base + 7] = s[1] * scale;
+								vertices[base + 8] = s[2] * scale;
+								vertices[base + 9] = s[3] * scale;
+							}
+							else if (tanCT == TINYGLTF_COMPONENT_TYPE_BYTE) {
+								const int8_t* b = reinterpret_cast<const int8_t*>(ptr);
+								float scale = tanNorm ? (1.0f / 127.0f) : 1.0f;
+								vertices[base + 6] = b[0] * scale;
+								vertices[base + 7] = b[1] * scale;
+								vertices[base + 8] = b[2] * scale;
+								vertices[base + 9] = b[3] * scale;
+							}
+							else if (tanCT == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
+								const uint16_t* s = reinterpret_cast<const uint16_t*>(ptr);
+								float scale = tanNorm ? (1.0f / 65535.0f) : 1.0f;
+								vertices[base + 6] = s[0] * scale * (tanNorm ? 2.0f : 1.0f) - (tanNorm ? 1.0f : 0.0f);
+								vertices[base + 7] = s[1] * scale * (tanNorm ? 2.0f : 1.0f) - (tanNorm ? 1.0f : 0.0f);
+								vertices[base + 8] = s[2] * scale * (tanNorm ? 2.0f : 1.0f) - (tanNorm ? 1.0f : 0.0f);
+								vertices[base + 9] = s[3] * scale * (tanNorm ? 2.0f : 1.0f) - (tanNorm ? 1.0f : 0.0f);
+							}
+							else if (tanCT == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) {
+								const uint8_t* b = reinterpret_cast<const uint8_t*>(ptr);
+								float scale = tanNorm ? (1.0f / 255.0f) : 1.0f;
+								vertices[base + 6] = b[0] * scale * (tanNorm ? 2.0f : 1.0f) - (tanNorm ? 1.0f : 0.0f);
+								vertices[base + 7] = b[1] * scale * (tanNorm ? 2.0f : 1.0f) - (tanNorm ? 1.0f : 0.0f);
+								vertices[base + 8] = b[2] * scale * (tanNorm ? 2.0f : 1.0f) - (tanNorm ? 1.0f : 0.0f);
+								vertices[base + 9] = b[3] * scale * (tanNorm ? 2.0f : 1.0f) - (tanNorm ? 1.0f : 0.0f);
+							}
 						}
-						vertices[base + 10] = uv.x;
-						vertices[base + 11] = uv.y;
+						else {
+							vertices[base + 6] = 1.0f; vertices[base + 7] = 0.0f; vertices[base + 8] = 0.0f; vertices[base + 9] = 1.0f;
+						}
 
-						// Preenche struct auxiliar se for gerar tangente
-						if (needsTangentGen) {
-							tangentVerts[vi].position = pos;
-							tangentVerts[vi].normal = normal;
-							tangentVerts[vi].uv = uv;
+						// UV -> float ou normalizado 0..1
+						if (hasTexCoord) {
+							const uint8_t* ptr = uvBase + vi * uvStride;
+							if (uvCT == TINYGLTF_COMPONENT_TYPE_FLOAT) {
+								const float* f = reinterpret_cast<const float*>(ptr);
+								vertices[base + 10] = f[0];
+								vertices[base + 11] = f[1];
+							}
+							else if (uvCT == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
+								const uint16_t* s = reinterpret_cast<const uint16_t*>(ptr);
+								float scale = uvNorm ? (1.0f / 65535.0f) : 1.0f;
+								vertices[base + 10] = s[0] * scale;
+								vertices[base + 11] = s[1] * scale;
+							}
+							else if (uvCT == TINYGLTF_COMPONENT_TYPE_SHORT) {
+								const int16_t* s = reinterpret_cast<const int16_t*>(ptr);
+								float scale = uvNorm ? (1.0f / 32767.0f) : 1.0f;
+								vertices[base + 10] = s[0] * scale;
+								vertices[base + 11] = s[1] * scale;
+							}
+							else if (uvCT == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) {
+								const uint8_t* b = reinterpret_cast<const uint8_t*>(ptr);
+								float scale = uvNorm ? (1.0f / 255.0f) : 1.0f;
+								vertices[base + 10] = b[0] * scale;
+								vertices[base + 11] = b[1] * scale;
+							}
+							else if (uvCT == TINYGLTF_COMPONENT_TYPE_BYTE) {
+								const int8_t* b = reinterpret_cast<const int8_t*>(ptr);
+								float scale = uvNorm ? (1.0f / 127.0f) : 1.0f;
+								vertices[base + 10] = b[0] * scale;
+								vertices[base + 11] = b[1] * scale;
+							}
+						}
+						else {
+							vertices[base + 10] = 0.0f; vertices[base + 11] = 0.0f;
+						}
+
+						// JOINTS -> armazenar como UNSIGNED_SHORT no VBO
+						if (jointsAcc) {
+							const uint8_t* ptr = jointsBase + vi * jointsStride;
+							if (jointsCT == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
+								const uint16_t* s = reinterpret_cast<const uint16_t*>(ptr);
+								for (int k = 0; k < 4; ++k) jointsData[vi * 4 + k] = s[k];
+							}
+							else { // UNSIGNED_BYTE
+								const uint8_t* b = reinterpret_cast<const uint8_t*>(ptr);
+								for (int k = 0; k < 4; ++k) jointsData[vi * 4 + k] = (unsigned short)b[k];
+							}
+						}
+
+						// WEIGHTS -> converter para float (0..1 se normalized)
+						if (weightsAcc) {
+							const uint8_t* ptr = weightsBase + vi * weightsStride;
+							if (weightsCT == TINYGLTF_COMPONENT_TYPE_FLOAT) {
+								const float* f = reinterpret_cast<const float*>(ptr);
+								for (int k = 0; k < 4; ++k) weightsData[vi * 4 + k] = f[k];
+							}
+							else if (weightsCT == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
+								const uint16_t* s = reinterpret_cast<const uint16_t*>(ptr);
+								float scale = weightsNorm ? (1.0f / 65535.0f) : 1.0f;
+								for (int k = 0; k < 4; ++k) weightsData[vi * 4 + k] = s[k] * scale;
+							}
+							else { // UNSIGNED_BYTE
+								const uint8_t* b = reinterpret_cast<const uint8_t*>(ptr);
+								float scale = weightsNorm ? (1.0f / 255.0f) : 1.0f;
+								for (int k = 0; k < 4; ++k) weightsData[vi * 4 + k] = b[k] * scale;
+							}
+						}
+						else {
+							weightsData[vi * 4 + 0] = 1.0f;
 						}
 					}
 
-					// ÍNDICES
-					const tinygltf::Accessor& idxAcc = gltfModel.accessors.at(prim.indices);
-					const tinygltf::BufferView& idxView = gltfModel.bufferViews.at(idxAcc.bufferView);
-					const tinygltf::Buffer& idxBuf = gltfModel.buffers.at(idxView.buffer);
-					const uint8_t* idxDataPtr = idxBuf.data.data() + idxView.byteOffset + idxAcc.byteOffset;
-
+					// ==== ÍNDICES ====
 					std::vector<uint32_t> indices;
-					if (idxAcc.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
-						sub.indexType = GL_UNSIGNED_SHORT;
-						const uint16_t* src = reinterpret_cast<const uint16_t*>(idxDataPtr);
-						indices.assign(src, src + idxAcc.count);
+					GLenum indexGLType = GL_UNSIGNED_INT;
+
+					if (prim.indices >= 0) {
+						const tinygltf::Accessor& idxAcc = gltfModel.accessors.at(prim.indices);
+						const tinygltf::BufferView& idxBV = gltfModel.bufferViews.at(idxAcc.bufferView);
+						const tinygltf::Buffer& idxBuf = gltfModel.buffers.at(idxBV.buffer);
+						const uint8_t* idxBase = idxBuf.data.data() + idxBV.byteOffset + idxAcc.byteOffset;
+
+						indices.resize(idxAcc.count);
+						if (idxAcc.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) {
+							indexGLType = GL_UNSIGNED_BYTE;
+							for (size_t i = 0; i < idxAcc.count; ++i) indices[i] = reinterpret_cast<const uint8_t*>(idxBase)[i];
+						}
+						else if (idxAcc.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
+							indexGLType = GL_UNSIGNED_SHORT;
+							for (size_t i = 0; i < idxAcc.count; ++i) indices[i] = reinterpret_cast<const uint16_t*>(idxBase)[i];
+						}
+						else { // UNSIGNED_INT
+							indexGLType = GL_UNSIGNED_INT;
+							for (size_t i = 0; i < idxAcc.count; ++i) indices[i] = reinterpret_cast<const uint32_t*>(idxBase)[i];
+						}
 					}
 					else {
-						sub.indexType = GL_UNSIGNED_INT;
-						const uint32_t* src = reinterpret_cast<const uint32_t*>(idxDataPtr);
-						indices.assign(src, src + idxAcc.count);
+						// primitive sem índices: gera sequencial
+						// num de vértices == posAcc.count, assumindo TRIANGLES
+						indices.resize(posAcc.count);
+						for (size_t i = 0; i < posAcc.count; ++i) indices[i] = (uint32_t)i;
+						indexGLType = (posAcc.count <= 65535) ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT;
 					}
 
-					// GERA TANGENTES se necessário
-					/*if (needsTangentGen) {
-						generateTangents(tangentVerts, indices);
-						for (size_t vi = 0; vi < posAcc.count; ++vi) {
-							size_t base = vi * 12;
-							glm::vec3 t = glm::normalize(tangentVerts[vi].tangent);
-							glm::vec3 b = tangentVerts[vi].bitangent;
-							float handedness = (glm::dot(glm::cross(tangentVerts[vi].normal, t), b) < 0.0f) ? -1.0f : 1.0f;
-							vertices[base + 6] = t.x;
-							vertices[base + 7] = t.y;
-							vertices[base + 8] = t.z;
-							vertices[base + 9] = handedness;
-						}
-					}*/
-
+					// ==== OpenGL buffers/VAO ====
 					glGenVertexArrays(1, &sub.vao);
 					glGenBuffers(1, &sub.vbo);
 					glGenBuffers(1, &sub.ebo);
@@ -1057,123 +1225,89 @@ void FiscionX::Model::init(const std::string& path) {
 					glBindVertexArray(sub.vao);
 
 					glBindBuffer(GL_ARRAY_BUFFER, sub.vbo);
-					glBufferData(
-						GL_ARRAY_BUFFER,
-						vertices.size() * sizeof(float),
-						vertices.data(),
-						GL_STATIC_DRAW
-					);
+					glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
 					GLsizei stride = (3 + 3 + 4 + 2) * sizeof(float);
-					// posição (loc = 0)
+					// pos (0)
 					glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void*)0);
 					glEnableVertexAttribArray(0);
-					// normal (loc = 1)
+					// normal (1)
 					glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)(3 * sizeof(float)));
 					glEnableVertexAttribArray(1);
-					// tangente (loc = 2)
+					// tangent (2)
 					glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, stride, (void*)(6 * sizeof(float)));
 					glEnableVertexAttribArray(2);
-					// uv (loc = 3)
+					// uv (3)
 					glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, stride, (void*)(10 * sizeof(float)));
 					glEnableVertexAttribArray(3);
 
 					if (isSkinned) {
-						// JBO (loc = 4) → ivec4 unsigned short
+						// JOINTS como UNSIGNED_SHORT (loc 4)
 						glBindBuffer(GL_ARRAY_BUFFER, sub.jbo);
-						glBufferData(
-							GL_ARRAY_BUFFER,
-							jointsData.size() * sizeof(unsigned short),
-							jointsData.data(),
-							GL_STATIC_DRAW
-						);
-						glVertexAttribIPointer(
-							4,
-							4,
-							GL_UNSIGNED_SHORT,
-							4 * sizeof(unsigned short),
-							(void*)0
-						);
+						glBufferData(GL_ARRAY_BUFFER, jointsData.size() * sizeof(unsigned short), jointsData.data(), GL_STATIC_DRAW);
+						glVertexAttribIPointer(4, 4, GL_UNSIGNED_SHORT, 4 * sizeof(unsigned short), (void*)0);
 						glEnableVertexAttribArray(4);
 
-						// WBO (loc = 5) → vec4 float
+						// WEIGHTS como FLOAT (loc 5)
 						glBindBuffer(GL_ARRAY_BUFFER, sub.wbo);
-						glBufferData(
-							GL_ARRAY_BUFFER,
-							weightsData.size() * sizeof(float),
-							weightsData.data(),
-							GL_STATIC_DRAW
-						);
-						glVertexAttribPointer(
-							5,
-							4,
-							GL_FLOAT,
-							GL_FALSE,
-							4 * sizeof(float),
-							(void*)0
-						);
+						glBufferData(GL_ARRAY_BUFFER, weightsData.size() * sizeof(float), weightsData.data(), GL_STATIC_DRAW);
+						glVertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
 						glEnableVertexAttribArray(5);
 					}
 
-					// EBO
 					glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sub.ebo);
-					glBufferData(
-						GL_ELEMENT_ARRAY_BUFFER,
-						indices.size() * sizeof(uint32_t),
-						indices.data(),
-						GL_STATIC_DRAW
-					);
+					if (indexGLType == GL_UNSIGNED_BYTE) {
+						std::vector<uint8_t> idx8(indices.size());
+						for (size_t i = 0; i < indices.size(); ++i) idx8[i] = (uint8_t)indices[i];
+						glBufferData(GL_ELEMENT_ARRAY_BUFFER, idx8.size() * sizeof(uint8_t), idx8.data(), GL_STATIC_DRAW);
+					}
+					else if (indexGLType == GL_UNSIGNED_SHORT) {
+						std::vector<uint16_t> idx16(indices.size());
+						for (size_t i = 0; i < indices.size(); ++i) idx16[i] = (uint16_t)indices[i];
+						glBufferData(GL_ELEMENT_ARRAY_BUFFER, idx16.size() * sizeof(uint16_t), idx16.data(), GL_STATIC_DRAW);
+					}
+					else {
+						glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(uint32_t), indices.data(), GL_STATIC_DRAW);
+					}
 
 					glBindVertexArray(0);
 
 					sub.indexCount = indices.size();
+					sub.indexType = indexGLType;
+
+					// ==== Texturas / Materiais (igual à sua lógica com pequenos ajustes de checagem) ====
 					sub.baseColorTex = getBaseColorTexture(gltfModel, prim.material);
-					if (sub.baseColorTex == 0) {
-						sub.baseColorTex = getDiffuseTextureFromSpecGloss(gltfModel, prim.material);
-					}
+					if (sub.baseColorTex == 0) sub.baseColorTex = getDiffuseTextureFromSpecGloss(gltfModel, prim.material);
 					sub.normalMapTex = getNormalMapTexture(gltfModel, prim.material);
 
 					if (prim.material >= 0 && prim.material < (int)gltfModel.materials.size()) {
 						const auto& mat = gltfModel.materials[prim.material];
 
 						sub.baseColorTex = getBaseColorTexture(gltfModel, prim.material);
-						if (sub.baseColorTex == 0) {
-							sub.baseColorTex = getDiffuseTextureFromSpecGloss(gltfModel, prim.material);
-						}
+						if (sub.baseColorTex == 0) sub.baseColorTex = getDiffuseTextureFromSpecGloss(gltfModel, prim.material);
 						sub.normalMapTex = getNormalMapTexture(gltfModel, prim.material);
 
-						if (mat.alphaMode == "MASK") {
-							sub.alphaMode = "MASK";
-							sub.originalAlphaMode = "MASK";
-						}
-						else if (mat.alphaMode == "BLEND") {
-							sub.alphaMode = "BLEND";
-							sub.originalAlphaMode = "BLEND";
-						}
+						if (mat.alphaMode == "MASK") { sub.alphaMode = "MASK"; sub.originalAlphaMode = "MASK"; }
+						else if (mat.alphaMode == "BLEND") { sub.alphaMode = "BLEND"; sub.originalAlphaMode = "BLEND"; }
 
-						if (mat.doubleSided) {
-							sub.doubleSided = true;
-						}
+						if (mat.doubleSided) sub.doubleSided = true;
+						if (mat.additionalValues.count("alphaCutoff")) sub.alphaCutoff = static_cast<float>(mat.additionalValues.at("alphaCutoff").Factor());
 
-						if (mat.additionalValues.count("alphaCutoff")) {
-							sub.alphaCutoff = static_cast<float>(mat.additionalValues.at("alphaCutoff").Factor());
-						}
-
-						// GLOSSINESS
 						if (mat.additionalValues.count("glossinessTexture")) {
 							int texIndex = mat.additionalValues.at("glossinessTexture").TextureIndex();
-							int imgIndex = gltfModel.textures[texIndex].source;
-							const auto& img = gltfModel.images[imgIndex];
-
-							glGenTextures(1, &sub.glossinessTex);
-							glBindTexture(GL_TEXTURE_2D, sub.glossinessTex);
-							glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, img.width, img.height, 0,
-								GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
-							glGenerateMipmap(GL_TEXTURE_2D);
-							glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-							glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-							GLfloat maxAniso = 0.0f;
-							glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
-							glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, maxAniso);
+							if (texIndex >= 0 && texIndex < (int)gltfModel.textures.size()) {
+								int imgIndex = gltfModel.textures[texIndex].source;
+								if (imgIndex >= 0 && imgIndex < (int)gltfModel.images.size()) {
+									const auto& img = gltfModel.images[imgIndex];
+									glGenTextures(1, &sub.glossinessTex);
+									glBindTexture(GL_TEXTURE_2D, sub.glossinessTex);
+									glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+									glGenerateMipmap(GL_TEXTURE_2D);
+									glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+									glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+									GLfloat maxAniso = 0.0f; glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
+									glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, maxAniso);
+								}
+							}
 						}
 
 						auto extIt = mat.extensions.find("KHR_materials_pbrSpecularGlossiness");
@@ -1181,58 +1315,52 @@ void FiscionX::Model::init(const std::string& path) {
 							const auto& ext = extIt->second;
 							bool hasGlossiness = ext.Has("glossinessTexture");
 							bool hasSpecGloss = ext.Has("specularGlossinessTexture");
-
 							if (hasSpecGloss && !hasGlossiness && sub.glossinessTex == 0) {
 								sub.glossinessInAlphaOfSpecular = true;
 							}
 						}
 
-						// SPECULAR F0
 						if (mat.additionalValues.count("specularTexture")) {
 							int texIndex = mat.additionalValues.at("specularTexture").TextureIndex();
-							int imgIndex = gltfModel.textures[texIndex].source;
-							const auto& img = gltfModel.images[imgIndex];
-
-							glGenTextures(1, &sub.specularF0Tex);
-							glBindTexture(GL_TEXTURE_2D, sub.specularF0Tex);
-							glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, img.width, img.height, 0,
-								GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
-							glGenerateMipmap(GL_TEXTURE_2D);
-							glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-							glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-							GLfloat maxAniso = 0.0f;
-							glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
-							glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, maxAniso);
+							if (texIndex >= 0 && texIndex < (int)gltfModel.textures.size()) {
+								int imgIndex = gltfModel.textures[texIndex].source;
+								if (imgIndex >= 0 && imgIndex < (int)gltfModel.images.size()) {
+									const auto& img = gltfModel.images[imgIndex];
+									glGenTextures(1, &sub.specularF0Tex);
+									glBindTexture(GL_TEXTURE_2D, sub.specularF0Tex);
+									glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+									glGenerateMipmap(GL_TEXTURE_2D);
+									glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+									glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+									GLfloat maxAniso = 0.0f; glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
+									glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, maxAniso);
+								}
+							}
 						}
 
-						if (sub.specularF0Tex == 0) {
-							sub.specularF0Tex = getGlossinessTextureFromSpecGloss(gltfModel, prim.material);
-						}
-
-						if (sub.glossinessTex == 0) {
-							sub.glossinessTex = getGlossinessTextureFromSpecGloss(gltfModel, prim.material);
-						}
+						if (sub.specularF0Tex == 0) sub.specularF0Tex = getGlossinessTextureFromSpecGloss(gltfModel, prim.material);
+						if (sub.glossinessTex == 0)  sub.glossinessTex = getGlossinessTextureFromSpecGloss(gltfModel, prim.material);
 
 						if (mat.extensions.find("KHR_materials_transmission") != mat.extensions.end()) {
 							const auto& ext = mat.extensions.at("KHR_materials_transmission");
 							if (ext.Has("transmissionFactor"))
 								sub.transmissionFactor = static_cast<float>(ext.Get("transmissionFactor").GetNumberAsDouble());
-
 							if (ext.Has("transmissionTexture")) {
 								int texIndex = ext.Get("transmissionTexture").Get("index").Get<int>();
-								int imgIndex = gltfModel.textures[texIndex].source;
-								const auto& img = gltfModel.images[imgIndex];
-
-								glGenTextures(1, &sub.transmissionTex);
-								glBindTexture(GL_TEXTURE_2D, sub.transmissionTex);
-								glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, img.width, img.height, 0,
-									GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
-								glGenerateMipmap(GL_TEXTURE_2D);
-								glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-								glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-								GLfloat maxAniso = 0.0f;
-								glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
-								glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, maxAniso);
+								if (texIndex >= 0 && texIndex < (int)gltfModel.textures.size()) {
+									int imgIndex = gltfModel.textures[texIndex].source;
+									if (imgIndex >= 0 && imgIndex < (int)gltfModel.images.size()) {
+										const auto& img = gltfModel.images[imgIndex];
+										glGenTextures(1, &sub.transmissionTex);
+										glBindTexture(GL_TEXTURE_2D, sub.transmissionTex);
+										glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+										glGenerateMipmap(GL_TEXTURE_2D);
+										glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+										glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+										GLfloat maxAniso = 0.0f; glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
+										glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, maxAniso);
+									}
+								}
 							}
 						}
 					}
@@ -1244,7 +1372,7 @@ void FiscionX::Model::init(const std::string& path) {
 			for (int child : node.children) {
 				processNode(child, globalTransform);
 			}
-		};
+								};
 
 	for (int root : gltfModel.scenes.at(gltfModel.defaultScene).nodes) {
 		processNode(root, glm::mat4(1.0f));
@@ -1252,7 +1380,7 @@ void FiscionX::Model::init(const std::string& path) {
 
 	occlusionQueries.resize(meshes.size());
 	isVisible.resize(meshes.size(), true);
-	glGenQueries(meshes.size(), occlusionQueries.data());
+	glGenQueries((GLsizei)meshes.size(), occlusionQueries.data());
 
 	FiscionX::Core::AllModels.push_back(this);
 }
