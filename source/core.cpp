@@ -151,7 +151,6 @@ FiscionX::UI::Image::Image(const char* path, float sx, float sy) {
 
 	scale = glm::vec2(sx, sy);
 
-	// Cria textura
 	glGenTextures(1, &texture);
 	glBindTexture(GL_TEXTURE_2D, texture);
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
@@ -404,9 +403,9 @@ void FiscionX::generateTangents(
     }
 
     for (auto& v : vertices) {
-        // Ortogonaliza com Gram-Schmidt
+        // Orthogonalizes using Gram-Schmidt
         v.tangent = glm::normalize(v.tangent - v.normal * glm::dot(v.normal, v.tangent));
-        // Determine handedness (bitangent cross)
+        // Determines handedness (bitangent cross)
         float handedness = (glm::dot(glm::cross(v.normal, v.tangent), v.bitangent) < 0.0f) ? -1.0f : 1.0f;
         v.tangent = glm::vec4(v.tangent, handedness);
     }
@@ -842,7 +841,7 @@ void FiscionX::Model::init(const std::string& path) {
 					bool hasTangent = prim.attributes.find("TANGENT") != prim.attributes.end();
 					bool hasTexCoord = prim.attributes.find("TEXCOORD_0") != prim.attributes.end();
 
-					// ==== POSITION (deve ser FLOAT na especificação, mas vamos tratar genericamente) ====
+					// ==== POSITION (must be FLOAT, but treated here generically) ====
 					const tinygltf::Accessor& posAcc = gltfModel.accessors.at(prim.attributes.at("POSITION"));
 					const tinygltf::BufferView& posBV = gltfModel.bufferViews.at(posAcc.bufferView);
 					const tinygltf::Buffer& posBuf = gltfModel.buffers.at(posBV.buffer);
@@ -905,7 +904,7 @@ void FiscionX::Model::init(const std::string& path) {
 						tanBase = tanBuf->data.data() + tanBV->byteOffset + tanAcc->byteOffset;
 					}
 
-					// ==== TEXCOORD_0 (pode ser UBYTE/USHORT normalizado) ====
+					// ==== TEXCOORD_0 (can be UBYTE/USHORT normalized) ====
 					const tinygltf::Accessor* uvAcc = nullptr;
 					const tinygltf::BufferView* uvBV = nullptr;
 					const tinygltf::Buffer* uvBuf = nullptr;
@@ -948,7 +947,7 @@ void FiscionX::Model::init(const std::string& path) {
 						jointsBase = jointsBuf->data.data() + jointsBV->byteOffset + jointsAcc->byteOffset;
 					}
 
-					// ==== WEIGHTS_0 (FLOAT, ou UBYTE/USHORT normalizado) ====
+					// ==== WEIGHTS_0 (FLOAT, or UBYTE/USHORT normalized) ====
 					const tinygltf::Accessor* weightsAcc = nullptr;
 					const tinygltf::BufferView* weightsBV = nullptr;
 					const tinygltf::Buffer* weightsBuf = nullptr;
@@ -969,7 +968,7 @@ void FiscionX::Model::init(const std::string& path) {
 						weightsBase = weightsBuf->data.data() + weightsBV->byteOffset + weightsAcc->byteOffset;
 					}
 
-					// ==== Monta buffer de vértices intercalado: pos(3) + normal(3) + tangent(4) + uv(2) ====
+					// ==== Assembles vertices buffer: pos(3) + normal(3) + tangent(4) + uv(2) ====
 					std::vector<float> vertices;
 					vertices.resize(posAcc.count * (3 + 3 + 4 + 2), 0.0f);
 
@@ -980,7 +979,7 @@ void FiscionX::Model::init(const std::string& path) {
 					for (size_t vi = 0; vi < posAcc.count; ++vi) {
 						size_t base = vi * 12;
 
-						// POSITION -> sempre como float
+						// POSITION
 						{
 							const uint8_t* ptr = posBase + vi * posStride;
 							if (posAcc.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT) {
@@ -1019,7 +1018,7 @@ void FiscionX::Model::init(const std::string& path) {
 							}
 						}
 
-						// NORMAL -> float, mas tratar normalized inteiros se vier
+						// NORMAL -> float, but treat normalized integers if comes instead
 						if (hasNormal) {
 							const uint8_t* ptr = normBase + vi * normStride;
 							if (normCT == TINYGLTF_COMPONENT_TYPE_FLOAT) {
@@ -1061,7 +1060,7 @@ void FiscionX::Model::init(const std::string& path) {
 							vertices[base + 3] = 0.0f; vertices[base + 4] = 0.0f; vertices[base + 5] = 1.0f;
 						}
 
-						// TANGENT -> float/normalizado
+						// TANGENT -> float/normalized
 						if (hasTangent) {
 							const uint8_t* ptr = tanBase + vi * tanStride;
 							if (tanCT == TINYGLTF_COMPONENT_TYPE_FLOAT) {
@@ -1108,7 +1107,7 @@ void FiscionX::Model::init(const std::string& path) {
 							vertices[base + 6] = 1.0f; vertices[base + 7] = 0.0f; vertices[base + 8] = 0.0f; vertices[base + 9] = 1.0f;
 						}
 
-						// UV -> float ou normalizado 0..1
+						// UV -> float ou normalized 0..1
 						if (hasTexCoord) {
 							const uint8_t* ptr = uvBase + vi * uvStride;
 							if (uvCT == TINYGLTF_COMPONENT_TYPE_FLOAT) {
@@ -1145,7 +1144,7 @@ void FiscionX::Model::init(const std::string& path) {
 							vertices[base + 10] = 0.0f; vertices[base + 11] = 0.0f;
 						}
 
-						// JOINTS -> armazenar como UNSIGNED_SHORT no VBO
+						// JOINTS -> stores as UNSIGNED_SHORT in VBO
 						if (jointsAcc) {
 							const uint8_t* ptr = jointsBase + vi * jointsStride;
 							if (jointsCT == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
@@ -1158,7 +1157,7 @@ void FiscionX::Model::init(const std::string& path) {
 							}
 						}
 
-						// WEIGHTS -> converter para float (0..1 se normalized)
+						// WEIGHTS -> converts to float (0..1 if normalized)
 						if (weightsAcc) {
 							const uint8_t* ptr = weightsBase + vi * weightsStride;
 							if (weightsCT == TINYGLTF_COMPONENT_TYPE_FLOAT) {
@@ -1181,7 +1180,7 @@ void FiscionX::Model::init(const std::string& path) {
 						}
 					}
 
-					// ==== ÍNDICES ====
+					// ==== INDICES ====
 					std::vector<uint32_t> indices;
 					GLenum indexGLType = GL_UNSIGNED_INT;
 
@@ -1206,8 +1205,8 @@ void FiscionX::Model::init(const std::string& path) {
 						}
 					}
 					else {
-						// primitive sem índices: gera sequencial
-						// num de vértices == posAcc.count, assumindo TRIANGLES
+						// primitive without índices: generates sequential
+						// num. vertices == posAcc.count, assuming TRIANGLES
 						indices.resize(posAcc.count);
 						for (size_t i = 0; i < posAcc.count; ++i) indices[i] = (uint32_t)i;
 						indexGLType = (posAcc.count <= 65535) ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT;
@@ -1241,13 +1240,13 @@ void FiscionX::Model::init(const std::string& path) {
 					glEnableVertexAttribArray(3);
 
 					if (isSkinned) {
-						// JOINTS como UNSIGNED_SHORT (loc 4)
+						// JOINTS as UNSIGNED_SHORT (loc 4)
 						glBindBuffer(GL_ARRAY_BUFFER, sub.jbo);
 						glBufferData(GL_ARRAY_BUFFER, jointsData.size() * sizeof(unsigned short), jointsData.data(), GL_STATIC_DRAW);
 						glVertexAttribIPointer(4, 4, GL_UNSIGNED_SHORT, 4 * sizeof(unsigned short), (void*)0);
 						glEnableVertexAttribArray(4);
 
-						// WEIGHTS como FLOAT (loc 5)
+						// WEIGHTS as FLOAT (loc 5)
 						glBindBuffer(GL_ARRAY_BUFFER, sub.wbo);
 						glBufferData(GL_ARRAY_BUFFER, weightsData.size() * sizeof(float), weightsData.data(), GL_STATIC_DRAW);
 						glVertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
@@ -1274,7 +1273,7 @@ void FiscionX::Model::init(const std::string& path) {
 					sub.indexCount = indices.size();
 					sub.indexType = indexGLType;
 
-					// ==== Texturas / Materiais (igual à sua lógica com pequenos ajustes de checagem) ====
+					// ==== Textures / Materials ====
 					sub.baseColorTex = getBaseColorTexture(gltfModel, prim.material);
 					if (sub.baseColorTex == 0) sub.baseColorTex = getDiffuseTextureFromSpecGloss(gltfModel, prim.material);
 					sub.normalMapTex = getNormalMapTexture(gltfModel, prim.material);
@@ -1400,9 +1399,8 @@ void FiscionX::Model::updateOcclusion(const glm::mat4& viewProj) {
 		glDisable(GL_BLEND);
 
 		glBeginQuery(GL_ANY_SAMPLES_PASSED, occlusionQueries[i]);
-		// Aqui você pode usar um shader simples e desenhar apenas bounding boxes
 		glBindVertexArray(mesh.vao);
-		glUseProgram(0); // desenha sem shader (mínimo)
+		glUseProgram(0);
 		glDrawElements(GL_TRIANGLES, mesh.indexCount, mesh.indexType, 0);
 		glEndQuery(GL_ANY_SAMPLES_PASSED);
 
@@ -1431,7 +1429,7 @@ void FiscionX::Model::drawSubMesh(
 			glDisable(GL_CULL_FACE);
 		else {
 			glEnable(GL_CULL_FACE);
-			glCullFace(GL_FRONT); // para shadow acne
+			glCullFace(GL_FRONT); // to shadow acne
 		}
 
 		glUniformMatrix4fv(glGetUniformLocation(shader, "model"), 1, GL_FALSE, glm::value_ptr(modelMatrix));
@@ -1638,7 +1636,7 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 	if (!depthPass && !transparentMeshes.empty()) {
 		std::sort(transparentMeshes.begin(), transparentMeshes.end(),
 			[](const std::pair<float, const SubMesh*>& a, const std::pair<float, const SubMesh*>& b) {
-				return a.first > b.first; // distância decrescente (mais longe primeiro)
+				return a.first > b.first; // (most far first)
 			});
 
 		glEnable(GL_BLEND);
@@ -1879,7 +1877,7 @@ void FiscionX::Physics::Rigidbody::setTransform(FiscionX::Vector3 position, Fisc
         btTransform transform;
         transform.setOrigin(btVector3(position.x, position.y, position.z));
 
-        // Converte de graus para radianos
+        // Converts degrees into radians
         float xRad = glm::radians(rotationDegrees.x);
         float yRad = glm::radians(rotationDegrees.y);
         float zRad = glm::radians(rotationDegrees.z);
@@ -2363,7 +2361,7 @@ void FiscionX::Core::RenderAllShadowPasses(glm::mat4 view, glm::mat4 projection,
 
 	float now = static_cast<float>(glfwGetTime());
 
-	// cache model world positions
+	// Cache model world positions
 	std::vector<glm::vec3> modelWorldPositions;
 	modelWorldPositions.reserve(AllModels.size());
 	for (auto& m : AllModels) {
@@ -2372,13 +2370,13 @@ void FiscionX::Core::RenderAllShadowPasses(glm::mat4 view, glm::mat4 projection,
 		modelWorldPositions.push_back(worldPos);
 	}
 
-	// track camera motion so directional shadows update when camera moves
+	// Track camera motion so directional shadows update when camera moves
 	static glm::vec3 _lastCameraPos = Camera.position;
 	bool cameraMoved = glm::length(_lastCameraPos - Camera.position) > 0.05f; // tweak threshold if needed
 	_lastCameraPos = Camera.position;
 
 	for (size_t i = 0; i < AllLights.size(); ++i) {
-		Light& L = *AllLights[i];             // non-const to update timing fields
+		Light& L = *AllLights[i];             // Non-const to update timing fields
 		ShadowMap& sm = AllShadowMaps[i];
 
 		if (!L.enableShadows) continue;
@@ -2389,12 +2387,12 @@ void FiscionX::Core::RenderAllShadowPasses(glm::mat4 view, glm::mat4 projection,
 		bool firstTime = (L.lastPosition == glm::vec3(FLT_MAX));
 
 		bool shouldUpdate = moved || timeExpired || firstTime;
-		// directional must also update if camera moved (because light space uses camera center)
+		// Directional must also update if camera moved (because light space uses camera center)
 		if (L.type == LIGHT_DIRECTIONAL) shouldUpdate = shouldUpdate || cameraMoved;
 
 		if (!shouldUpdate) continue;
 
-		// record update
+		// Record update
 		L.lastShadowUpdateTime = now;
 		L.lastPosition = glm::vec3(L.position.x, L.position.y, L.position.z);
 
@@ -2415,7 +2413,7 @@ void FiscionX::Core::RenderAllShadowPasses(glm::mat4 view, glm::mat4 projection,
 				}
 			}
 
-			// if nothing is in range, skip entire cubemap generation
+			// If nothing is in range, skip entire cubemap generation
 			if (staticIndices.empty() && skinnedIndices.empty()) {
 				continue;
 			}
@@ -2469,7 +2467,7 @@ void FiscionX::Core::RenderAllShadowPasses(glm::mat4 view, glm::mat4 projection,
 			glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		}
 		else if (L.type == LIGHT_SPOT) {
-			// spot: distance + cone culling (kept as-is)
+			// Spot: distance + cone culling (kept as-is)
 			sm.lightSpaceMatrix = ComputeLightSpaceMatrix(L);
 			glm::vec3 lightPos = glm::vec3(L.position.x, L.position.y, L.position.z);
 
@@ -2519,7 +2517,7 @@ void FiscionX::Core::RenderAllShadowPasses(glm::mat4 view, glm::mat4 projection,
 			glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		}
 		else if (L.type == LIGHT_DIRECTIONAL) {
-			// directional (mantive como estava)
+			// Directional
 			sm.lightSpaceMatrix = ComputeLightSpaceMatrix(L);
 
 			glViewport(0, 0, DIR_SHADOW_SIZE, DIR_SHADOW_SIZE);
@@ -2697,7 +2695,6 @@ void FiscionX::Core::ClockTick() {
 }
 
 void FiscionX::Core::SortModels() {
-    // Sort every model
     std::sort(AllModels.begin(), AllModels.end(), [](const Model* a, const Model* b) {
         auto hasBlend = [](const Model* model) {
             if (model->alpha < 1.0f)
@@ -2783,7 +2780,7 @@ GLuint LoadShader(const char* vertexSrc, const char* fragmentSrc) {
 		}
 	}
 
-	// ───── Compilar do zero ─────
+	// ───── Compile from scratch ─────
 	GLuint vs = glCreateShader(GL_VERTEX_SHADER);
 	glShaderSource(vs, 1, &vertexSrc, nullptr);
 	glCompileShader(vs);
@@ -2828,7 +2825,7 @@ GLuint LoadShader(const char* vertexSrc, const char* fragmentSrc) {
 	glDeleteShader(vs);
 	glDeleteShader(fs);
 
-	// ───── Tentar salvar o binário ─────
+	// ───── Try to save binary file ─────
 	if (FiscionX::Core::enableShaderCache) {
 		GLint numFormats = 0;
 		glGetIntegerv(GL_NUM_PROGRAM_BINARY_FORMATS, &numFormats);
