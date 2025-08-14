@@ -87,5 +87,5 @@ int main() {
 - Link the static libraries (.lib) and the FiscionX cpp (core.cpp, tiny_gltf.cpp, stb_image.cpp and stb_image_write.cpp) and headers (FiscionCore.h and FiscionShaders.h) files to your compiler.
 
 ## Links
-Discord - https://discord.gg/42ScmJA2t6
+Discord - https://discord.gg/42ScmJA2t6.
 Wiki - github.com/rsfis/fiscionx/wiki
