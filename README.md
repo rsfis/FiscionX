@@ -85,3 +85,7 @@ int main() {
 - Paste the .cpp, .h and the "dependencies" directory into your source project folder.
 - Paste .dll and .lib files into the release or debug folder of your project, or exacly where the output executable is located.
 - Link the static libraries (.lib) and the FiscionX cpp (core.cpp, tiny_gltf.cpp, stb_image.cpp and stb_image_write.cpp) and headers (FiscionCore.h and FiscionShaders.h) files to your compiler.
+
+## Links
+Discord - https://discord.gg/42ScmJA2t6
+Wiki - github.com/rsfis/fiscionx/wiki
