@@ -88,4 +88,4 @@ int main() {
 
 ## Links
 Discord - https://discord.gg/42ScmJA2t6.
-Wiki - github.com/rsfis/fiscionx/wiki.
+Wiki - https://github.com/rsfis/fiscionx/wiki.
