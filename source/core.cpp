@@ -2691,6 +2691,83 @@ void FiscionX::Core::ClockTick() {
     glfwPollEvents();
 }
 
+void FiscionX::Core::SetWindowSize(int width, int height) {
+	SCREEN_WIDTH = width;
+	SCREEN_HEIGHT = height;
+	glfwSetWindowSize(FiscionX::Core::Window, width, height);
+	glViewport(0, 0, width, height);
+}
+
+void FiscionX::Core::SetWindowIcon(const char* iconPath) {
+	GLFWimage icon;
+	icon.pixels = stbi_load(iconPath, &icon.width, &icon.height, nullptr, 4);
+	if (icon.pixels) {
+		glfwSetWindowIcon(FiscionX::Core::Window, 1, &icon);
+		stbi_image_free(icon.pixels);
+	} else {
+		std::cerr << "ERR 0x013 - Failed to load window icon from " << iconPath << std::endl;
+	}
+}
+
+void FiscionX::Core::SetWindowFullscreen(bool fullscreen, int monitorIndex) {
+	int count;
+	GLFWmonitor** monitors = glfwGetMonitors(&count);
+	if (!monitors || monitorIndex < 0 || monitorIndex >= count)
+		return;
+
+	GLFWmonitor* monitor = monitors[monitorIndex];
+
+	if (fullscreen) {
+		int modeCount;
+		const GLFWvidmode* modes = glfwGetVideoModes(monitor, &modeCount);
+
+		const GLFWvidmode* chosenMode = nullptr;
+		int bestRefresh = 0;
+		int bestColorBits = 0;
+
+		for (int i = 0; i < modeCount; i++) {
+			if (modes[i].width == SCREEN_WIDTH && modes[i].height == SCREEN_HEIGHT) {
+				int colorBits = modes[i].redBits + modes[i].greenBits + modes[i].blueBits;
+				if (modes[i].refreshRate > bestRefresh ||
+					(modes[i].refreshRate == bestRefresh && colorBits > bestColorBits)) {
+					chosenMode = &modes[i];
+					bestRefresh = modes[i].refreshRate;
+					bestColorBits = colorBits;
+				}
+			}
+		}
+
+		// Se não achou, usa modo nativo
+		if (!chosenMode) {
+			chosenMode = glfwGetVideoMode(monitor);
+			std::cerr << "Resolução desejada não encontrada, usando resolução nativa.\n";
+		}
+
+		glfwSetWindowMonitor(
+			FiscionX::Core::Window,
+			monitor,
+			0, 0,
+			chosenMode->width,
+			chosenMode->height,
+			chosenMode->refreshRate
+		);
+
+		glViewport(0, 0, chosenMode->width, chosenMode->height);
+
+	}
+	else {
+		glfwSetWindowMonitor(
+			FiscionX::Core::Window,
+			nullptr,
+			100, 100,
+			SCREEN_WIDTH,
+			SCREEN_HEIGHT,
+			0
+		);
+		glViewport(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+	}
+}
+
 void FiscionX::Core::SortModels() {
     std::sort(AllModels.begin(), AllModels.end(), [](const Model* a, const Model* b) {
         auto hasBlend = [](const Model* model) {
