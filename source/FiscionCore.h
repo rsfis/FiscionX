@@ -216,13 +216,13 @@ struct FiscionX {
 			static GLuint shader;
 
 			float alpha = 1.0f;
-			float rotation = 0.0f; // degrees
-			glm::vec2 scale = glm::vec2(1.0f);
+			float rotation = 0.0f; // radians
+			FiscionX::Vector2 scale = FiscionX::Vector2(1.0f);
 
 			float aspect_ratio = 1.0f;
 			int w_, h_;
 
-			Image(const char* path, float sx = 1.0f, float sy = 1.0f);
+			Image(const char* path, FiscionX::Vector2 scl);
 			void flip(bool flipx, bool flipy);
 			void draw(FiscionX::Vector2 position);
 		};
@@ -362,7 +362,7 @@ struct FiscionX {
 			void applyTorqueImpulse(Vector3 torqueImpulse);
 			void setLinearVelocity(Vector3 velocity);
 			void setAngularVelocity(Vector3 velocity);
-			void setTransform(Vector3 position, Vector3 rotationDegrees);
+			void setTransform(Vector3 position, Vector3 rotation);
 			void setLinearFactor(Vector3 factor);
 			void setAngularFactor(Vector3 factor);
 			void setCollisionShape(Shape* newShape);
@@ -507,7 +507,7 @@ struct FiscionX {
 		GLuint getNormalMapTexture(const tinygltf::Model& model, int materialIndex);
 		void init(const std::string& path);
 		void updateOcclusion(const glm::mat4& viewProj);
-		void syncTransformWithBody(Physics::Rigidbody* body, Vector3 positionOffset, Vector3 rotationDegreesOffset);
+		void syncTransformWithBody(Physics::Rigidbody* body, Vector3 positionOffset, Vector3 rotationOffset);
 		void drawSubMesh(
 			const SubMesh& mesh,
 			GLuint shader,
