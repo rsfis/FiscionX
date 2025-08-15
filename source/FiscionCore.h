@@ -588,6 +588,9 @@ struct FiscionX {
 		static void Set3DSettings(const int _DIRECTIONAL_LIGHT_SHADOW_SIZE, const int _SPOT_LIGHT_SHADOW_SIZE,
 			const int _POINT_LIGHT_SHADOW_SIZE, const float _SHADOW_VIEW_RADIUS, const float _NEAR_PLANE, const float _FAR_PLANE);
 		static void ClockTick();
+		static void SetWindowSize(int width, int height);
+		static void SetWindowIcon(const char* path);
+		static void SetWindowFullscreen(bool fullscreen, int monitorIndex);
 		static void SortModels();
 		static void Terminate();
 

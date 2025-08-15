@@ -126,6 +126,8 @@ int main() {
     FiscionX::Core::Set3DSettings(4096, 1024, 512, 15.0f, 0.01f, 100.0f);
     FiscionX::Core::SetCacheSettings(true, true);
     FiscionX::Core::NewWindow(1280, 720, "FiscionX");
+    //FiscionX::Core::SetWindowFullscreen(true, 0);
+	FiscionX::Core::SetWindowIcon("assets/icons/fiscionx_logo_big_512.png");
 	FiscionX::Core::SetCursorMode(FISCIONX_CURSOR_DISABLED);
     FiscionX::Physics::CreatePhysicsWorld(FiscionX::Vector3(0, -9.81f, 0), 10);
 
@@ -172,7 +174,7 @@ int main() {
     
     FiscionX::Core::CreateAllShadowMaps();
 
-    // Text; Video; Fullscreen; Window Icon; Buttons; Sliders; Viewports; Model Cache; Anisotropic Filter and TAA; Particles;
+    // Text; Video; Fullscreen; Buttons; Sliders; Viewports; Model Cache; Anisotropic Filter and TAA; Particles;
     
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb",
