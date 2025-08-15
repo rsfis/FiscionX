@@ -134,7 +134,7 @@ void File::saveFile(std::string outputPath) {
 // =================== UI ====================
 // ================= IMAGES ==================
 
-FiscionX::UI::Image::Image(const char* path, float sx, float sy) {
+FiscionX::UI::Image::Image(const char* path, FiscionX::Vector2 scl) {
 	int w, h, channels;
 	stbi_set_flip_vertically_on_load(true);
 	unsigned char* data = stbi_load(path, &w, &h, &channels, STBI_rgb_alpha);
@@ -149,7 +149,7 @@ FiscionX::UI::Image::Image(const char* path, float sx, float sy) {
 	h_ = h;
 	aspect_ratio = (float)w / (float)h;
 
-	scale = glm::vec2(sx, sy);
+	scale = scl;
 
 	glGenTextures(1, &texture);
 	glBindTexture(GL_TEXTURE_2D, texture);
@@ -227,11 +227,9 @@ void FiscionX::UI::Image::draw(FiscionX::Vector2 position) {
 	glUniform1i(glGetUniformLocation(shader, "tex"), 0);
 
 	glUniform2f(glGetUniformLocation(shader, "position"), position.x, position.y);
-	float sx = scale.x;
-	float sy = scale.y;
-	glUniform2f(glGetUniformLocation(shader, "scale"), sx, sy);
+	glUniform2f(glGetUniformLocation(shader, "scale"), scale.x, scale.y);
 	glUniform1f(glGetUniformLocation(shader, "aspect_ratio"), aspect_ratio);
-	glUniform1f(glGetUniformLocation(shader, "rotation"), rotation);
+	glUniform1f(glGetUniformLocation(shader, "rotation"), glm::degrees(rotation));
 	glUniform1f(glGetUniformLocation(shader, "alpha"), alpha);
 
 	glEnable(GL_BLEND);
@@ -1655,7 +1653,7 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 	}
 }
 
-void FiscionX::Model::syncTransformWithBody(FiscionX::Physics::Rigidbody* body, FiscionX::Vector3 positionOffset, FiscionX::Vector3 rotationDegreesOffset) {
+void FiscionX::Model::syncTransformWithBody(FiscionX::Physics::Rigidbody* body, FiscionX::Vector3 positionOffset, FiscionX::Vector3 rotationOffset) {
 	btTransform trans;
 	body->body->getMotionState()->getWorldTransform(trans);
 	btVector3 pos = trans.getOrigin();
@@ -1664,9 +1662,9 @@ void FiscionX::Model::syncTransformWithBody(FiscionX::Physics::Rigidbody* body, 
 	trans.getOpenGLMatrix(matrix);
 	glm::mat4 modelMatrix = glm::make_mat4(matrix);
 	modelMatrix = glm::translate(modelMatrix, glm::vec3(positionOffset.x, positionOffset.y, positionOffset.z));
-	modelMatrix = glm::rotate(modelMatrix, glm::radians(rotationDegreesOffset.x), glm::vec3(1.0f, 0.0f, 0.0f));
-	modelMatrix = glm::rotate(modelMatrix, glm::radians(rotationDegreesOffset.y), glm::vec3(0.0f, 1.0f, 0.0f));
-	modelMatrix = glm::rotate(modelMatrix, glm::radians(rotationDegreesOffset.z), glm::vec3(0.0f, 0.0f, 1.0f));
+	modelMatrix = glm::rotate(modelMatrix, rotationOffset.x, glm::vec3(1.0f, 0.0f, 0.0f));
+	modelMatrix = glm::rotate(modelMatrix, rotationOffset.y, glm::vec3(0.0f, 1.0f, 0.0f));
+	modelMatrix = glm::rotate(modelMatrix, rotationOffset.z, glm::vec3(0.0f, 0.0f, 1.0f));
 
 	this->physicsSyncTransformMatrix = modelMatrix;
 }
@@ -1872,15 +1870,14 @@ void FiscionX::Physics::Rigidbody::setAngularVelocity(FiscionX::Vector3 velocity
     }
 }
 
-void FiscionX::Physics::Rigidbody::setTransform(FiscionX::Vector3 position, FiscionX::Vector3 rotationDegrees) {
+void FiscionX::Physics::Rigidbody::setTransform(FiscionX::Vector3 position, FiscionX::Vector3 rotation) {
     if (body) {
         btTransform transform;
         transform.setOrigin(btVector3(position.x, position.y, position.z));
 
-        // Converts degrees into radians
-        float xRad = glm::radians(rotationDegrees.x);
-        float yRad = glm::radians(rotationDegrees.y);
-        float zRad = glm::radians(rotationDegrees.z);
+        float xRad = rotation.x;
+        float yRad = rotation.y;
+        float zRad = rotation.z;
 
         btQuaternion rot;
         rot.setEulerZYX(zRad, yRad, xRad);

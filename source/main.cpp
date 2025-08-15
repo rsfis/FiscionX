@@ -172,7 +172,7 @@ int main() {
     
     FiscionX::Core::CreateAllShadowMaps();
 
-    // Texto; Video; Botões; Sliders; Viewports; Cache para Modelos; Filtro Anisotropico e TAA; Particulas;
+    // Text; Video; Fullscreen; Window Icon; Buttons; Sliders; Viewports; Model Cache; Anisotropic Filter and TAA; Particles;
     
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb",
@@ -201,7 +201,7 @@ int main() {
 
     skinnedModel->playAnim("Armature|Idle_01", true);
 
-    image_didi = new FiscionX::UI::Image("assets/images/didi.png", 0.5f, 0.5f);
+    image_didi = new FiscionX::UI::Image("assets/images/didi.png", FiscionX::Vector2(0.5f, 0.5f));
 
     exSound = new FiscionX::Sound("assets/audio/music/K.mp3", false, true, FiscionX::Vector3(0.5f, 0.3f, 0.0f), 2.0f, 10.0f, 1.0f);
     exSound->play();
@@ -214,7 +214,7 @@ int main() {
     groundBody->setBouncingFactor(0.0f);
     FiscionX::Physics::DynamicWorld->addRigidBody(groundBody->body);
 
-    // === Cápsula ===
+    // === Capsule ===
 	FiscionX::Physics::Shape capsuleShape = FiscionX::Physics::CreateCapsuleShape(FiscionX::Vector3(0, 8, 0), FiscionX::Vector3(0, 0, 0), 0.5f, 1.5f, 1.0f);
     capsuleBody = new FiscionX::Physics::Rigidbody(capsuleShape);
 	capsuleBody->setFriction(0.5f);
