@@ -401,7 +401,7 @@ void FiscionX::generateTangents(
     }
 
     for (auto& v : vertices) {
-        // Orthogonalizes using Gram-Schmidt
+        // Orthogonalizes using Gram-Schmidt function
         v.tangent = glm::normalize(v.tangent - v.normal * glm::dot(v.normal, v.tangent));
         // Determines handedness (bitangent cross)
         float handedness = (glm::dot(glm::cross(v.normal, v.tangent), v.bitangent) < 0.0f) ? -1.0f : 1.0f;
