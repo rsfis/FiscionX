@@ -29,6 +29,9 @@
     <ClInclude Include="source\FiscionCore.h" />
     <ClInclude Include="source\FiscionShaders.h" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include=".gitignore" />
+  </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
