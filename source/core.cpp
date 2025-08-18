@@ -2369,7 +2369,7 @@ void FiscionX::Core::RenderAllShadowPasses(glm::mat4 view, glm::mat4 projection,
 
 	// Track camera motion so directional shadows update when camera moves
 	static glm::vec3 _lastCameraPos = Camera.position;
-	bool cameraMoved = glm::length(_lastCameraPos - Camera.position) > 0.05f; // tweak threshold if needed
+	bool cameraMoved = glm::length(_lastCameraPos - Camera.position) > 0.05f; // tweak threshold
 	_lastCameraPos = Camera.position;
 
 	for (size_t i = 0; i < AllLights.size(); ++i) {
