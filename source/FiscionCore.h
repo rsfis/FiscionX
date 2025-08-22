@@ -210,6 +210,52 @@ namespace FiscionX {
 		Vector2& operator-=(const Vector2& other) { x -= other.x; y -= other.y; return *this; }
 		Vector2& operator*=(float scalar) { x *= scalar; y *= scalar; return *this; }
 		Vector2& operator/=(float scalar) { x /= scalar; y /= scalar; return *this; }
+
+		float dot(const Vector2& o) const {
+			return x * o.x + y * o.y;
+		}
+
+		float cross(const Vector2& o) const {
+			return x * o.y - y * o.x;
+		}
+
+		float length() const {
+			return std::sqrt(x * x + y * y);
+		}
+
+		float lengthSquared() const {
+			return x * x + y * y;
+		}
+
+		Vector2 normalized() const {
+			float len = length();
+			return (len > 0) ? (*this / len) : Vector2();
+		}
+
+		float distance(const Vector2& o) const {
+			return (*this - o).length();
+		}
+
+		static Vector2 lerp(const Vector2& a, const Vector2& b, float t) {
+			return a + (b - a) * t;
+		}
+
+		Vector2 perpendicular() const {
+			return Vector2(-y, x);
+		}
+
+		Vector2 reflect(const Vector2& normal) const {
+			return *this - normal * (2.0f * this->dot(normal));
+		}
+
+		Vector2 project(const Vector2& onNormal) const {
+			Vector2 n = onNormal.normalized();
+			return n * (this->dot(n));
+		}
+
+		Vector2 reject(const Vector2& onNormal) const {
+			return *this - project(onNormal);
+		}
 	};
 
 	struct Vector3 {
@@ -226,6 +272,212 @@ namespace FiscionX {
 		Vector3& operator-=(const Vector3& other) { x -= other.x; y -= other.y; z -= other.z; return *this; }
 		Vector3& operator*=(float scalar) { x *= scalar; y *= scalar; z *= scalar; return *this; }
 		Vector3& operator/=(float scalar) { x /= scalar; y /= scalar; z /= scalar; return *this; }
+
+		float dot(const Vector3& o) const {
+			return x * o.x + y * o.y + z * o.z;
+		}
+
+		Vector3 cross(const Vector3& o) const {
+			return Vector3(
+				y * o.z - z * o.y,
+				z * o.x - x * o.z,
+				x * o.y - y * o.x
+			);
+		}
+
+		float length() const {
+			return std::sqrt(x * x + y * y + z * z);
+		}
+
+		float lengthSquared() const {
+			return x * x + y * y + z * z;
+		}
+
+		Vector3 normalized() const {
+			float len = length();
+			return (len > 0) ? (*this / len) : Vector3();
+		}
+
+		float distance(const Vector3& o) const {
+			return (*this - o).length();
+		}
+
+		static Vector3 lerp(const Vector3& a, const Vector3& b, float t) {
+			return a + (b - a) * t;
+		}
+
+		Vector3 reflect(const Vector3& normal) const {
+			return *this - normal * (2.0f * this->dot(normal));
+		}
+
+		Vector3 project(const Vector3& onNormal) const {
+			Vector3 n = onNormal.normalized();
+			return n * (this->dot(n));
+		}
+
+		Vector3 reject(const Vector3& onNormal) const {
+			return *this - project(onNormal);
+		}
+	};
+
+	struct Vector4 {
+		float x, y, z, w;
+		Vector4(float _x = 0, float _y = 0, float _z = 0, float _w = 0)
+			: x(_x), y(_y), z(_z), w(_w) {
+		}
+
+		// ---- Operadores básicos ----
+		Vector4 operator+(const Vector4& o) const { return Vector4(x + o.x, y + o.y, z + o.z, w + o.w); }
+		Vector4 operator-(const Vector4& o) const { return Vector4(x - o.x, y - o.y, z - o.z, w - o.w); }
+		Vector4 operator*(float s) const { return Vector4(x * s, y * s, z * s, w * s); }
+		Vector4 operator/(float s) const { return Vector4(x / s, y / s, z / s, w / s); }
+
+		Vector4& operator+=(const Vector4& o) { x += o.x; y += o.y; z += o.z; w += o.w; return *this; }
+		Vector4& operator-=(const Vector4& o) { x -= o.x; y -= o.y; z -= o.z; w -= o.w; return *this; }
+		Vector4& operator*=(float s) { x *= s; y *= s; z *= s; w *= s; return *this; }
+		Vector4& operator/=(float s) { x /= s; y /= s; z /= s; w /= s; return *this; }
+
+		bool operator==(const Vector4& o) const { return x == o.x && y == o.y && z == o.z && w == o.w; }
+		bool operator!=(const Vector4& o) const { return !(*this == o); }
+		
+		float dot(const Vector4& o) const {
+			return x * o.x + y * o.y + z * o.z + w * o.w;
+		}
+
+		float length() const {
+			return std::sqrt(x * x + y * y + z * z + w * w);
+		}
+
+		float lengthSquared() const {
+			return x * x + y * y + z * z + w * w;
+		}
+
+		Vector4 normalized() const {
+			float len = length();
+			return (len > 0) ? (*this / len) : Vector4();
+		}
+
+		float distance(const Vector4& o) const {
+			return (*this - o).length();
+		}
+
+		static Vector4 lerp(const Vector4& a, const Vector4& b, float t) {
+			return a + (b - a) * t;
+		}
+
+		Vector4 homogenized() const {
+			return (w != 0.0f) ? Vector4(x / w, y / w, z / w, 1.0f) : *this;
+		}
+	};
+
+	struct Mat4 {
+		float m[4][4]; // column-major (m[col][row])
+
+		Mat4(float diag = 1.0f) {
+			for (int col = 0; col < 4; col++)
+				for (int row = 0; row < 4; row++)
+					m[col][row] = (col == row ? diag : 0.0f);
+		}
+
+		static Mat4 identity() {
+			return Mat4(1.0f);
+		}
+
+		operator glm::mat4() const {
+			glm::mat4 result(1.0f);
+			for (int col = 0; col < 4; col++)
+				for (int row = 0; row < 4; row++)
+					result[col][row] = m[col][row];
+			return result;
+		}
+
+		float& operator()(int row, int col) { return m[col][row]; }
+		const float& operator()(int row, int col) const { return m[col][row]; }
+
+		Mat4 operator*(const Mat4& o) const {
+			Mat4 result(0.0f);
+			for (int col = 0; col < 4; col++) {
+				for (int row = 0; row < 4; row++) {
+					for (int i = 0; i < 4; i++) {
+						result(row, col) += (*this)(row, i) * o(i, col);
+					}
+				}
+			}
+			return result;
+		}
+
+		Vector4 operator*(const Vector4& v) const {
+			return Vector4(
+				m[0][0] * v.x + m[1][0] * v.y + m[2][0] * v.z + m[3][0] * v.w,
+				m[0][1] * v.x + m[1][1] * v.y + m[2][1] * v.z + m[3][1] * v.w,
+				m[0][2] * v.x + m[1][2] * v.y + m[2][2] * v.z + m[3][2] * v.w,
+				m[0][3] * v.x + m[1][3] * v.y + m[2][3] * v.z + m[3][3] * v.w
+			);
+		}
+
+		static Mat4 translate(const Vector3& v) {
+			Mat4 result = Mat4::identity();
+			result(0, 3) = v.x;
+			result(1, 3) = v.y;
+			result(2, 3) = v.z;
+			return result;
+		}
+
+		static Mat4 scale(const Vector3& v) {
+			Mat4 result(1.0f);
+			result(0, 0) = v.x;
+			result(1, 1) = v.y;
+			result(2, 2) = v.z;
+			return result;
+		}
+
+		static Mat4 rotate(float angleRadians, const Vector3& axis) {
+			Vector3 a = axis.normalized();
+			float c = std::cos(angleRadians);
+			float s = std::sin(angleRadians);
+			float ic = 1.0f - c;
+
+			Mat4 result(1.0f);
+			result(0, 0) = c + a.x * a.x * ic;
+			result(0, 1) = a.x * a.y * ic - a.z * s;
+			result(0, 2) = a.x * a.z * ic + a.y * s;
+
+			result(1, 0) = a.y * a.x * ic + a.z * s;
+			result(1, 1) = c + a.y * a.y * ic;
+			result(1, 2) = a.y * a.z * ic - a.x * s;
+
+			result(2, 0) = a.z * a.x * ic - a.y * s;
+			result(2, 1) = a.z * a.y * ic + a.x * s;
+			result(2, 2) = c + a.z * a.z * ic;
+			return result;
+		}
+
+		static Mat4 perspective(float fovRadians, float aspect, float nearPlane, float farPlane) {
+			Mat4 result(0.0f);
+			float tanHalfFov = std::tan(fovRadians / 2.0f);
+
+			result(0, 0) = 1.0f / (aspect * tanHalfFov);
+			result(1, 1) = 1.0f / tanHalfFov;
+			result(2, 2) = -(farPlane + nearPlane) / (farPlane - nearPlane);
+			result(2, 3) = -(2.0f * farPlane * nearPlane) / (farPlane - nearPlane);
+			result(3, 2) = -1.0f;
+			return result;
+		}
+
+		static Mat4 lookAt(const Vector3& eye, const Vector3& center, const Vector3& up) {
+			Vector3 f = (center - eye).normalized();
+			Vector3 r = f.cross(up).normalized();
+			Vector3 u = r.cross(f);
+
+			Mat4 result(1.0f);
+			result(0, 0) = r.x; result(0, 1) = r.y; result(0, 2) = r.z;
+			result(1, 0) = u.x; result(1, 1) = u.y; result(1, 2) = u.z;
+			result(2, 0) = -f.x; result(2, 1) = -f.y; result(2, 2) = -f.z;
+			result(0, 3) = -r.dot(eye);
+			result(1, 3) = -u.dot(eye);
+			result(2, 3) = f.dot(eye);
+			return result;
+		}
 	};
 
 	struct Math {
@@ -264,7 +516,7 @@ namespace FiscionX {
 		bool      canLook = true;
 
 		Camera();
-		glm::mat4 GetView();
+		FiscionX::Mat4 GetView();
 		void ProcessMouse(float xoffset, float yoffset);
 		void updateVectors();
 	};
@@ -539,7 +791,7 @@ namespace FiscionX {
 			GLuint depthMap,
 			bool depthPass
 		);
-		void draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLuint depthMap, bool depthPass, glm::mat4 view, glm::mat4 projection);
+		void draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLuint depthMap, bool depthPass, FiscionX::Mat4 view, FiscionX::Mat4 projection);
 	};
 
 	struct Input {
@@ -603,7 +855,7 @@ namespace FiscionX {
 		static void CreateShadowMap(ShadowMap& sm, int LIGHT_TYPE);
 		static void CreateAllShadowMaps();
 		static glm::mat4 ComputeLightSpaceMatrix(const Light& L);
-		static void RenderAllShadowPasses(glm::mat4 view, glm::mat4 projection, glm::mat4 viewProj);
+		static void RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 projection, FiscionX::Mat4 viewProj);
 
 		static void SetCursorMode(int mode);
 		static void SetCacheSettings(bool _enableShaderCache, bool _enableModelCache);

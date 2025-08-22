@@ -246,8 +246,8 @@ FiscionX::Camera::Camera() {
 	updateVectors();
 }
 
-glm::mat4 FiscionX::Camera::GetView() {
-	return glm::lookAt(glm::vec3(position.x, position.y, position.z), glm::vec3(position.x, position.y, position.z) + glm::vec3(front.x, front.y, front.z), glm::vec3(up.x, up.y, up.z));
+FiscionX::Mat4 FiscionX::Camera::GetView() {
+	return FiscionX::Mat4(0).lookAt(FiscionX::Vector3(position.x, position.y, position.z), FiscionX::Vector3(position.x, position.y, position.z) + FiscionX::Vector3(front.x, front.y, front.z), FiscionX::Vector3(up.x, up.y, up.z));
 }
 
 void FiscionX::Camera::ProcessMouse(float xoffset, float yoffset) {
@@ -1564,13 +1564,13 @@ void FiscionX::Model::drawSubMesh(
 	glCullFace(GL_BACK);
 }
 
-void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLuint depthMap, bool depthPass, glm::mat4 view, glm::mat4 projection) {
+void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLuint depthMap, bool depthPass, FiscionX::Mat4 view, FiscionX::Mat4 projection) {
 	int numLights = static_cast<int>(FiscionX::Core::AllLights.size());
 
 	glUseProgram(shader);
 
-	glUniformMatrix4fv(glGetUniformLocation(shader, "view"), 1, GL_FALSE, glm::value_ptr(view));
-	glUniformMatrix4fv(glGetUniformLocation(shader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+	glUniformMatrix4fv(glGetUniformLocation(shader, "view"), 1, GL_FALSE, glm::value_ptr(glm::mat4(view)));
+	glUniformMatrix4fv(glGetUniformLocation(shader, "projection"), 1, GL_FALSE, glm::value_ptr(glm::mat4(projection)));
 	glUniform3fv(glGetUniformLocation(shader, "viewPos"), 1, glm::value_ptr(glm::vec3(FiscionX::Core::Camera.position.x, FiscionX::Core::Camera.position.y, FiscionX::Core::Camera.position.z)));
 	glUniform1i(glGetUniformLocation(shader, "numLights"), numLights);
 
@@ -2349,7 +2349,7 @@ glm::mat4 FiscionX::Core::ComputeLightSpaceMatrix(const Light& L) {
 	return glm::mat4(1.0f);
 }
 
-void FiscionX::Core::RenderAllShadowPasses(glm::mat4 view, glm::mat4 projection, glm::mat4 viewProj) {
+void FiscionX::Core::RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 projection, FiscionX::Mat4 viewProj) {
 	// update skin UBOs once
 	for (auto& model : AllModels) {
 		if (!model->castsShadows) continue;

@@ -97,14 +97,14 @@ void update() {
 }
 
 void draw() {
-    glm::mat4 view = FiscionX::Core::Camera.GetView();
-    glm::mat4 projection = glm::perspective(
+    FiscionX::Mat4 view = FiscionX::Core::Camera.GetView();
+    FiscionX::Mat4 projection = FiscionX::Mat4(0).perspective(
         glm::radians(FiscionX::Core::Camera.fov),
         (float)FiscionX::Core::SCREEN_WIDTH / FiscionX::Core::SCREEN_HEIGHT,
         FiscionX::Core::NEAR_PLANE,
         FiscionX::Core::FAR_PLANE
     );
-    glm::mat4 viewProj = projection * view;
+    FiscionX::Mat4 viewProj = projection * view;
 
     FiscionX::Core::RenderAllShadowPasses(view, projection, viewProj);
     FiscionX::Core::Draw::ClearBackground(0.1f, 0.1f, 0.1f, 1.0f);
@@ -174,7 +174,7 @@ int main() {
     
     FiscionX::Core::CreateAllShadowMaps();
     
-    // Text; Video; Buttons; Sliders; Viewports; Model Cache; Anisotropic Filter and TAA; Particles; Ambient Occlusion; Post Processing; FPS Limit, Spot light rays
+    // OTHER VECTOR FUNCTIONS; Text; Video; Buttons; Sliders; Viewports; Model Cache; Anisotropic Filter and TAA; Particles; Ambient Occlusion; Post Processing; FPS Limit, Spot light rays
     
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb",
