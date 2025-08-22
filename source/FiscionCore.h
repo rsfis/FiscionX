@@ -196,13 +196,36 @@ struct File {
 };
 
 namespace FiscionX {
-	struct Vector3 {
-		float x, y, z;
-		Vector3(float _x = 0, float _y = 0, float _z = 0) : x(_x), y(_y), z(_z) {}
-	};
 	struct Vector2 {
 		float x, y;
 		Vector2(float _x = 0, float _y = 0) : x(_x), y(_y) {}
+
+		Vector2 operator+(const Vector2& other) const { return Vector2(x + other.x, y + other.y); }
+		Vector2 operator-(const Vector2& other) const { return Vector2(x - other.x, y - other.y); }
+
+		Vector2 operator*(float scalar) const { return Vector2(x * scalar, y * scalar); }
+		Vector2 operator/(float scalar) const { return Vector2(x / scalar, y / scalar); }
+
+		Vector2& operator+=(const Vector2& other) { x += other.x; y += other.y; return *this; }
+		Vector2& operator-=(const Vector2& other) { x -= other.x; y -= other.y; return *this; }
+		Vector2& operator*=(float scalar) { x *= scalar; y *= scalar; return *this; }
+		Vector2& operator/=(float scalar) { x /= scalar; y /= scalar; return *this; }
+	};
+
+	struct Vector3 {
+		float x, y, z;
+		Vector3(float _x = 0, float _y = 0, float _z = 0) : x(_x), y(_y), z(_z) {}
+
+		Vector3 operator+(const Vector3& other) const { return Vector3(x + other.x, y + other.y, z + other.z); }
+		Vector3 operator-(const Vector3& other) const { return Vector3(x - other.x, y - other.y, z - other.z); }
+
+		Vector3 operator*(float scalar) const { return Vector3(x * scalar, y * scalar, z * scalar); }
+		Vector3 operator/(float scalar) const { return Vector3(x / scalar, y / scalar, z / scalar); }
+
+		Vector3& operator+=(const Vector3& other) { x += other.x; y += other.y; z += other.z; return *this; }
+		Vector3& operator-=(const Vector3& other) { x -= other.x; y -= other.y; z -= other.z; return *this; }
+		Vector3& operator*=(float scalar) { x *= scalar; y *= scalar; z *= scalar; return *this; }
+		Vector3& operator/=(float scalar) { x /= scalar; y /= scalar; z /= scalar; return *this; }
 	};
 
 	struct Math {
@@ -229,10 +252,10 @@ namespace FiscionX {
 	};
 
 	struct Camera {
-		glm::vec3 position = glm::vec3(0, 2, 3);
-		glm::vec3 front = glm::vec3(0, 0, -1);
-		glm::vec3 up = glm::vec3(0, 1, 0);
-		glm::vec3 right;
+		FiscionX::Vector3 position = FiscionX::Vector3(0, 2, 3);
+		FiscionX::Vector3 front = FiscionX::Vector3(0, 0, -1);
+		FiscionX::Vector3 up = FiscionX::Vector3(0, 1, 0);
+		FiscionX::Vector3 right;
 		float     yaw = -90.0f;
 		float     pitch = 0.0f;
 		float     speed = 2.0f;
