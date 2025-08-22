@@ -247,7 +247,7 @@ FiscionX::Camera::Camera() {
 }
 
 glm::mat4 FiscionX::Camera::GetView() {
-	return glm::lookAt(position, position + front, up);
+	return glm::lookAt(glm::vec3(position.x, position.y, position.z), glm::vec3(position.x, position.y, position.z) + glm::vec3(front.x, front.y, front.z), glm::vec3(up.x, up.y, up.z));
 }
 
 void FiscionX::Camera::ProcessMouse(float xoffset, float yoffset) {
@@ -269,9 +269,16 @@ void FiscionX::Camera::updateVectors() {
 		dir.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
 		dir.y = sin(glm::radians(pitch));
 		dir.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
-		front = glm::normalize(dir);
-		right = glm::normalize(glm::cross(front, glm::vec3(0, 1, 0)));
-		up = glm::normalize(glm::cross(right, front));
+
+		glm::vec3 frontVec = glm::normalize(dir);
+
+		glm::vec3 rightVec = glm::normalize(glm::cross(frontVec, glm::vec3(0.0f, 1.0f, 0.0f)));
+
+		glm::vec3 upVec = glm::normalize(glm::cross(rightVec, frontVec));
+
+		front = FiscionX::Vector3(frontVec.x, frontVec.y, frontVec.z);
+		right = FiscionX::Vector3(rightVec.x, rightVec.y, rightVec.z);
+		up = FiscionX::Vector3(upVec.x, upVec.y, upVec.z);
 	}
 }
 
@@ -323,8 +330,6 @@ void FiscionX::Sound::useEffect(FMOD_DSP_TYPE type) {
 	FMOD_SYS->createDSPByType(type, &dsp);
 	curr_channel->addDSP(0, dsp);
 }
-
-
 
 void FiscionX::Sound::updateValues() {
 	audiofont->set3DMinMaxDistance(minDist, maxDist);
@@ -1566,7 +1571,7 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 
 	glUniformMatrix4fv(glGetUniformLocation(shader, "view"), 1, GL_FALSE, glm::value_ptr(view));
 	glUniformMatrix4fv(glGetUniformLocation(shader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-	glUniform3fv(glGetUniformLocation(shader, "viewPos"), 1, glm::value_ptr(FiscionX::Core::Camera.position));
+	glUniform3fv(glGetUniformLocation(shader, "viewPos"), 1, glm::value_ptr(glm::vec3(FiscionX::Core::Camera.position.x, FiscionX::Core::Camera.position.y, FiscionX::Core::Camera.position.z)));
 	glUniform1i(glGetUniformLocation(shader, "numLights"), numLights);
 
 	for (int i = 0; i < numLights; ++i) {
@@ -1623,7 +1628,7 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 
 		if (!depthPass && isTransparent) {
 			glm::vec3 worldPos = glm::vec3(modelMatrix * glm::vec4(0.0, 0.0, 0.0, 1.0));
-			float dist = glm::length(worldPos - FiscionX::Core::Camera.position);
+			float dist = glm::length(worldPos - glm::vec3(FiscionX::Core::Camera.position.x, FiscionX::Core::Camera.position.y, FiscionX::Core::Camera.position.z));
 			transparentMeshes.emplace_back(dist, &mesh);
 		}
 		else {
@@ -2310,7 +2315,7 @@ glm::mat4 FiscionX::Core::ComputeLightSpaceMatrix(const Light& L) {
 		float orthoSize = FiscionX::Core::SHADOW_VIEW_RADIUS;
 		glm::vec3 dir = glm::normalize(glm::vec3(L.direction.x, L.direction.y, L.direction.z));
 
-		glm::vec3 center = Camera.position + Camera.front * glm::vec3(orthoSize);
+		glm::vec3 center = glm::vec3(Camera.position.x, Camera.position.y, Camera.position.z) + glm::vec3(Camera.front.x, Camera.front.y, Camera.front.z) * glm::vec3(orthoSize);
 		glm::vec3 lightPos = center - dir * 30.0f;
 
 		glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
@@ -2368,9 +2373,9 @@ void FiscionX::Core::RenderAllShadowPasses(glm::mat4 view, glm::mat4 projection,
 	}
 
 	// Track camera motion so directional shadows update when camera moves
-	static glm::vec3 _lastCameraPos = Camera.position;
-	bool cameraMoved = glm::length(_lastCameraPos - Camera.position) > 0.05f; // tweak threshold
-	_lastCameraPos = Camera.position;
+	static glm::vec3 _lastCameraPos = glm::vec3(Camera.position.x, Camera.position.y, Camera.position.z);
+	bool cameraMoved = glm::length(_lastCameraPos - glm::vec3(Camera.position.x, Camera.position.y, Camera.position.z)) > 0.05f; // tweak threshold
+	_lastCameraPos = glm::vec3(Camera.position.x, Camera.position.y, Camera.position.z);
 
 	for (size_t i = 0; i < AllLights.size(); ++i) {
 		Light& L = *AllLights[i];             // Non-const to update timing fields
@@ -2787,8 +2792,8 @@ void FiscionX::Core::SortModels() {
             return !aBlend && bBlend;
 
         if (aBlend && bBlend) {
-            float da = glm::length2(glm::vec3(a->position.x, a->position.y, a->position.z) - FiscionX::Core::Camera.position);
-            float db = glm::length2(glm::vec3(b->position.x, b->position.y, b->position.z) - FiscionX::Core::Camera.position);
+            float da = glm::length2(glm::vec3(a->position.x, a->position.y, a->position.z) - glm::vec3(Camera.position.x, Camera.position.y, Camera.position.z));
+            float db = glm::length2(glm::vec3(b->position.x, b->position.y, b->position.z) - glm::vec3(Camera.position.x, Camera.position.y, Camera.position.z));
             return da > db;
         }
 

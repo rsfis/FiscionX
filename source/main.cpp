@@ -23,9 +23,9 @@ FiscionX::Physics::Vehicle* vehicle;
 void update() {
     FiscionX::Core::ClockTick();
 
-    FiscionX::Core::AudioSystem.listenerPos = { FiscionX::Core::Camera.position[0], FiscionX::Core::Camera.position[1], FiscionX::Core::Camera.position[2] };
-    FiscionX::Core::AudioSystem.forward = { -FiscionX::Core::Camera.front[0], FiscionX::Core::Camera.front[1], -FiscionX::Core::Camera.front[2] };
-    FiscionX::Core::AudioSystem.up = { -FiscionX::Core::Camera.up[0], FiscionX::Core::Camera.up[1], -FiscionX::Core::Camera.up[2] };
+    FiscionX::Core::AudioSystem.listenerPos = { FiscionX::Core::Camera.position.x, FiscionX::Core::Camera.position.y, FiscionX::Core::Camera.position.z };
+    FiscionX::Core::AudioSystem.forward = { -FiscionX::Core::Camera.front.x, FiscionX::Core::Camera.front.y , -FiscionX::Core::Camera.front.z };
+    FiscionX::Core::AudioSystem.up = { -FiscionX::Core::Camera.up.x, FiscionX::Core::Camera.up.y, -FiscionX::Core::Camera.up.z };
 
     skinnedModel->update(FiscionX::Core::deltaTime);
 
@@ -173,8 +173,8 @@ int main() {
     spotLight->enableShadows = true;
     
     FiscionX::Core::CreateAllShadowMaps();
-
-    // Text; Video; Fullscreen; Buttons; Sliders; Viewports; Model Cache; Anisotropic Filter and TAA; Particles;
+    
+    // Text; Video; Buttons; Sliders; Viewports; Model Cache; Anisotropic Filter and TAA; Particles; Ambient Occlusion; Post Processing; FPS Limit, Spot light rays
     
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb",
