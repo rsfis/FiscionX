@@ -43,13 +43,12 @@ in vec2 TexCoords;
 out vec4 FragColor;
 
 uniform sampler2D text;
-uniform vec3 textColor;
 uniform vec4 color;
 
 void main() {
     float alpha = texture(text, TexCoords).a;
     if (alpha < 0.1) discard;
-    FragColor = vec4(textColor, alpha) * color;
+    FragColor = color;
 }
 )";
 
@@ -344,37 +343,33 @@ void main() {
 const char* imageVertex = R"(
 #version 330 core
 
-layout (location = 0) in vec2 aPos;
+layout (location = 0) in vec2 aPos;   // quad definido em [0,1] (não [-1,1]!)
 layout (location = 1) in vec2 aTex;
 
 out vec2 TexCoord;
 
-uniform vec2 position;
-uniform vec2 scale;
+uniform vec2 position;    // em pixels
+uniform vec2 scale;       // em pixels
 uniform float rotation;
-uniform float aspect_ratio;
+uniform mat4 projection;  // ortho(0, screenWidth, 0, screenHeight)
 
 void main()
 {
-    // Passo 1: trazer para centro ([-1,1] quad -> [-0.5, 0.5])
-    vec2 centered = aPos * 0.5;
+    // Passo 1: usar quad [0,1] e centralizar
+    vec2 centered = (aPos - 0.5) * scale;
 
-    // Passo 2: aplicar rotação
+    // Passo 2: aplicar rotação em torno do centro
     float rad = radians(rotation);
     mat2 rot = mat2(cos(rad), -sin(rad),
                     sin(rad),  cos(rad));
     vec2 rotated = rot * centered;
 
-    // Passo 3: corrigir aspect ratio (depois da rotação!)
-    rotated.y *= aspect_ratio;
+    // Passo 3: transladar em pixels
+    vec2 translated = rotated + position;
 
-    // Passo 4: aplicar escala
-    vec2 scaled = rotated * scale;
+    // Passo 4: converter para clip space com ortho
+    gl_Position = projection * vec4(translated, 0.0, 1.0);
 
-    // Passo 5: aplicar posição final
-    vec2 translated = scaled + position;
-
-    gl_Position = vec4(translated, 0.0, 1.0);
     TexCoord = aTex;
 }
 )";
