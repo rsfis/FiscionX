@@ -29,6 +29,10 @@
 
 #include "dependencies/stb/stb_image.h"
 #include "dependencies/stb/stb_image_write.h"
+
+#include "dependencies/ft2build.h"
+#include FT_FREETYPE_H
+
 #include "dependencies/tinygltf/tiny_gltf.h"
 
 #include "dependencies/bullet/btBulletDynamicsCommon.h"
@@ -193,6 +197,13 @@ struct File {
 	void readFile();
 	void clearFile();
 	void saveFile(std::string outputPath);
+};
+
+struct Glyph {
+	glm::vec2 uv0, uv1;    // UV min/max atlas
+	glm::ivec2 sizePx;     // gliph in pixels in atlas
+	glm::ivec2 bearingPx;  // gliph offset starting from the base line
+	int advancePx;         // horizontal advance to the next gliph based on font size
 };
 
 namespace FiscionX {
@@ -501,6 +512,17 @@ namespace FiscionX {
 			void flip(bool flipx, bool flipy);
 			void draw(FiscionX::Vector2 position);
 		};
+
+		struct Font {
+			std::map<char, Glyph> Characters;
+			GLuint textureAtlas;
+			int atlasWidth, atlasHeight;
+
+			Font(const char* fontPath, int pixelSize = 48);
+			~Font();
+		};
+
+		static void DrawText(Font* font, const char* text, FiscionX::Vector3 position, float size, FiscionX::Vector4 color);
 	};
 
 	struct Camera {
@@ -835,6 +857,9 @@ namespace FiscionX {
 		static GLuint depthMapFBO;
 		static GLuint depthMap;
 
+		static GLuint textVAO, textVBO;
+		static GLuint textShader;
+
 		static Camera Camera;
 
 		static AudioSystem AudioSystem;
@@ -859,6 +884,7 @@ namespace FiscionX {
 
 		static void SetCursorMode(int mode);
 		static void SetCacheSettings(bool _enableShaderCache, bool _enableModelCache);
+
 		static void NewWindow(int width, int height, const char* window_label);
 		static void Set3DSettings(const int _DIRECTIONAL_LIGHT_SHADOW_SIZE, const int _SPOT_LIGHT_SHADOW_SIZE,
 			const int _POINT_LIGHT_SHADOW_SIZE, const float _SHADOW_VIEW_RADIUS, const float _NEAR_PLANE, const float _FAR_PLANE);
