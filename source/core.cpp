@@ -25,7 +25,6 @@ glm::vec3     FiscionX::Core::AMBIENT_LIGHT_GROUNDCOLOR = { 0.05f, 0.05f, 0.07f 
 GLuint FiscionX::Core::depthMapFBO;
 GLuint FiscionX::Core::depthMap;
 
-GLuint FiscionX::Core::textVAO, FiscionX::Core::textVBO;
 GLuint FiscionX::Core::textShader;
 
 FiscionX::Camera FiscionX::Core::Camera;
@@ -222,6 +221,11 @@ void FiscionX::UI::Image::flip(bool flipx, bool flipy) {
 }
 
 void FiscionX::UI::Image::draw(FiscionX::Vector2 position) {
+	glm::mat4 projection = glm::ortho(
+		0.0f, (float)FiscionX::Core::SCREEN_WIDTH,
+		0.0f, (float)FiscionX::Core::SCREEN_HEIGHT
+	);
+
 	glDisable(GL_DEPTH_TEST);
 	glUseProgram(shader);
 	glBindVertexArray(VAO);
@@ -230,6 +234,7 @@ void FiscionX::UI::Image::draw(FiscionX::Vector2 position) {
 	glUniform1i(glGetUniformLocation(shader, "tex"), 0);
 
 	glUniform2f(glGetUniformLocation(shader, "position"), position.x, position.y);
+	glUniformMatrix4fv(glGetUniformLocation(shader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
 	glUniform2f(glGetUniformLocation(shader, "scale"), scale.x, scale.y);
 	glUniform1f(glGetUniformLocation(shader, "aspect_ratio"), aspect_ratio);
 	glUniform1f(glGetUniformLocation(shader, "rotation"), glm::degrees(rotation));
@@ -318,25 +323,22 @@ FiscionX::UI::Font::Font(const char* fontPath, int pixelSize) {
 	FT_Done_Face(face);
 	FT_Done_FreeType(ft);
 
-	if (!FiscionX::Core::textShader) {
-		FiscionX::Core::textShader = LoadShader(textVertexShader, textFragmentShader);
-		glGenVertexArrays(1, &FiscionX::Core::textVAO);
-		glGenBuffers(1, &FiscionX::Core::textVBO);
-		glBindVertexArray(FiscionX::Core::textVAO);
-		glBindBuffer(GL_ARRAY_BUFFER, FiscionX::Core::textVBO);
-		glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 6 * 4, nullptr, GL_DYNAMIC_DRAW);
-		glEnableVertexAttribArray(0);
-		glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), 0);
-		glBindBuffer(GL_ARRAY_BUFFER, 0);
-		glBindVertexArray(0);
-	}
+	glGenVertexArrays(1, &textVAO);
+	glGenBuffers(1, &textVBO);
+	glBindVertexArray(textVAO);
+	glBindBuffer(GL_ARRAY_BUFFER, textVBO);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 6 * 4, nullptr, GL_DYNAMIC_DRAW);
+	glEnableVertexAttribArray(0);
+	glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), 0);
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	glBindVertexArray(0);
 }
 
 FiscionX::UI::Font::~Font() {
 	glDeleteTextures(1, &textureAtlas);
 }
 
-void FiscionX::UI::DrawText(Font* font, const char* text, FiscionX::Vector3 position, float scale, FiscionX::Vector4 color) {
+void FiscionX::UI::DrawText(Font* font, const char* text, FiscionX::Vector2 position, float scale, FiscionX::Vector4 color) {
 	glUseProgram(FiscionX::Core::textShader);
 
 	glm::mat4 projection = glm::ortho(0.0f, (float)FiscionX::Core::SCREEN_WIDTH,
@@ -345,11 +347,10 @@ void FiscionX::UI::DrawText(Font* font, const char* text, FiscionX::Vector3 posi
 
 	glUniformMatrix4fv(glGetUniformLocation(FiscionX::Core::textShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
 	glUniformMatrix4fv(glGetUniformLocation(FiscionX::Core::textShader, "model"), 1, GL_FALSE, glm::value_ptr(model));
-	glUniform3f(glGetUniformLocation(FiscionX::Core::textShader, "textColor"), position.z, position.z, position.z);
 	glUniform4f(glGetUniformLocation(FiscionX::Core::textShader, "color"), color.x, color.y, color.z, color.w);
 
 	glActiveTexture(GL_TEXTURE0);
-	glBindVertexArray(FiscionX::Core::textVAO);
+	glBindVertexArray(font->textVAO);
 	glBindTexture(GL_TEXTURE_2D, font->textureAtlas);
 
 	glEnable(GL_BLEND);
@@ -378,7 +379,7 @@ void FiscionX::UI::DrawText(Font* font, const char* text, FiscionX::Vector3 posi
 			{ xpos + w, ypos + h, u1, v0 }
 		};
 
-		glBindBuffer(GL_ARRAY_BUFFER, FiscionX::Core::textVBO);
+		glBindBuffer(GL_ARRAY_BUFFER, font->textVBO);
 		glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
 		glDrawArrays(GL_TRIANGLES, 0, 6);
 
@@ -2789,6 +2790,7 @@ void FiscionX::Core::NewWindow(int width, int height, const char* window_label) 
     shaderStatic = LoadShader(vertexStatic, fragment);
     shaderSkinned = LoadShader(vertexSkinned, fragment);
     UI::Image::shader = LoadShader(imageVertex, imageFragment);
+	textShader = LoadShader(textVertexShader, textFragmentShader);
 
     // Configure Shadow Mapping
     glGenFramebuffers(1, &depthMapFBO);

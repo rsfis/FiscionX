@@ -517,12 +517,13 @@ namespace FiscionX {
 			std::map<char, Glyph> Characters;
 			GLuint textureAtlas;
 			int atlasWidth, atlasHeight;
+			GLuint textVAO, textVBO;
 
 			Font(const char* fontPath, int pixelSize = 48);
 			~Font();
 		};
 
-		static void DrawText(Font* font, const char* text, FiscionX::Vector3 position, float size, FiscionX::Vector4 color);
+		static void DrawText(Font* font, const char* text, FiscionX::Vector2 position, float size, FiscionX::Vector4 color);
 	};
 
 	struct Camera {
@@ -857,7 +858,6 @@ namespace FiscionX {
 		static GLuint depthMapFBO;
 		static GLuint depthMap;
 
-		static GLuint textVAO, textVBO;
 		static GLuint textShader;
 
 		static Camera Camera;
