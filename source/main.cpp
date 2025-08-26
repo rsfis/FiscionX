@@ -13,6 +13,7 @@ FiscionX::Model* skinnedModel;
 FiscionX::Model* kratosStaticModel;
 
 FiscionX::UI::Image* image_didi;
+FiscionX::UI::Font* minhafonte;
 
 FiscionX::Physics::Rigidbody* groundBody;
 FiscionX::Physics::Rigidbody* capsuleBody;
@@ -116,6 +117,7 @@ void draw() {
     skinnedModel->draw(FiscionX::Core::shaderSkinned, glm::mat4(1.0f), 0, false, view, projection);
 
     image_didi->draw(FiscionX::Vector2(- 0.5f, -0.5f));
+    FiscionX::UI::DrawText(minhafonte, "FiscionX - 1.0.0", FiscionX::Vector3(20, 20, 1.0f), 0.3f, FiscionX::Vector4(1, 1, 1, 0.4f));
 
     //FiscionX::Physics::DrawDebugWorld(projection, view);
 
@@ -174,7 +176,7 @@ int main() {
     
     FiscionX::Core::CreateAllShadowMaps();
     
-    // OTHER VECTOR FUNCTIONS; Text; Video; Buttons; Sliders; Viewports; Model Cache; Anisotropic Filter and TAA; Particles; Ambient Occlusion; Post Processing; FPS Limit, Spot light rays
+    // Video; Rect, circle, arc, line, polygon; Buttons; Sliders; Viewports; Model Cache; Anisotropic Filter and TAA; Particles; Ambient Occlusion; Post Processing; FPS Limit, Spot light rays
     
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb",
@@ -204,6 +206,7 @@ int main() {
     skinnedModel->playAnim("Armature|Idle_01", true);
 
     image_didi = new FiscionX::UI::Image("assets/images/didi.png", FiscionX::Vector2(0.5f, 0.5f));
+    minhafonte = new FiscionX::UI::Font("assets/ui/fonts/FOT-RodinHimawari Pro DB - TLOZ BOTW LEGENDAS.otf", 48);
 
     exSound = new FiscionX::Sound("assets/audio/music/K.mp3", false, true, FiscionX::Vector3(0.5f, 0.3f, 0.0f), 2.0f, 10.0f, 1.0f);
     exSound->play();

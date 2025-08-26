@@ -1,6 +1,6 @@
 ﻿#include "FiscionCore.h"
 #include "FiscionShaders.h"
-#define ENGINE_VERSION "0.8.2"
+#define ENGINE_VERSION "1.0.0"
 
 // GLOBALS
 GLFWwindow* FiscionX::Core::Window;
@@ -24,6 +24,9 @@ glm::vec3     FiscionX::Core::AMBIENT_LIGHT_SKYCOLOR = { 0.3f, 0.3f, 0.35f };
 glm::vec3     FiscionX::Core::AMBIENT_LIGHT_GROUNDCOLOR = { 0.05f, 0.05f, 0.07f };
 GLuint FiscionX::Core::depthMapFBO;
 GLuint FiscionX::Core::depthMap;
+
+GLuint FiscionX::Core::textVAO, FiscionX::Core::textVBO;
+GLuint FiscionX::Core::textShader;
 
 FiscionX::Camera FiscionX::Core::Camera;
 
@@ -240,6 +243,151 @@ void FiscionX::UI::Image::draw(FiscionX::Vector2 position) {
 }
 
 GLuint FiscionX::UI::Image::shader = 0; // Define global IMAGE shader variable
+
+// ================== Text ====================
+FiscionX::UI::Font::Font(const char* fontPath, int pixelSize) {
+	FT_Library ft;
+	if (FT_Init_FreeType(&ft)) {
+		std::cerr << "ERR 0x020 - Could not init FreeType" << std::endl;
+		std::exit(-20);
+	}
+
+	FT_Face face;
+	if (FT_New_Face(ft, fontPath, 0, &face)) {
+		std::cerr << "ERR 0x021 - Failed to load font: " << fontPath << std::endl;
+		std::exit(-21);
+	}
+
+	FT_Set_Pixel_Sizes(face, 0, pixelSize);
+
+	atlasWidth = 0;
+	atlasHeight = 0;
+	for (unsigned char c = 0; c < 128; c++) {
+		if (FT_Load_Char(face, c, FT_LOAD_RENDER)) continue;
+		atlasWidth += face->glyph->bitmap.width;
+		atlasHeight = std::max(atlasHeight, (int)face->glyph->bitmap.rows);
+	}
+
+	glGenTextures(1, &textureAtlas);
+	glBindTexture(GL_TEXTURE_2D, textureAtlas);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, atlasWidth, atlasHeight, 0, GL_RED, GL_UNSIGNED_BYTE, nullptr);
+
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+	GLint swizzleMask[] = { GL_ONE, GL_ONE, GL_ONE, GL_RED };
+	glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzleMask);
+
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+	int xOffset = 0;
+	for (unsigned char c = 0; c < 128; c++) {
+		if (FT_Load_Char(face, c, FT_LOAD_RENDER)) continue;
+
+		FT_Bitmap& bmp = face->glyph->bitmap;
+
+		std::vector<unsigned char> pixels(bmp.width * bmp.rows);
+		for (int y = 0; y < bmp.rows; y++) {
+			memcpy(&pixels[y * bmp.width],
+				&bmp.buffer[y * bmp.pitch],
+				bmp.width);
+		}
+
+		glTexSubImage2D(GL_TEXTURE_2D, 0,
+			xOffset, 0,
+			bmp.width, bmp.rows,
+			GL_RED, GL_UNSIGNED_BYTE,
+			pixels.data());
+
+		Glyph glyph;
+		glyph.uv0 = glm::vec2((float)xOffset / atlasWidth, 0.0f);
+		glyph.uv1 = glm::vec2((float)(xOffset + bmp.width) / atlasWidth,
+			(float)bmp.rows / atlasHeight);
+		glyph.sizePx = glm::ivec2(bmp.width, bmp.rows);
+		glyph.bearingPx = glm::ivec2(face->glyph->bitmap_left, face->glyph->bitmap_top);
+		glyph.advancePx = (face->glyph->advance.x >> 6);
+
+		Characters.insert(std::pair<char, Glyph>(c, glyph));
+
+		xOffset += bmp.width;
+	}
+
+	glBindTexture(GL_TEXTURE_2D, 0);
+
+	FT_Done_Face(face);
+	FT_Done_FreeType(ft);
+
+	if (!FiscionX::Core::textShader) {
+		FiscionX::Core::textShader = LoadShader(textVertexShader, textFragmentShader);
+		glGenVertexArrays(1, &FiscionX::Core::textVAO);
+		glGenBuffers(1, &FiscionX::Core::textVBO);
+		glBindVertexArray(FiscionX::Core::textVAO);
+		glBindBuffer(GL_ARRAY_BUFFER, FiscionX::Core::textVBO);
+		glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 6 * 4, nullptr, GL_DYNAMIC_DRAW);
+		glEnableVertexAttribArray(0);
+		glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), 0);
+		glBindBuffer(GL_ARRAY_BUFFER, 0);
+		glBindVertexArray(0);
+	}
+}
+
+FiscionX::UI::Font::~Font() {
+	glDeleteTextures(1, &textureAtlas);
+}
+
+void FiscionX::UI::DrawText(Font* font, const char* text, FiscionX::Vector3 position, float scale, FiscionX::Vector4 color) {
+	glUseProgram(FiscionX::Core::textShader);
+
+	glm::mat4 projection = glm::ortho(0.0f, (float)FiscionX::Core::SCREEN_WIDTH,
+		0.0f, (float)FiscionX::Core::SCREEN_HEIGHT);
+	glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(position.x, position.y, 0.0f));
+
+	glUniformMatrix4fv(glGetUniformLocation(FiscionX::Core::textShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+	glUniformMatrix4fv(glGetUniformLocation(FiscionX::Core::textShader, "model"), 1, GL_FALSE, glm::value_ptr(model));
+	glUniform3f(glGetUniformLocation(FiscionX::Core::textShader, "textColor"), position.z, position.z, position.z);
+	glUniform4f(glGetUniformLocation(FiscionX::Core::textShader, "color"), color.x, color.y, color.z, color.w);
+
+	glActiveTexture(GL_TEXTURE0);
+	glBindVertexArray(FiscionX::Core::textVAO);
+	glBindTexture(GL_TEXTURE_2D, font->textureAtlas);
+
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	glDisable(GL_DEPTH_TEST);
+
+	float x = 0.0f;
+	for (const char* p = text; *p; p++) {
+		Glyph ch = font->Characters[*p];
+
+		float xpos = x + ch.bearingPx.x * scale;
+		float ypos = -(ch.sizePx.y - ch.bearingPx.y) * scale;
+		float w = ch.sizePx.x * scale;
+		float h = ch.sizePx.y * scale;
+
+		float u0 = ch.uv0.x, v0 = ch.uv0.y;
+		float u1 = ch.uv1.x, v1 = ch.uv1.y;
+
+		float vertices[6][4] = {
+			{ xpos,     ypos + h, u0, v0 },
+			{ xpos,     ypos,     u0, v1 },
+			{ xpos + w, ypos,     u1, v1 },
+
+			{ xpos,     ypos + h, u0, v0 },
+			{ xpos + w, ypos,     u1, v1 },
+			{ xpos + w, ypos + h, u1, v0 }
+		};
+
+		glBindBuffer(GL_ARRAY_BUFFER, FiscionX::Core::textVBO);
+		glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
+		glDrawArrays(GL_TRIANGLES, 0, 6);
+
+		x += (ch.advancePx) * scale;
+	}
+
+	glBindVertexArray(0);
+	glBindTexture(GL_TEXTURE_2D, 0);
+}
 
 // =================== Camera ===================
 FiscionX::Camera::Camera() {
