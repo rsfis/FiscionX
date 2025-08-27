@@ -117,7 +117,7 @@ void draw() {
     skinnedModel->draw(FiscionX::Core::shaderSkinned, glm::mat4(1.0f), 0, false, view, projection);
 
     image_didi->draw(FiscionX::Vector2(300, 180));
-    FiscionX::UI::DrawText(myfont, "FiscionX - 1.0.0", FiscionX::Vector2(10, 20), 0.3f, FiscionX::Vector4(1, 1, 1, 0.4f));
+    FiscionX::UI::DrawText(myfont, "FiscionX - 1.0.0", FiscionX::Vector2(10, 20), 0.3f, FiscionX::Vector4(1, 1, 1, 0.4f), 0);
 
     //FiscionX::Physics::DrawDebugWorld(projection, view);
 
