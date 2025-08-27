@@ -25,15 +25,24 @@ void main() {
 
 const char* textVertexShader = R"(
 #version 330 core
-layout (location = 0) in vec4 vertex; // <vec2 pos, vec2 uv>
+layout (location = 0) in vec4 vertex;
 out vec2 TexCoords;
 
 uniform mat4 projection;
 uniform mat4 model;
+uniform float rotation;
 
 void main() {
     TexCoords = vertex.zw;
-    gl_Position = projection * model * vec4(vertex.xy, 0.0, 1.0);
+
+    float c = cos(rotation);
+    float s = sin(rotation);
+    mat2 rot = mat2(c, -s,
+                    s,  c);
+
+    vec2 rotatedPos = rot * vertex.xy;
+
+    gl_Position = projection * model * vec4(rotatedPos, 0.0, 1.0);
 }
 )";
 
@@ -348,26 +357,21 @@ layout (location = 1) in vec2 aTex;
 
 out vec2 TexCoord;
 
-uniform vec2 position;    // em pixels
-uniform vec2 scale;       // em pixels
+uniform vec2 position;
+uniform vec2 scale;
 uniform float rotation;
-uniform mat4 projection;  // ortho(0, screenWidth, 0, screenHeight)
+uniform mat4 projection;
 
 void main()
 {
-    // Passo 1: usar quad [0,1] e centralizar
     vec2 centered = (aPos - 0.5) * scale;
 
-    // Passo 2: aplicar rotação em torno do centro
-    float rad = radians(rotation);
-    mat2 rot = mat2(cos(rad), -sin(rad),
-                    sin(rad),  cos(rad));
+    mat2 rot = mat2(cos(rotation), -sin(rotation),
+                    sin(rotation),  cos(rotation));
     vec2 rotated = rot * centered;
 
-    // Passo 3: transladar em pixels
     vec2 translated = rotated + position;
 
-    // Passo 4: converter para clip space com ortho
     gl_Position = projection * vec4(translated, 0.0, 1.0);
 
     TexCoord = aTex;

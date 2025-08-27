@@ -71,6 +71,116 @@ float FiscionX::Math::getDistance3D(FiscionX::Vector3 pos1, FiscionX::Vector3 po
     return std::sqrt(std::pow(pos2.x - pos1.x, 2) + std::pow(pos2.y - pos1.y, 2) + std::pow(pos2.z - pos1.z, 2));
 }
 
+float FiscionX::Math::clamp(float value, float min, float max) {
+	if (value < min) return min;
+	if (value > max) return max;
+	return value;
+}
+
+float FiscionX::Math::radians(float degrees) {
+	return degrees * (3.14159265359f / 180.0f);
+}
+
+float FiscionX::Math::degrees(float radians) {
+	return radians * (180.0f / 3.14159265359f);
+}
+
+float FiscionX::Math::lerp(float a, float b, float t) {
+	return a + (b - a) * t;
+}
+
+float FiscionX::Math::min(float a, float b) {
+	return (a < b) ? a : b;
+}
+
+float FiscionX::Math::max(float a, float b) {
+	return (a > b) ? a : b;
+}
+
+float FiscionX::Math::sin(float angle) {
+	return std::sin(angle);
+}
+
+float FiscionX::Math::cos(float angle) {
+	return std::cos(angle);
+}
+
+float FiscionX::Math::tan(float angle) {
+	return std::tan(angle);
+}
+
+float FiscionX::Math::asin(float value) {
+	return std::asin(value);
+}
+
+float FiscionX::Math::acos(float value) {
+	return std::acos(value);
+}
+
+float FiscionX::Math::atan(float value) {
+	return std::atan(value);
+}
+
+int FiscionX::Math::sign(float value) {
+	return (value > 0) - (value < 0);
+}
+
+int FiscionX::Math::randInt(int min, int max) {
+	static std::random_device rd;
+	static std::mt19937 mt(rd());
+	std::uniform_int_distribution<int> dist(min, max);
+	return dist(mt);
+}
+
+float FiscionX::Math::randFloat(float min, float max) {
+	static std::random_device rd;
+	static std::mt19937 mt(rd());
+	std::uniform_real_distribution<float> dist(min, max);
+	return dist(mt);
+}
+
+float FiscionX::Math::atan2(float y, float x) {
+	return std::atan2(y, x);
+}
+
+float FiscionX::Math::sqrt(float value) {
+	return std::sqrt(value);
+}
+
+float FiscionX::Math::pow(float base, float exponent) {
+	return std::pow(base, exponent);
+}
+
+int FiscionX::Math::abs(int value) {
+	return std::abs(value);
+}
+
+float FiscionX::Math::abs(float value) {
+	return std::fabs(value);
+}
+
+float FiscionX::Math::floor(float value) {
+	return std::floor(value);
+}
+
+float FiscionX::Math::ceil(float value) {
+	return std::ceil(value);
+}
+
+float FiscionX::Math::round(float value) {
+	return std::round(value);
+}
+
+float FiscionX::Math::log(float value) {
+	return std::log(value);
+}
+
+float FiscionX::Math::angleBetween(Vector3 a, Vector3 b) {
+	a = a.normalized();
+	b = b.normalized();
+	return std::acos(Math::clamp(a.dot(b), -1.0f, 1.0f));
+}
+
 // =================== File System ====================
 File::File(std::string _path) {
 	path = _path;
@@ -237,7 +347,7 @@ void FiscionX::UI::Image::draw(FiscionX::Vector2 position) {
 	glUniformMatrix4fv(glGetUniformLocation(shader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
 	glUniform2f(glGetUniformLocation(shader, "scale"), scale.x, scale.y);
 	glUniform1f(glGetUniformLocation(shader, "aspect_ratio"), aspect_ratio);
-	glUniform1f(glGetUniformLocation(shader, "rotation"), glm::degrees(rotation));
+	glUniform1f(glGetUniformLocation(shader, "rotation"), rotation);
 	glUniform1f(glGetUniformLocation(shader, "alpha"), alpha);
 
 	glEnable(GL_BLEND);
@@ -338,7 +448,7 @@ FiscionX::UI::Font::~Font() {
 	glDeleteTextures(1, &textureAtlas);
 }
 
-void FiscionX::UI::DrawText(Font* font, const char* text, FiscionX::Vector2 position, float scale, FiscionX::Vector4 color) {
+void FiscionX::UI::DrawText(Font* font, const char* text, FiscionX::Vector2 position, float scale, FiscionX::Vector4 color, float rotation) {
 	glUseProgram(FiscionX::Core::textShader);
 
 	glm::mat4 projection = glm::ortho(0.0f, (float)FiscionX::Core::SCREEN_WIDTH,
@@ -348,6 +458,7 @@ void FiscionX::UI::DrawText(Font* font, const char* text, FiscionX::Vector2 posi
 	glUniformMatrix4fv(glGetUniformLocation(FiscionX::Core::textShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
 	glUniformMatrix4fv(glGetUniformLocation(FiscionX::Core::textShader, "model"), 1, GL_FALSE, glm::value_ptr(model));
 	glUniform4f(glGetUniformLocation(FiscionX::Core::textShader, "color"), color.x, color.y, color.z, color.w);
+	glUniform1f(glGetUniformLocation(FiscionX::Core::textShader, "rotation"), rotation);
 
 	glActiveTexture(GL_TEXTURE0);
 	glBindVertexArray(font->textVAO);

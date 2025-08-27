@@ -1,6 +1,11 @@
 #ifndef FiscionCore
 #define FiscionCore
 
+#ifdef _MSC_VER
+#pragma comment(lib, "fmod_vc.lib")
+#pragma comment(lib, "freetype.lib")
+#endif
+
 #include <iostream>
 #include <vector>
 #include <string>
@@ -13,6 +18,7 @@
 #include <cmath>
 #include <math.h>
 #include <unordered_map>
+#include <random>
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include "dependencies/glad/glad.h"
@@ -40,6 +46,7 @@
 #include "dependencies/bullet/BulletCollision/Gimpact/btGImpactShape.h"
 #include "dependencies/bullet/BulletDynamics/Vehicle/btRaycastVehicle.h"
 
+#define     PI 3.14159265358979323846f
 #define 	FISCIONX_KEY_SPACE   32
 #define 	FISCIONX_KEY_APOSTROPHE   39 /* ' */
 #define 	FISCIONX_KEY_COMMA   44 /* , */
@@ -493,6 +500,31 @@ namespace FiscionX {
 
 	struct Math {
 		static float getDistance3D(FiscionX::Vector3 pos1, FiscionX::Vector3 pos2);
+		static float radians(float degrees);
+		static float degrees(float radians);
+		static float clamp(float value, float min, float max);
+		static float min(float a, float b);
+		static float max(float a, float b);
+		static float lerp(float a, float b, float t);
+		static float sin(float angle);
+		static float cos(float angle);
+		static float tan(float angle);
+		static float asin(float value);
+		static float acos(float value);
+		static float atan(float value);
+		static float atan2(float y, float x);
+		static int   sign(float value);
+		static int   randInt(int min, int max);
+		static float randFloat(float min, float max);
+		static float sqrt(float value);
+		static float pow(float base, float exponent);
+		static float abs(float value);
+		static int   abs(int value);
+		static float floor(float value);
+		static float ceil(float value);
+		static float round(float value);
+		static float log(float value);
+		static float angleBetween(Vector3 a, Vector3 b);
 	};
 
 	struct UI{
@@ -523,7 +555,7 @@ namespace FiscionX {
 			~Font();
 		};
 
-		static void DrawText(Font* font, const char* text, FiscionX::Vector2 position, float size, FiscionX::Vector4 color);
+		static void DrawText(Font* font, const char* text, FiscionX::Vector2 position, float size, FiscionX::Vector4 color, float rotation);
 	};
 
 	struct Camera {
