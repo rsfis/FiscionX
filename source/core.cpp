@@ -392,9 +392,6 @@ FiscionX::UI::Font::Font(const char* fontPath, int pixelSize) {
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-	GLint swizzleMask[] = { GL_ONE, GL_ONE, GL_ONE, GL_RED };
-	glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzleMask);
-
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 	int xOffset = 0;
 	for (unsigned char c = 0; c < 128; c++) {

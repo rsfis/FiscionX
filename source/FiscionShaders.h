@@ -55,9 +55,8 @@ uniform sampler2D text;
 uniform vec4 color;
 
 void main() {
-    float alpha = texture(text, TexCoords).a;
-    if (alpha < 0.1) discard;
-    FragColor = color;
+    float alpha = texture(text, TexCoords).r; // FreeType atlas stores grayscale in RED channel
+    FragColor = vec4(color.rgb, color.a * alpha);
 }
 )";
 
