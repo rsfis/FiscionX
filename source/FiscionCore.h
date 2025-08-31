@@ -2,8 +2,8 @@
 #define FiscionCore
 
 #ifdef _MSC_VER
-#pragma comment(lib, "fmod_vc.lib")
-#pragma comment(lib, "freetype.lib")
+#pragma comment(lib, "source/fmod_vc.lib")
+#pragma comment(lib, "source/freetype.lib")
 #endif
 
 #include <iostream>
