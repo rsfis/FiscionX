@@ -37,7 +37,7 @@
 #include "dependencies/stb/stb_image_write.h"
 
 #include "dependencies/ft2build.h"
-#include FT_FREETYPE_H
+#include "dependencies/freetype/freetype.h"
 
 #include "dependencies/tinygltf/tiny_gltf.h"
 
