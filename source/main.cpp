@@ -32,7 +32,6 @@ void update() {
 
     FiscionX::Physics::DynamicWorld->stepSimulation(FiscionX::Core::deltaTime);
 
-    // VEHICLE
     vehicle->update(deltaTime);
 	
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_I)) {

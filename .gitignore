@@ -4,20 +4,20 @@
 ## Get latest from https://github.com/github/gitignore/blob/master/VisualStudio.gitignore
 
 # DLLS IN MAIN FOLDER
-brotlicommon.dll
-brotlidec.dll
-bz2.dll
-fmod.dll
-fmod_vc.lib
-fmodL.dll
-fmodL_vc.lib
-freetype.dll
-freetype.lib
-glfw3.dll
-libpng16.dll
-vcruntime140.dll
-vcruntime140_1.dll
-zlib1.dll
+#brotlicommon.dll
+#brotlidec.dll
+#bz2.dll
+#fmod.dll
+#fmod_vc.lib
+#fmodL.dll
+#fmodL_vc.lib
+#freetype.dll
+#freetype.lib
+#glfw3.dll
+#libpng16.dll
+#vcruntime140.dll
+#vcruntime140_1.dll
+#zlib1.dll
 
 # Solution
 *.sln
