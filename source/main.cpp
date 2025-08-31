@@ -1,5 +1,5 @@
 ﻿#include "FiscionCore.h"
-#define PROJECT_VERSION "0.8.2"
+#define PROJECT_VERSION "0.9.2"
 
 FiscionX::Light* dirLight;
 FiscionX::Light* pointLight;

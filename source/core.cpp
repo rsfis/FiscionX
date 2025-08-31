@@ -1,6 +1,6 @@
 ﻿#include "FiscionCore.h"
 #include "FiscionShaders.h"
-#define ENGINE_VERSION "1.0.0"
+#define ENGINE_VERSION "0.9.2"
 
 // GLOBALS
 GLFWwindow* FiscionX::Core::Window;
