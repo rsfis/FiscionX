@@ -9,17 +9,25 @@ add_executable(ExampleWithFiscionX
     source/tiny_gltf.cpp
 )
 
+if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+    set(ARCH_DIR "x64")
+else()
+    set(ARCH_DIR "x86")
+endif()
+
+message(STATUS "Detected CPU Architecture: ${ARCH_DIR}")
+
 target_link_libraries(FiscionX PRIVATE
-    "${CMAKE_SOURCE_DIR}/redist/x86/BulletCollision.lib"
-    "${CMAKE_SOURCE_DIR}/redist/x86/BulletDynamics.lib"
-    "${CMAKE_SOURCE_DIR}/redist/x86/BulletInverseDynamics.lib"
-    "${CMAKE_SOURCE_DIR}/redist/x86/BulletSoftBody.lib"
-    "${CMAKE_SOURCE_DIR}/redist/x86/Bullet3Common.lib"
-    "${CMAKE_SOURCE_DIR}/redist/x86/fmod_vc.lib"
-    "${CMAKE_SOURCE_DIR}/redist/x86/freetype.lib"
-    "${CMAKE_SOURCE_DIR}/redist/x86/glad.lib"
-    "${CMAKE_SOURCE_DIR}/redist/x86/glfw3dll.lib"
-    "${CMAKE_SOURCE_DIR}/redist/x86/LinearMath.lib"
+    "${CMAKE_SOURCE_DIR}/redist/${ARCH_DIR}/BulletCollision.lib"
+    "${CMAKE_SOURCE_DIR}/redist/${ARCH_DIR}/BulletDynamics.lib"
+    "${CMAKE_SOURCE_DIR}/redist/${ARCH_DIR}/BulletInverseDynamics.lib"
+    "${CMAKE_SOURCE_DIR}/redist/${ARCH_DIR}/BulletSoftBody.lib"
+    "${CMAKE_SOURCE_DIR}/redist/${ARCH_DIR}/Bullet3Common.lib"
+    "${CMAKE_SOURCE_DIR}/redist/${ARCH_DIR}/fmod_vc.lib"
+    "${CMAKE_SOURCE_DIR}/redist/${ARCH_DIR}/freetype.lib"
+    "${CMAKE_SOURCE_DIR}/redist/${ARCH_DIR}/glad.lib"
+    "${CMAKE_SOURCE_DIR}/redist/${ARCH_DIR}/glfw3dll.lib"
+    "${CMAKE_SOURCE_DIR}/redist/${ARCH_DIR}/LinearMath.lib"
 )
 
 set_property(TARGET FiscionX PROPERTY CXX_STANDARD 20)
