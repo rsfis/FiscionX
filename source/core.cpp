@@ -243,6 +243,72 @@ void File::saveFile(std::string outputPath) {
 	free(readingFile);
 */
 
+// =================== Audio ====================
+FMOD_RESULT SYS;
+FMOD::System* FMOD_SYS;
+
+void FiscionX::AudioSystem::init() {
+	SYS = FMOD::System_Create(&FMOD_SYS);
+	if (SYS != FMOD_OK) {
+		std::cerr << "ERR 0x011 - FMOD Audio System couldn't be created: " << std::endl;
+		glfwTerminate();
+		system("pause");
+		std::exit(-11);
+	}
+
+	SYS = FMOD_SYS->init(512, FMOD_INIT_NORMAL, nullptr);
+	if (SYS != FMOD_OK) {
+		std::cerr << "ERR 0x012 - FMOD Audio System couldn't be initialized" << std::endl;
+		glfwTerminate();
+		system("pause");
+		std::exit(-12);
+	}
+
+	SYS = FMOD_SYS->set3DSettings(1.0, 1.0f, 1.0f);
+}
+
+void FiscionX::AudioSystem::update() {
+	FMOD_SYS->update();
+
+	FMOD_SYS->set3DListenerAttributes(0, &listenerPos, &velocity, &forward, &up);
+}
+
+FiscionX::Sound::Sound(const char* path, bool loop, bool threedimensional, FiscionX::Vector3 position,
+	float minDistance, float maxDistance, float vol) {
+	int mode = threedimensional ? FMOD_3D_LINEARROLLOFF : FMOD_2D;
+	FMOD_SYS->createSound(path, mode, nullptr, &audiofont);
+
+	pos = position;
+	minDist = minDistance;
+	maxDist = maxDistance;
+	looping = loop;
+	volume = vol;
+
+	FiscionX::Core::AllSounds.push_back(*this);
+}
+
+void FiscionX::Sound::useEffect(FMOD_DSP_TYPE type) {
+	FMOD_SYS->createDSPByType(type, &dsp);
+	curr_channel->addDSP(0, dsp);
+}
+
+void FiscionX::Sound::updateValues() {
+	audiofont->set3DMinMaxDistance(minDist, maxDist);
+	if (looping) { audiofont->setMode(FMOD_LOOP_NORMAL); }
+	if (!looping) { audiofont->setMode(FMOD_LOOP_OFF); }
+
+	FMOD_VECTOR position = { pos.x, pos.y, pos.z };
+	FMOD_VECTOR vel = { 0.0f, 0.0f, 0.0f };
+	curr_channel->set3DAttributes(&position, &vel);
+	curr_channel->setPaused(paused);
+	curr_channel->setVolume(volume);
+}
+
+void FiscionX::Sound::play() {
+	updateValues();
+	FMOD_SYS->playSound(audiofont, nullptr, false, &curr_channel);
+}
+
 // =================== UI ====================
 // ================= IMAGES ==================
 
@@ -343,6 +409,7 @@ void FiscionX::UI::Image::draw(FiscionX::Vector2 position) {
 	glBindTexture(GL_TEXTURE_2D, texture);
 	glUniform1i(glGetUniformLocation(shader, "tex"), 0);
 
+	glUniform1i(glGetUniformLocation(shader, "posMode"), 1);
 	glUniform2f(glGetUniformLocation(shader, "position"), position.x, position.y);
 	glUniformMatrix4fv(glGetUniformLocation(shader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
 	glUniform2f(glGetUniformLocation(shader, "scale"), scale.x, scale.y);
@@ -498,6 +565,246 @@ void FiscionX::UI::DrawText(Font* font, const char* text, FiscionX::Vector2 posi
 	glBindTexture(GL_TEXTURE_2D, 0);
 }
 
+// =================== Video ====================
+// =================== Video ====================
+GLuint FiscionX::UI::Video::shaderVideo = 0;
+static const float _videoQuadTemplate[] = {
+	-0.5f, -0.5f, 0.0f, 1.0f,
+	 0.5f, -0.5f, 1.0f, 1.0f,
+	 0.5f,  0.5f, 1.0f, 0.0f,
+	-0.5f,  0.5f, 0.0f, 0.0f
+};
+static const GLuint _videoIdx[] = { 0,1,2, 2,3,0 };
+
+// Se seu VLC não mostrar vídeo, descomente a linha abaixo
+// #define VIDEO_RGBA_FIX
+
+FiscionX::UI::Video::Video(const char* path, int desiredWidth, int desiredHeight) {
+	width = desiredWidth > 0 ? desiredWidth : 640;
+	height = desiredHeight > 0 ? desiredHeight : 360;
+	aspect_ratio = (height != 0) ? ((float)width / (float)height) : 1.0f;
+
+	pixels.resize((size_t)width * height * 4);
+
+	// --- Inicializa libVLC ---
+	const char* const vlc_args[] = {
+		"--no-xlib",
+		"--vout=vmem",
+		"--no-video-title-show",
+		"--quiet"
+	};
+	vlcInstance = libvlc_new(sizeof(vlc_args) / sizeof(vlc_args[0]), vlc_args);
+	if (!vlcInstance) { std::cerr << "[Video] libVLC: failed to create instance\n"; return; }
+
+	media = libvlc_media_new_path(vlcInstance, path);
+	if (!media) {
+		std::cerr << "[Video] libVLC: failed to open media: " << path << "\n";
+		libvlc_release(vlcInstance); vlcInstance = nullptr;
+		return;
+	}
+
+	mediaPlayer = libvlc_media_player_new_from_media(media);
+	libvlc_media_release(media); media = nullptr;
+
+	// registra callbacks
+	libvlc_video_set_callbacks(mediaPlayer,
+		&Video::lockCallback,
+		&Video::unlockCallback,
+		&Video::displayCallback,
+		this
+	);
+
+#ifdef VIDEO_RGBA_FIX
+	libvlc_video_set_format(mediaPlayer, "RGBA", width, height, width * 4);
+#else
+	libvlc_video_set_format(mediaPlayer, "RV32", width, height, width * 4);
+#endif
+
+	libvlc_audio_set_mute(mediaPlayer, 0);
+	libvlc_audio_set_volume(mediaPlayer, 100);
+
+	// cria quad OpenGL
+	glGenVertexArrays(1, &VAO);
+	glGenBuffers(1, &VBO);
+	glGenBuffers(1, &EBO);
+
+	glBindVertexArray(VAO);
+	glBindBuffer(GL_ARRAY_BUFFER, VBO);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(_videoQuadTemplate), _videoQuadTemplate, GL_STATIC_DRAW);
+
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(_videoIdx), _videoIdx, GL_STATIC_DRAW);
+
+	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+	glEnableVertexAttribArray(0);
+	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+	glEnableVertexAttribArray(1);
+
+	glBindVertexArray(0);
+}
+
+void* FiscionX::UI::Video::lockCallback(void* opaque, void** planes) {
+	Video* self = reinterpret_cast<Video*>(opaque);
+	self->pixelMutex.lock();
+	*planes = self->pixels.data();
+	return self->pixels.data();
+}
+
+void FiscionX::UI::Video::unlockCallback(void* opaque, void* picture, void* const* planes) {
+	Video* self = reinterpret_cast<Video*>(opaque);
+	self->hasNewFrame = true;
+	self->pixelMutex.unlock();
+}
+
+void FiscionX::UI::Video::displayCallback(void* opaque, void* picture) {
+	// apenas marca como novo frame, o upload real é no update()
+	Video* self = reinterpret_cast<Video*>(opaque);
+	self->hasNewFrame = true;
+}
+
+void FiscionX::UI::Video::createTextureIfNeeded() {
+	glGenTextures(1, &texture);
+	glBindTexture(GL_TEXTURE_2D, texture);
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
+		GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+}
+
+void FiscionX::UI::Video::update() {
+	if (!pixelMutex.try_lock()) return;
+	if (!hasNewFrame) { pixelMutex.unlock(); return; }
+
+	// no início de draw():
+	createTextureIfNeeded();
+	if (!texture) return;
+	//std::cout << "Created Texture ID " << texture << " for video\n";
+	glBindTexture(GL_TEXTURE_2D, texture);
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
+	#ifdef VIDEO_RGBA_FIX
+		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height,
+			GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+	#else
+		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height,
+			GL_BGRA, GL_UNSIGNED_BYTE, pixels.data());
+	#endif
+
+	hasNewFrame = false;
+	pixelMutex.unlock();
+}
+
+void FiscionX::UI::Video::play() {
+	if (mediaPlayer) {
+		libvlc_media_player_play(mediaPlayer);
+	}
+}
+
+void FiscionX::UI::Video::pause() {
+	if (mediaPlayer) {
+		libvlc_media_player_set_pause(mediaPlayer, 1);
+	}
+}
+
+void FiscionX::UI::Video::stop() {
+	if (mediaPlayer) {
+		libvlc_media_player_stop(mediaPlayer);
+	}
+}
+
+FiscionX::UI::Video::~Video() {
+	stop();
+
+	if (mediaPlayer) {
+		libvlc_media_player_release(mediaPlayer);
+		mediaPlayer = nullptr;
+	}
+	if (media) {
+		libvlc_media_release(media);
+		media = nullptr;
+	}
+	if (vlcInstance) {
+		libvlc_release(vlcInstance);
+		vlcInstance = nullptr;
+	}
+
+	if (texture) {
+		glDeleteTextures(1, &texture);
+		texture = 0;
+	}
+	if (EBO) {
+		glDeleteBuffers(1, &EBO);
+		EBO = 0;
+	}
+	if (VBO) {
+		glDeleteBuffers(1, &VBO);
+		VBO = 0;
+	}
+	if (VAO) {
+		glDeleteVertexArrays(1, &VAO);
+		VAO = 0;
+	}
+}
+
+void FiscionX::UI::Video::draw(FiscionX::Vector2 position) {
+	// position = CENTER of video in pixels. If you pass {0,0} the video is centered on the screen.
+	if (!texture) return;
+	GLuint shaderProgram = shaderVideo;
+	if (!shaderProgram) return;
+
+	glDisable(GL_DEPTH_TEST);
+	glUseProgram(shaderProgram);
+	glBindVertexArray(VAO);
+
+	// Bind da textura
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, texture);
+	GLint locTex = glGetUniformLocation(shaderProgram, "videoTex");
+	if (locTex >= 0) glUniform1i(locTex, 0);
+
+	// Projection: screen centered (0,0 in center)
+	// glm::ortho(left, right, bottom, top)
+	float halfW = (float)FiscionX::Core::SCREEN_WIDTH * 0.5f;
+	float halfH = (float)FiscionX::Core::SCREEN_HEIGHT * 0.5f;
+	glm::mat4 projection = glm::ortho(-halfW, halfW, -halfH, halfH);
+	GLint locProj = glGetUniformLocation(shaderProgram, "projection");
+	if (locProj >= 0) glUniformMatrix4fv(locProj, 1, GL_FALSE, glm::value_ptr(projection));
+
+	// scale = size in pixels (width, height). Respect your per-object scale factor.
+	// If your struct has scale as multiplicative (1.0 = no scale), compute size = width * scale.x etc.
+	float sizeX = (float)width * scale.x * 2;
+	float sizeY = (float)height * scale.y * 2;
+	GLint locScale = glGetUniformLocation(shaderProgram, "scale");
+	if (locScale >= 0) glUniform2f(locScale, sizeX, sizeY);
+
+	// position passed is CENTER in pixels. If you pass {0,0} it will be screen center.
+	GLint locPos = glGetUniformLocation(shaderProgram, "position");
+	if (locPos >= 0) glUniform2f(locPos, position.x, position.y);
+
+	// rotation
+	GLint locRot = glGetUniformLocation(shaderProgram, "rotation");
+	if (locRot >= 0) glUniform1f(locRot, rotation);
+
+	// alpha
+	GLint locA = glGetUniformLocation(shaderProgram, "alpha");
+	if (locA >= 0) glUniform1f(locA, alpha);
+
+	// blending se precisar
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+	// desenha
+	glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+
+	glDisable(GL_BLEND);
+	glBindVertexArray(0);
+	glUseProgram(0);
+	glEnable(GL_DEPTH_TEST);
+}
+
 // =================== Camera ===================
 FiscionX::Camera::Camera() {
 	updateVectors();
@@ -537,72 +844,6 @@ void FiscionX::Camera::updateVectors() {
 		right = FiscionX::Vector3(rightVec.x, rightVec.y, rightVec.z);
 		up = FiscionX::Vector3(upVec.x, upVec.y, upVec.z);
 	}
-}
-
-// =================== Audio ====================
-FMOD_RESULT SYS;
-FMOD::System* FMOD_SYS;
-
-void FiscionX::AudioSystem::init() {
-	SYS = FMOD::System_Create(&FMOD_SYS);
-	if (SYS != FMOD_OK) {
-		std::cerr << "ERR 0x011 - FMOD Audio System couldn't be created: " << std::endl;
-		glfwTerminate();
-		system("pause");
-		std::exit(-11);
-	}
-
-	SYS = FMOD_SYS->init(512, FMOD_INIT_NORMAL, nullptr);
-	if (SYS != FMOD_OK) {
-		std::cerr << "ERR 0x012 - FMOD Audio System couldn't be initialized" << std::endl;
-		glfwTerminate();
-		system("pause");
-		std::exit(-12);
-	}
-
-	SYS = FMOD_SYS->set3DSettings(1.0, 1.0f, 1.0f);
-}
-
-void FiscionX::AudioSystem::update() {
-	FMOD_SYS->update();
-
-	FMOD_SYS->set3DListenerAttributes(0, &listenerPos, &velocity, &forward, &up);
-}
-
-FiscionX::Sound::Sound(const char* path, bool loop, bool threedimensional, FiscionX::Vector3 position,
-	float minDistance, float maxDistance, float vol) {
-	int mode = threedimensional ? FMOD_3D_LINEARROLLOFF : FMOD_2D;
-	FMOD_SYS->createSound(path, mode, nullptr, &audiofont);
-
-	pos = position;
-	minDist = minDistance;
-	maxDist = maxDistance;
-	looping = loop;
-	volume = vol;
-
-	FiscionX::Core::AllSounds.push_back(*this);
-}
-
-void FiscionX::Sound::useEffect(FMOD_DSP_TYPE type) {
-	FMOD_SYS->createDSPByType(type, &dsp);
-	curr_channel->addDSP(0, dsp);
-}
-
-void FiscionX::Sound::updateValues() {
-	audiofont->set3DMinMaxDistance(minDist, maxDist);
-	if (looping) { audiofont->setMode(FMOD_LOOP_NORMAL); }
-	if (!looping) { audiofont->setMode(FMOD_LOOP_OFF); }
-
-	FMOD_VECTOR position = { pos.x, pos.y, pos.z };
-	FMOD_VECTOR vel = { 0.0f, 0.0f, 0.0f };
-	curr_channel->set3DAttributes(&position, &vel);
-	curr_channel->setPaused(paused);
-	curr_channel->setVolume(volume);
-}
-
-void FiscionX::Sound::play() {
-	updateValues();
-	FMOD_SYS->playSound(audiofont, nullptr, false, &curr_channel);
 }
 
 // =================== Mouse Callback ===================
@@ -2898,6 +3139,7 @@ void FiscionX::Core::NewWindow(int width, int height, const char* window_label) 
     shaderStatic = LoadShader(vertexStatic, fragment);
     shaderSkinned = LoadShader(vertexSkinned, fragment);
     UI::Image::shader = LoadShader(imageVertex, imageFragment);
+	UI::Video::shaderVideo = LoadShader(videoVertex, videoFragment);
 	textShader = LoadShader(textVertexShader, textFragmentShader);
 
     // Configure Shadow Mapping

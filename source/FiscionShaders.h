@@ -23,6 +23,50 @@ void main() {
 }
 )";
 
+const char* videoVertex = R"(
+#version 330 core
+layout (location = 0) in vec2 aPos; // -1 .. 1
+layout (location = 1) in vec2 aTex;
+
+out vec2 TexCoord;
+
+uniform vec2 position;    // CENTER of video in pixels (x, y)
+uniform vec2 scale;       // size: width, height in pixels (width, height)
+uniform float rotation;   // radians
+uniform mat4 projection;  // use: glm::ortho(-W/2, W/2, -H/2, H/2) => screen center = (0,0)
+
+void main() {
+    TexCoord = aTex;
+
+    // map aPos (-1..1) -> centered pixel offset [-0.5*size .. +0.5*size]
+    vec2 offset = aPos * 0.5 * scale; // offset in pixels relative to center
+
+    // rotate around center
+    float c = cos(rotation);
+    float s = sin(rotation);
+    mat2 rot = mat2(c, -s, s, c);
+    vec2 rotated = rot * offset;
+
+    // world position = center + rotated offset
+    vec2 world = position + rotated;
+
+    gl_Position = projection * vec4(world, 0.0, 1.0);
+}
+)";
+
+const char* videoFragment = R"(
+#version 330 core
+in vec2 TexCoord;
+out vec4 FragColor;
+
+uniform sampler2D videoTex;
+
+void main() {
+    vec4 color = texture(videoTex, TexCoord);
+    FragColor = vec4(color.rgb, 1.0); // força alpha visível
+}
+)";
+
 const char* textVertexShader = R"(
 #version 330 core
 layout (location = 0) in vec4 vertex;
