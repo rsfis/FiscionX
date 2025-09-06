@@ -345,7 +345,6 @@ namespace FiscionX {
 			: x(_x), y(_y), z(_z), w(_w) {
 		}
 
-		// ---- Operadores básicos ----
 		Vector4 operator+(const Vector4& o) const { return Vector4(x + o.x, y + o.y, z + o.z, w + o.w); }
 		Vector4 operator-(const Vector4& o) const { return Vector4(x - o.x, y - o.y, z - o.z, w - o.w); }
 		Vector4 operator*(float s) const { return Vector4(x * s, y * s, z * s, w * s); }
@@ -560,40 +559,32 @@ namespace FiscionX {
 
 		struct Video {
 			static GLuint shaderVideo;
-			// libVLC handles
+			
 			libvlc_instance_t* vlcInstance = nullptr;
 			libvlc_media_t* media = nullptr;
 			libvlc_media_player_t* mediaPlayer = nullptr;
 
-			// pixel buffer (RV32 = RGBA little-endian)
 			std::vector<unsigned char> pixels;
 			std::mutex pixelMutex;
 			bool hasNewFrame = false;
 
-			// GL objects (quad similar to UI::Image)
 			GLuint texture = 0;
 			GLuint VAO = 0, VBO = 0, EBO = 0;
 
-			// sizing / layout like UI::Image
 			float alpha = 1.0f;
 			float rotation = 0.0f; // radians
 			FiscionX::Vector2 scale = FiscionX::Vector2(1, 1);
 			float aspect_ratio = 1.0f;
 			int width = 0, height = 0;
 
-			// ctor/dtor
 			Video(const char* path, int desiredWidth = 640, int desiredHeight = 360);
 			~Video();
 
-			// controls
 			void play();
 			void pause();
 			void stop();
 
-			// call in main thread each frame: uploads new frame to GPU
 			void update();
-
-			// draw using same shader/uniforms as UI::Image
 			void draw(FiscionX::Vector2 position);
 
 			void createTextureIfNeeded();

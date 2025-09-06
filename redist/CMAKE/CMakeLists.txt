@@ -32,6 +32,8 @@ target_link_libraries(FiscionX PRIVATE
     "${CMAKE_SOURCE_DIR}/redist/${ARCH_DIR}/glad.lib"
     "${CMAKE_SOURCE_DIR}/redist/${ARCH_DIR}/glfw3dll.lib"
     "${CMAKE_SOURCE_DIR}/redist/${ARCH_DIR}/LinearMath.lib"
+    "${CMAKE_SOURCE_DIR}/redist/${ARCH_DIR}/libvlc.lib"
+    "${CMAKE_SOURCE_DIR}/redist/${ARCH_DIR}/libvlccore.lib"
 )
 
 set_property(TARGET FiscionX PROPERTY CXX_STANDARD 20)
