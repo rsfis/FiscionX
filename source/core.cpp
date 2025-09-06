@@ -3,6 +3,7 @@
 #define ENGINE_VERSION "1.0.0"
 
 // last error number: 17
+
 // GLOBALS
 GLFWwindow* FiscionX::Core::Window;
 int FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT;
