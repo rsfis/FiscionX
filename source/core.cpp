@@ -1,7 +1,8 @@
 ﻿#include "FiscionCore.h"
 #include "FiscionShaders.h"
-#define ENGINE_VERSION "0.9.2"
+#define ENGINE_VERSION "1.0.0"
 
+// last error number: 17
 // GLOBALS
 GLFWwindow* FiscionX::Core::Window;
 int FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT;
@@ -430,13 +431,13 @@ GLuint FiscionX::UI::Image::shader = 0; // Define global IMAGE shader variable
 FiscionX::UI::Font::Font(const char* fontPath, int pixelSize) {
 	FT_Library ft;
 	if (FT_Init_FreeType(&ft)) {
-		std::cerr << "ERR 0x020 - Could not init FreeType" << std::endl;
+		std::cerr << "ERR 0x014 - Could not init FreeType" << std::endl;
 		std::exit(-20);
 	}
 
 	FT_Face face;
 	if (FT_New_Face(ft, fontPath, 0, &face)) {
-		std::cerr << "ERR 0x021 - Failed to load font: " << fontPath << std::endl;
+		std::cerr << "ERR 0x015 - Failed to load font: " << fontPath << std::endl;
 		std::exit(-21);
 	}
 
@@ -576,9 +577,6 @@ static const float _videoQuadTemplate[] = {
 };
 static const GLuint _videoIdx[] = { 0,1,2, 2,3,0 };
 
-// Se seu VLC não mostrar vídeo, descomente a linha abaixo
-// #define VIDEO_RGBA_FIX
-
 FiscionX::UI::Video::Video(const char* path, int desiredWidth, int desiredHeight) {
 	width = desiredWidth > 0 ? desiredWidth : 640;
 	height = desiredHeight > 0 ? desiredHeight : 360;
@@ -586,7 +584,6 @@ FiscionX::UI::Video::Video(const char* path, int desiredWidth, int desiredHeight
 
 	pixels.resize((size_t)width * height * 4);
 
-	// --- Inicializa libVLC ---
 	const char* const vlc_args[] = {
 		"--no-xlib",
 		"--vout=vmem",
@@ -594,11 +591,11 @@ FiscionX::UI::Video::Video(const char* path, int desiredWidth, int desiredHeight
 		"--quiet"
 	};
 	vlcInstance = libvlc_new(sizeof(vlc_args) / sizeof(vlc_args[0]), vlc_args);
-	if (!vlcInstance) { std::cerr << "[Video] libVLC: failed to create instance\n"; return; }
+	if (!vlcInstance) { std::cerr << "ERR 0x016 - Couldn't initialize VLC video instance\n"; return; }
 
 	media = libvlc_media_new_path(vlcInstance, path);
 	if (!media) {
-		std::cerr << "[Video] libVLC: failed to open media: " << path << "\n";
+		std::cerr << "ERR 0x017 - Couldn't open video instance at " << path << "\n";
 		libvlc_release(vlcInstance); vlcInstance = nullptr;
 		return;
 	}
@@ -657,7 +654,6 @@ void FiscionX::UI::Video::unlockCallback(void* opaque, void* picture, void* cons
 }
 
 void FiscionX::UI::Video::displayCallback(void* opaque, void* picture) {
-	// apenas marca como novo frame, o upload real é no update()
 	Video* self = reinterpret_cast<Video*>(opaque);
 	self->hasNewFrame = true;
 }
@@ -678,10 +674,8 @@ void FiscionX::UI::Video::update() {
 	if (!pixelMutex.try_lock()) return;
 	if (!hasNewFrame) { pixelMutex.unlock(); return; }
 
-	// no início de draw():
 	createTextureIfNeeded();
 	if (!texture) return;
-	//std::cout << "Created Texture ID " << texture << " for video\n";
 	glBindTexture(GL_TEXTURE_2D, texture);
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
@@ -750,7 +744,6 @@ FiscionX::UI::Video::~Video() {
 }
 
 void FiscionX::UI::Video::draw(FiscionX::Vector2 position) {
-	// position = CENTER of video in pixels. If you pass {0,0} the video is centered on the screen.
 	if (!texture) return;
 	GLuint shaderProgram = shaderVideo;
 	if (!shaderProgram) return;
@@ -759,44 +752,34 @@ void FiscionX::UI::Video::draw(FiscionX::Vector2 position) {
 	glUseProgram(shaderProgram);
 	glBindVertexArray(VAO);
 
-	// Bind da textura
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, texture);
 	GLint locTex = glGetUniformLocation(shaderProgram, "videoTex");
 	if (locTex >= 0) glUniform1i(locTex, 0);
 
-	// Projection: screen centered (0,0 in center)
-	// glm::ortho(left, right, bottom, top)
 	float halfW = (float)FiscionX::Core::SCREEN_WIDTH * 0.5f;
 	float halfH = (float)FiscionX::Core::SCREEN_HEIGHT * 0.5f;
 	glm::mat4 projection = glm::ortho(-halfW, halfW, -halfH, halfH);
 	GLint locProj = glGetUniformLocation(shaderProgram, "projection");
 	if (locProj >= 0) glUniformMatrix4fv(locProj, 1, GL_FALSE, glm::value_ptr(projection));
 
-	// scale = size in pixels (width, height). Respect your per-object scale factor.
-	// If your struct has scale as multiplicative (1.0 = no scale), compute size = width * scale.x etc.
 	float sizeX = (float)width * scale.x * 2;
 	float sizeY = (float)height * scale.y * 2;
 	GLint locScale = glGetUniformLocation(shaderProgram, "scale");
 	if (locScale >= 0) glUniform2f(locScale, sizeX, sizeY);
 
-	// position passed is CENTER in pixels. If you pass {0,0} it will be screen center.
 	GLint locPos = glGetUniformLocation(shaderProgram, "position");
 	if (locPos >= 0) glUniform2f(locPos, position.x, position.y);
 
-	// rotation
 	GLint locRot = glGetUniformLocation(shaderProgram, "rotation");
 	if (locRot >= 0) glUniform1f(locRot, rotation);
 
-	// alpha
 	GLint locA = glGetUniformLocation(shaderProgram, "alpha");
 	if (locA >= 0) glUniform1f(locA, alpha);
 
-	// blending se precisar
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-	// desenha
 	glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 
 	glDisable(GL_BLEND);
