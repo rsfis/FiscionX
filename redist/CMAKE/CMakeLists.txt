@@ -1,6 +1,10 @@
 ﻿cmake_minimum_required(VERSION 3.8)
 project(ExampleWithFiscionX LANGUAGES C CXX)
 
+if (MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4) # só em MSVC 32-bit
+    add_link_options(/SAFESEH:NO)
+endif()
+
 add_executable(ExampleWithFiscionX
     source/main.cpp
     source/core.cpp
