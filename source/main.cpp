@@ -2,7 +2,6 @@
 #define PROJECT_VERSION "1.0.0"
 
 FiscionX::Light* dirLight;
-FiscionX::Light* pointLight;
 FiscionX::Light* spotLight;
 
 FiscionX::Sound* exSound;
@@ -129,7 +128,7 @@ void draw() {
 }
 
 int main() {
-    FiscionX::Core::Set3DSettings(4096, 1024, 512, 15.0f, 0.01f, 100.0f);
+    FiscionX::Core::Set3DSettings(8192, 1024, 512, 15.0f, 0.01f, 100.0f);
     FiscionX::Core::SetCacheSettings(true, true);
     FiscionX::Core::NewWindow(1280, 720, "FiscionX");
     //FiscionX::Core::SetWindowFullscreen(true, 0);
@@ -151,18 +150,6 @@ int main() {
     dirLight->hasGlow = false;
     dirLight->enableShadows = true;
 
-    pointLight = new FiscionX::Light();
-    pointLight->type = FiscionX::LIGHT_POINT;
-    pointLight->position = FiscionX::Vector3(0.559f, 3.526f, -2.51f);
-    pointLight->color = FiscionX::Vector3(1, 1, 1);
-    pointLight->intensity = 25;
-    pointLight->constant = 1;
-    pointLight->linear = 0.003;
-    pointLight->quadratic = 0.012;
-    pointLight->maxDistance = 10;
-    pointLight->hasGlow = false;
-    pointLight->enableShadows = true;
-
     spotLight = new FiscionX::Light();
     spotLight->type = FiscionX::LIGHT_SPOT;
     spotLight->position = FiscionX::Vector3(0.0f, 1.0f, -4.0f);
@@ -180,7 +167,7 @@ int main() {
 
     FiscionX::Core::CreateAllShadowMaps();
 
-    // Video; Rect, circle, arc, line, polygon; Buttons; Sliders; Viewports; Model Cache; Anisotropic Filter and TAA; Particles; Ambient Occlusion; Post Processing; FPS Limit, Spot light rays
+    // Rect, circle, arc, line, polygon; Buttons; Sliders; Viewports; Model Cache; Anisotropic Filter and TAA; Particles; Ambient Occlusion; Post Processing; FPS Limit, Spot light rays
 
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb",

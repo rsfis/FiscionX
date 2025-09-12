@@ -672,7 +672,7 @@ namespace FiscionX {
 
 		bool enableShadows = true;
 		float lastShadowUpdateTime = -9999.0f;      // last time generated shadow maps
-		float shadowUpdatePeriod = 0.03f;           // seconds between updates (20 Hz default)
+		float shadowUpdatePeriod = 0.01f;           // seconds between updates (~100 Hz default)
 		glm::vec3 lastPosition = glm::vec3(FLT_MAX); // last light position (used to detect movement)
 
 		Light();
@@ -955,7 +955,8 @@ namespace FiscionX {
 
 		static void NewWindow(int width, int height, const char* window_label);
 		static void Set3DSettings(const int _DIRECTIONAL_LIGHT_SHADOW_SIZE, const int _SPOT_LIGHT_SHADOW_SIZE,
-			const int _POINT_LIGHT_SHADOW_SIZE, const float _SHADOW_VIEW_RADIUS, const float _NEAR_PLANE, const float _FAR_PLANE);
+			const int _POINT_LIGHT_SHADOW_SIZE, const float _SHADOW_VIEW_RADIUS, const float _NEAR_PLANE, 
+			const float _FAR_PLANE);
 		static void ClockTick();
 		static void SetWindowSize(int width, int height);
 		static void SetWindowIcon(const char* path);

@@ -2771,10 +2771,6 @@ void FiscionX::Core::CreateShadowMap(ShadowMap& sm, int LIGHT_TYPE) {
 	float borderColor[] = { 1.0, 1.0, 1.0, 1.0 };
 	glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
 
-	GLfloat maxAniso = 0.0f;
-	glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
-	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, maxAniso);
-
 	glBindFramebuffer(GL_FRAMEBUFFER, sm.fbo);
 	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, sm.depthMap, 0);
 	glDrawBuffer(GL_NONE);
