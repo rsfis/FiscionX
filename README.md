@@ -83,7 +83,9 @@ int main() {
 - Download the newest release
 - Unpack the files
 - Paste the .cpp, .h and the "dependencies" directory into your source project folder.
-- Paste .dll and .lib files into the release or debug folder of your project, or exacly where the output executable is located.
+- Paste .dll files from redist/<your_cpu_architecture> into the release or debug folder of your project, or exacly where the output executable is located.
+- Paste .lib files from redist/<your_cpu_architecture> into the source code folder. If necessary, open FiscionCore.h and alter the directory of these .lib files since the solution directory.
+- Paste "redist/plugins" into your release folders
 - Link the static libraries (.lib) and the FiscionX cpp (core.cpp, tiny_gltf.cpp, stb_image.cpp and stb_image_write.cpp) and headers (FiscionCore.h and FiscionShaders.h) files to your compiler.
 
 ## Links
