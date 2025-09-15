@@ -14,6 +14,7 @@ GLuint FiscionX::Core::depthShaderCubeStatic;
 GLuint FiscionX::Core::depthShaderCubeSkinned;
 GLuint FiscionX::Core::shaderStatic;
 GLuint FiscionX::Core::shaderSkinned;
+GLuint FiscionX::Core::shaderUI;
 
 int FiscionX::Core::DIR_SHADOW_SIZE = 4096;
 int FiscionX::Core::SPOT_SHADOW_SIZE = 1024;
@@ -252,7 +253,7 @@ FMOD::System* FMOD_SYS;
 void FiscionX::AudioSystem::init() {
 	SYS = FMOD::System_Create(&FMOD_SYS);
 	if (SYS != FMOD_OK) {
-		std::cerr << "ERR 0x011 - FMOD Audio System couldn't be created: " << std::endl;
+		std::cerr << "ERR 0x011 - FMOD Audio System couldn't be created" << std::endl;
 		glfwTerminate();
 		system("pause");
 		std::exit(-11);
@@ -567,7 +568,6 @@ void FiscionX::UI::DrawText(Font* font, const char* text, FiscionX::Vector2 posi
 	glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-// =================== Video ====================
 // =================== Video ====================
 GLuint FiscionX::UI::Video::shaderVideo = 0;
 static const float _videoQuadTemplate[] = {
@@ -3121,6 +3121,7 @@ void FiscionX::Core::NewWindow(int width, int height, const char* window_label) 
     UI::Image::shader = LoadShader(imageVertex, imageFragment);
 	UI::Video::shaderVideo = LoadShader(videoVertex, videoFragment);
 	textShader = LoadShader(textVertexShader, textFragmentShader);
+	shaderUI = LoadShader(uiVertex, uiFragment);
 
     // Configure Shadow Mapping
     glGenFramebuffers(1, &depthMapFBO);
@@ -3286,6 +3287,33 @@ void FiscionX::Core::Terminate() {
 }
 
 // ===================== DRAW ========================
+void RenderPrimitive(const std::vector<glm::vec2>& vertices,
+	GLenum mode,
+	FiscionX::Vector4 color,
+	glm::mat4 ortho)
+{
+	glEnable(GL_BLEND);
+	GLuint vao, vbo;
+	glGenVertexArrays(1, &vao);
+	glGenBuffers(1, &vbo);
+
+	glBindVertexArray(vao);
+	glBindBuffer(GL_ARRAY_BUFFER, vbo);
+	glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(glm::vec2), vertices.data(), GL_DYNAMIC_DRAW);
+
+	glEnableVertexAttribArray(0);
+	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(glm::vec2), (void*)0);
+
+	glUseProgram(FiscionX::Core::shaderUI);
+	glUniformMatrix4fv(glGetUniformLocation(FiscionX::Core::shaderUI, "uMVP"), 1, GL_FALSE, glm::value_ptr(ortho));
+	glUniform4f(glGetUniformLocation(FiscionX::Core::shaderUI, "uColor"), color.x, color.y, color.z, color.w);
+
+	glDrawArrays(mode, 0, (GLsizei)vertices.size());
+
+	glDeleteBuffers(1, &vbo);
+	glDeleteVertexArrays(1, &vao);
+}
+
 void FiscionX::Core::Draw::ClearBackground(float r, float g, float b, float alpha) {
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
@@ -3295,6 +3323,329 @@ void FiscionX::Core::Draw::ClearBackground(float r, float g, float b, float alph
 
 void FiscionX::Core::Draw::SwapBuffers() {
     glfwSwapBuffers(FiscionX::Core::Window);
+}
+
+void FiscionX::Core::Draw::DrawLine(
+	FiscionX::Vector2 start,
+	FiscionX::Vector2 end,
+	float thickness,
+	FiscionX::Vector4 color)
+{
+	glm::mat4 ortho = glm::ortho(0.0f, 1280.0f, 0.0f, 720.0f);
+
+	glm::vec2 dir = glm::normalize(glm::vec2(end.x - start.x, end.y - start.y));
+	glm::vec2 normal = { -dir.y, dir.x }; // perpendicular
+	glm::vec2 offset = normal * (thickness * 0.5f);
+
+	std::vector<glm::vec2> verts = {
+		{ start.x - offset.x, start.y - offset.y },
+		{ start.x + offset.x, start.y + offset.y },
+		{ end.x - offset.x, end.y - offset.y },
+		{ end.x + offset.x, end.y + offset.y }
+	};
+
+	RenderPrimitive(verts, GL_TRIANGLE_STRIP, color, ortho);
+}
+
+void FiscionX::Core::Draw::DrawRect(
+	FiscionX::Vector2 position,
+	FiscionX::Vector2 size,
+	FiscionX::Vector4 color,
+	float borderThickness,
+	float borderRadius,
+	int segments)
+{
+	glm::mat4 ortho = glm::ortho(0.0f, 1280.0f, 0.0f, 720.0f);
+
+	// Se não há borda e nem raio, só retângulo sólido simples
+	if (borderThickness == 0 && borderRadius == 0) {
+		std::vector<glm::vec2> verts = {
+			{ position.x,             position.y },
+			{ position.x + size.x,    position.y },
+			{ position.x + size.x,    position.y + size.y },
+			{ position.x,             position.y + size.y }
+		};
+		RenderPrimitive(verts, GL_TRIANGLE_FAN, color, ortho);
+		return;
+	}
+
+	// Limita o raio ao máximo possível (metade do lado menor)
+	float r = std::min(borderRadius, std::min(size.x, size.y) * 0.5f);
+
+	std::vector<glm::vec2> verts;
+
+	if (borderThickness == 0) {
+		// Retângulo sólido com cantos arredondados
+		verts.push_back({ position.x + size.x * 0.5f, position.y + size.y * 0.5f }); // centro para TRIANGLE_FAN
+
+		// Gera cada canto arredondado
+		auto arc = [&](float cx, float cy, float startAngle, float endAngle) {
+			for (int i = 0; i <= segments; i++) {
+				float t = startAngle + (endAngle - startAngle) * (float)i / segments;
+				float x = cx + cos(t) * r;
+				float y = cy + sin(t) * r;
+				verts.push_back({ x, y });
+			}
+			};
+
+		// canto inferior esquerdo
+		arc(position.x + r, position.y + r, glm::pi<float>(), 1.5f * glm::pi<float>());
+		// canto inferior direito
+		arc(position.x + size.x - r, position.y + r, 1.5f * glm::pi<float>(), 2.0f * glm::pi<float>());
+		// canto superior direito
+		arc(position.x + size.x - r, position.y + size.y - r, 0.0f, 0.5f * glm::pi<float>());
+		// canto superior esquerdo
+		arc(position.x + r, position.y + size.y - r, 0.5f * glm::pi<float>(), glm::pi<float>());
+
+		RenderPrimitive(verts, GL_TRIANGLE_FAN, color, ortho);
+	}
+	else {
+		// Retângulo apenas de borda com cantos arredondados (faixa entre outer e inner)
+		float halfT = borderThickness * 0.5f;
+
+		float ox0 = position.x - halfT;
+		float oy0 = position.y - halfT;
+		float ox1 = position.x + size.x + halfT;
+		float oy1 = position.y + size.y + halfT;
+
+		float ix0 = position.x + halfT;
+		float iy0 = position.y + halfT;
+		float ix1 = position.x + size.x - halfT;
+		float iy1 = position.y + size.y - halfT;
+
+		float ro = r + halfT; // raio externo
+		float ri = std::max(0.0f, r - halfT); // raio interno
+
+		std::vector<glm::vec2> strip;
+
+		auto arcStrip = [&](float cx, float cy, float start, float end) {
+			for (int i = 0; i <= segments; i++) {
+				float t = start + (end - start) * (float)i / segments;
+				float xo = cx + cos(t) * ro;
+				float yo = cy + sin(t) * ro;
+				float xi = cx + cos(t) * ri;
+				float yi = cy + sin(t) * ri;
+				strip.push_back({ xi, yi });
+				strip.push_back({ xo, yo });
+			}
+			};
+
+		// canto inferior esquerdo
+		arcStrip(position.x + r, position.y + r, glm::pi<float>(), 1.5f * glm::pi<float>());
+		// canto inferior direito
+		arcStrip(position.x + size.x - r, position.y + r, 1.5f * glm::pi<float>(), 2.0f * glm::pi<float>());
+		// canto superior direito
+		arcStrip(position.x + size.x - r, position.y + size.y - r, 0.0f, 0.5f * glm::pi<float>());
+		// canto superior esquerdo
+		arcStrip(position.x + r, position.y + size.y - r, 0.5f * glm::pi<float>(), glm::pi<float>());
+		// fecha o loop
+		arcStrip(position.x + r, position.y + r, glm::pi<float>(), glm::pi<float>());
+
+		RenderPrimitive(strip, GL_TRIANGLE_STRIP, color, ortho);
+	}
+}
+
+void FiscionX::Core::Draw::DrawCircle(
+	FiscionX::Vector2 position,
+	float radius,
+	FiscionX::Vector4 color,
+	float borderThickness,
+	int segments)
+{
+	glm::mat4 ortho = glm::ortho(0.0f, 1280.0f, 0.0f, 720.0f);
+	std::vector<glm::vec2> verts;
+
+	if (borderThickness == 0) {
+		// Círculo sólido
+		verts.push_back({ position.x, position.y });
+		for (int i = 0; i <= segments; i++) {
+			float theta = 2.0f * PI * i / segments;
+			verts.push_back({
+				position.x + cosf(theta) * radius,
+				position.y + sinf(theta) * radius
+				});
+		}
+		RenderPrimitive(verts, GL_TRIANGLE_FAN, color, ortho);
+	}
+	else {
+		// Círculo com espessura real
+		float innerR = radius - borderThickness * 0.5f;
+		float outerR = radius + borderThickness * 0.5f;
+
+		for (int i = 0; i <= segments; i++) {
+			float theta = 2.0f * PI * i / segments;
+
+			glm::vec2 inner = {
+				position.x + cosf(theta) * innerR,
+				position.y + sinf(theta) * innerR
+			};
+
+			glm::vec2 outer = {
+				position.x + cosf(theta) * outerR,
+				position.y + sinf(theta) * outerR
+			};
+
+			verts.push_back(inner);
+			verts.push_back(outer);
+		}
+
+		RenderPrimitive(verts, GL_TRIANGLE_STRIP, color, ortho);
+	}
+}
+
+void FiscionX::Core::Draw::DrawArc(
+	FiscionX::Vector2 position,
+	FiscionX::Vector4 color,
+	float radius,
+	float start_angle,
+	float end_angle,
+	float thickness,
+	int segments)
+{
+	glm::mat4 ortho = glm::ortho(0.0f, 1280.0f, 0.0f, 720.0f);
+	std::vector<glm::vec2> verts;
+
+	float angleStep = (end_angle - start_angle) / segments;
+
+	if (thickness == 0) {
+		// Arco preenchido (como "fatia de pizza")
+		verts.push_back({ position.x, position.y });
+
+		for (int i = 0; i <= segments; i++) {
+			float angle = start_angle + i * angleStep;
+			verts.push_back({
+				position.x + cosf(angle) * radius,
+				position.y + sinf(angle) * radius
+				});
+		}
+
+		RenderPrimitive(verts, GL_TRIANGLE_FAN, color, ortho);
+	}
+	else {
+		// Arco com espessura real (faixa entre raio interno e externo)
+		float innerRadius = radius - thickness * 0.5f;
+		float outerRadius = radius + thickness * 0.5f;
+
+		for (int i = 0; i <= segments; i++) {
+			float angle = start_angle + i * angleStep;
+
+			float cosA = cosf(angle);
+			float sinA = sinf(angle);
+
+			glm::vec2 inner = {
+				position.x + cosA * innerRadius,
+				position.y + sinA * innerRadius
+			};
+
+			glm::vec2 outer = {
+				position.x + cosA * outerRadius,
+				position.y + sinA * outerRadius
+			};
+
+			// adiciona no TRIANGLE_STRIP
+			verts.push_back(inner);
+			verts.push_back(outer);
+		}
+
+		RenderPrimitive(verts, GL_TRIANGLE_STRIP, color, ortho);
+	}
+}
+
+void FiscionX::Core::Draw::DrawPolygon(
+	std::vector<FiscionX::Vector2> vertices,
+	FiscionX::Vector4 color,
+	float borderThickness)
+{
+	glm::mat4 ortho = glm::ortho(0.0f, 1280.0f, 0.0f, 720.0f);
+	std::vector<glm::vec2> verts;
+
+	// Conversão para glm::vec2
+	for (auto& v : vertices)
+		verts.push_back({ v.x, v.y });
+
+	if (borderThickness == 0) {
+		// Polígono sólido
+		RenderPrimitive(verts, GL_TRIANGLE_FAN, color, ortho);
+	}
+	else {
+		// Polígono com espessura de borda -> construir faixa
+		std::vector<glm::vec2> strip;
+		int n = (int)verts.size();
+
+		for (int i = 0; i < n; i++) {
+			glm::vec2 p0 = verts[i];
+			glm::vec2 p1 = verts[(i + 1) % n];
+
+			glm::vec2 edge = glm::normalize(p1 - p0);
+			glm::vec2 normal = { -edge.y, edge.x };
+
+			glm::vec2 offset = normal * (borderThickness * 0.5f);
+
+			// borda interna
+			strip.push_back(p0 - offset);
+			strip.push_back(p1 - offset);
+
+			// borda externa
+			strip.push_back(p0 + offset);
+			strip.push_back(p1 + offset);
+		}
+
+		RenderPrimitive(strip, GL_TRIANGLE_STRIP, color, ortho);
+	}
+}
+
+void FiscionX::Core::Draw::DrawEllipse(
+	FiscionX::Vector2 position,
+	FiscionX::Vector2 size,
+	FiscionX::Vector4 color,
+	float borderThickness,
+	int segments)
+{
+	glm::mat4 ortho = glm::ortho(0.0f, 1280.0f, 0.0f, 720.0f);
+	std::vector<glm::vec2> verts;
+
+	if (borderThickness == 0) {
+		// Elipse sólida
+		verts.push_back({ position.x, position.y });
+
+		for (int i = 0; i <= segments; i++) {
+			float theta = 2.0f * PI * i / segments;
+			verts.push_back({
+				position.x + cosf(theta) * size.x,
+				position.y + sinf(theta) * size.y
+				});
+		}
+
+		RenderPrimitive(verts, GL_TRIANGLE_FAN, color, ortho);
+	}
+	else {
+		// Elipse com espessura de borda
+		std::vector<glm::vec2> strip;
+
+		float innerX = size.x - borderThickness * 0.5f;
+		float innerY = size.y - borderThickness * 0.5f;
+		float outerX = size.x + borderThickness * 0.5f;
+		float outerY = size.y + borderThickness * 0.5f;
+
+		for (int i = 0; i <= segments; i++) {
+			float theta = 2.0f * PI * i / segments;
+
+			glm::vec2 inner = {
+				position.x + cosf(theta) * innerX,
+				position.y + sinf(theta) * innerY
+			};
+
+			glm::vec2 outer = {
+				position.x + cosf(theta) * outerX,
+				position.y + sinf(theta) * outerY
+			};
+
+			strip.push_back(inner);
+			strip.push_back(outer);
+		}
+
+		RenderPrimitive(strip, GL_TRIANGLE_STRIP, color, ortho);
+	}
 }
 
 // =================== Shader Loader ===================

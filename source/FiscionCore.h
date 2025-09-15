@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <thread>
+#include <chrono>
 #include <algorithm>
 #include <cmath>
 #include <math.h>
@@ -908,6 +909,7 @@ namespace FiscionX {
 		static GLuint depthShaderCubeSkinned;
 		static GLuint shaderStatic;
 		static GLuint shaderSkinned;
+		static GLuint shaderUI;
 
 		//static unsigned int SHADOW_WIDTH;
 		//static unsigned int SHADOW_HEIGHT;
@@ -967,6 +969,12 @@ namespace FiscionX {
 		static struct Draw {
 			static void SwapBuffers();
 			static void ClearBackground(float r, float g, float b, float a);
+			static void DrawLine(Vector2 startPosition, Vector2 endPosition, float thickness, Vector4 color);
+			static void DrawRect(Vector2 position, Vector2 size, Vector4 color, float borderThickness = 0, float borderRadius = 0, int segments = 16);
+			static void DrawCircle(Vector2 position, float radius, Vector4 color, float borderThickness = 0, int segments = 64);
+			static void DrawArc(Vector2 position, Vector4 color, float radius, float start_angle, float end_angle, float thickness = 0, int segments = 64);
+			static void DrawPolygon(const std::vector<Vector2> vertices, Vector4 color, float borderThickness = 0);
+			static void DrawEllipse(Vector2 position, Vector2 size, Vector4 color, float borderThickness = 0, int segments = 64);
 		};
 	};
 };
