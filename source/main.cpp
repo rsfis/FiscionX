@@ -32,7 +32,7 @@ void update() {
 
     myVideo->update();
 
-    FiscionX::Physics::DynamicWorld->stepSimulation(FiscionX::Core::deltaTime);
+    FiscionX::Physics::DynamicWorld->stepSimulation(FiscionX::Core::deltaTime, 10);
 
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_P)) myVideo->stop(); myVideo->play();
     vehicle->update(deltaTime);

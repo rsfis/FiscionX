@@ -1,4 +1,22 @@
-﻿const char* vertexDebug = R"(
+﻿const char* uiVertex = R"(
+#version 330 core
+layout (location = 0) in vec2 aPos;
+uniform mat4 uMVP;
+void main() {
+    gl_Position = uMVP * vec4(aPos, 0.0, 1.0);
+}
+)";
+
+const char* uiFragment = R"(
+#version 330 core
+out vec4 FragColor;
+uniform vec4 uColor;
+void main() {
+    FragColor = uColor;
+}
+)";
+
+const char* vertexDebug = R"(
 #version 330 core
 layout (location = 0) in vec3 aPos;
 layout (location = 1) in vec3 aColor;
@@ -859,9 +877,9 @@ void main() {
 
     // CEL SHADING: quantizar iluminação difusa
     float diff = dot(N, L);
-    if (diff > 0.95) diff = 1.0;
+    if (diff > 0.8) diff = 1.0;
     else if (diff > 0.5) diff = 0.7;
-    else if (diff > 0.25) diff = 0.4;
+    //else if (diff > 0.25) diff = 0.4;
     else diff = 0.1;
 
     vec3 V = normalize(viewPos - fs_in.FragPos);
