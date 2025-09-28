@@ -789,6 +789,95 @@ void FiscionX::UI::Video::draw(FiscionX::Vector2 position) {
 	glEnable(GL_DEPTH_TEST);
 }
 
+// BUTTONS
+FiscionX::UI::Button::Button(FiscionX::Vector2 _position, FiscionX::Vector2 _size, FiscionX::UI::Image* _image, FiscionX::UI::Font* _font, 
+	std::string _text, FiscionX::Vector4 _textColor, bool _textCentered, FiscionX::Vector2 _textOffset, FiscionX::Vector4 _normalColor, FiscionX::Vector4 _hoverColor, FiscionX::Vector4 _pressColor,
+	float cooldownBetweenPresses, void (*_PressCallback)()) {
+
+	position = _position;
+	size = _size;
+	image = _image;
+	font = _font;
+	text = _text;
+	textColor = _textColor;
+	textCentered = _textCentered;
+	textOffset = _textOffset;
+	normalColor = _normalColor;
+	hoverColor = _hoverColor;
+	pressColor = _pressColor;
+	cooldownToNextPress = cooldownBetweenPresses;
+	PressCallback = _PressCallback;
+}
+
+void FiscionX::UI::Button::update(float deltaTime) {
+	FiscionX::Vector2 mousePosition = FiscionX::Input::GetMousePosition();
+
+	if (mousePosition.x > position.x && mousePosition.x < position.x + size.x && mousePosition.y < position.y + size.y && mousePosition.y > size.y) {
+		isHovering = true;
+		if (canBePressed == true && FiscionX::Input::GetMouseButtonPressed(FISCIONX_MOUSE_BUTTON_1)) { isPressed = true; canBePressed = false; }
+	}
+	else {
+		isHovering = false;
+	}
+
+	if (!canBePressed) {
+		if (timerToNextPress < cooldownToNextPress) {
+			timerToNextPress += 1*deltaTime;
+		}
+		if (timerToNextPress >= cooldownToNextPress) {
+			timerToNextPress = 0;
+			canBePressed = true;
+		}
+	}
+
+	if (PressCallback != nullptr) {
+		if (isPressed) {
+			PressCallback();
+			isPressed = false;
+		}
+	}
+}
+
+void FiscionX::UI::Button::draw() {
+	FiscionX::Vector4 color;
+
+	if (!isHovering)
+		color = normalColor;
+	else if (!canBePressed)
+		color = pressColor;
+	else
+		color = hoverColor;
+
+	if (image == nullptr) {
+		FiscionX::Core::Draw::DrawRect(position, size, color);
+	}
+	else {
+		image->draw(position);
+	}
+	if (font != nullptr && !text.empty()) {
+		FiscionX::Vector2 textPos;
+
+		FiscionX::Vector2 textSize;
+
+		for (int i = 0; i < text.length(); i++) {
+			textSize += font->Characters[text[i]].sizePx.x;
+		}
+		textSize.y = font->Characters['A'].sizePx.y;
+		
+		if (textCentered) {
+			textPos.x = position.x + (size.x - textSize.x)/2;
+			textPos.y = position.y + (size.y - textSize.y) * 0.5f - (FiscionX::Core::SCREEN_HEIGHT*0.0069);
+		}
+		else {
+			textPos.x = position.x + 8.0f;
+			textPos.y = position.y + (size.y - textSize.y) * 0.5f;
+		}
+
+		textPos += textOffset;
+		FiscionX::UI::DrawText(font, text.c_str(), textPos, 1.0f, textColor, 0);
+	}
+}
+
 // =================== Camera ===================
 FiscionX::Camera::Camera() {
 	updateVectors();
@@ -844,7 +933,10 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
 
     FiscionX::Core::Camera.ProcessMouse(xoffset, yoffset);
 
-	FiscionX::Input::mousePosition = FiscionX::Vector2(xpos, ypos);
+	float mouseX, mouseY;
+	float cartesianMouseX = (float)xpos;
+	float cartesianMouseY = (float)(FiscionX::Core::SCREEN_HEIGHT - ypos);
+	FiscionX::Input::mousePosition = FiscionX::Vector2(cartesianMouseX, cartesianMouseY);
 	FiscionX::Input::mouseDelta = FiscionX::Vector2(xoffset, yoffset);
 }
 

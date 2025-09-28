@@ -593,6 +593,33 @@ namespace FiscionX {
 			static void unlockCallback(void* opaque, void* const picture, void* const* planes);
 			static void displayCallback(void* opaque, void* picture);
 		};
+
+		struct Button {
+			FiscionX::Vector2 position;
+			FiscionX::Vector2 size;
+			FiscionX::UI::Image* image = nullptr;
+			FiscionX::UI::Font* font = nullptr;
+			std::string text = "";
+			FiscionX::Vector4 textColor = 0;
+			FiscionX::Vector2 textOffset = 0;
+			bool textCentered = false;
+			FiscionX::Vector4 normalColor = 1;
+			FiscionX::Vector4 hoverColor = 1;
+			FiscionX::Vector4 pressColor = 1;
+			bool isHovering = false;
+			bool isPressed = false;
+			bool canBePressed = true;
+			float cooldownToNextPress = 0.2f; // Measured in seconds!
+			float timerToNextPress = 0;
+			void (*PressCallback)() = nullptr;
+
+			Button(FiscionX::Vector2 _position = 0, FiscionX::Vector2 _size = 0, FiscionX::UI::Image* _image = nullptr,
+				FiscionX::UI::Font* _font = nullptr, std::string _text = "", FiscionX::Vector4 _textColor = 0, bool _textCentered = false, 
+				FiscionX::Vector2 _textOffset = 0, FiscionX::Vector4 _normalColor = 1, FiscionX::Vector4 _hoverColor = 1,
+				FiscionX::Vector4 _pressColor = 1, float cooldownBetweenPresses = 0.5f, void (*_PressCallback)() = nullptr);
+			void update(float deltaTime);
+			void draw();
+		};
 	};
 
 	struct Camera {
