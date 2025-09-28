@@ -14,6 +14,7 @@ FiscionX::Model* kratosStaticModel;
 FiscionX::UI::Image* image_didi;
 FiscionX::UI::Font* myfont;
 FiscionX::UI::Video* myVideo;
+//FiscionX::UI::Button* myButton;
 
 FiscionX::Physics::Rigidbody* groundBody;
 FiscionX::Physics::Rigidbody* capsuleBody;
@@ -21,12 +22,18 @@ FiscionX::Physics::Rigidbody* staticCarBody;
 FiscionX::Physics::Rigidbody* carChassiBody;
 FiscionX::Physics::Vehicle* vehicle;
 
+//void MYBUTTONCALLBACK() {
+//    std::cout << "PRESSED BUTTON\n";
+//}
+
 void update() {
     FiscionX::Core::ClockTick();
 
     FiscionX::Core::AudioSystem.listenerPos = { FiscionX::Core::Camera.position.x, FiscionX::Core::Camera.position.y, FiscionX::Core::Camera.position.z };
     FiscionX::Core::AudioSystem.forward = { -FiscionX::Core::Camera.front.x, FiscionX::Core::Camera.front.y , -FiscionX::Core::Camera.front.z };
     FiscionX::Core::AudioSystem.up = { -FiscionX::Core::Camera.up.x, FiscionX::Core::Camera.up.y, -FiscionX::Core::Camera.up.z };
+
+    //myButton->update(FiscionX::Core::deltaTime);
 
     skinnedModel->update(FiscionX::Core::deltaTime);
 
@@ -87,7 +94,7 @@ void update() {
     bool rayCameraCollidingWithCapsuleBody = FiscionX::Physics::Raycast::CheckCollisionWithBody(capsuleBody, FiscionX::Vector3(FiscionX::Core::Camera.position.x, FiscionX::Core::Camera.position.y, FiscionX::Core::Camera.position.z), FiscionX::Vector3(FiscionX::Core::Camera.position.x + FiscionX::Core::Camera.front.x * 5, FiscionX::Core::Camera.position.y + FiscionX::Core::Camera.front.y * 5, FiscionX::Core::Camera.position.z + FiscionX::Core::Camera.front.z * 5));
     const btRigidBody* firstBodyCollidedWithRay = FiscionX::Physics::Raycast::GetFirstBodyCollided(FiscionX::Vector3(FiscionX::Core::Camera.position.x, FiscionX::Core::Camera.position.y, FiscionX::Core::Camera.position.z), FiscionX::Vector3(FiscionX::Core::Camera.position.x + FiscionX::Core::Camera.front.x * 5, FiscionX::Core::Camera.position.y + FiscionX::Core::Camera.front.y * 5, FiscionX::Core::Camera.position.z + FiscionX::Core::Camera.front.z * 5));
 
-    if (FiscionX::Input::GetMouseButtonPressed(FISCIONX_MOUSE_BUTTON_1)) {
+    if (FiscionX::Input::GetMouseButtonPressed(FISCIONX_MOUSE_BUTTON_2)) {
         std::cout << "Is ray colliding with capsule body: " << rayCameraCollidingWithCapsuleBody << std::endl;
     }
 
@@ -119,8 +126,9 @@ void draw() {
     skinnedModel->draw(FiscionX::Core::shaderSkinned, glm::mat4(1.0f), 0, false, view, projection);
 
     image_didi->draw(FiscionX::Vector2(300, 180));
-    FiscionX::UI::DrawText(myfont, "FiscionX - 1.0.0", FiscionX::Vector2(10, 20), 0.3f, FiscionX::Vector4(1, 1, 1, 0.4f), 0);
+    FiscionX::UI::DrawText(myfont, "FiscionX - 1.0.0", FiscionX::Vector2(10, 20), 1.0f, FiscionX::Vector4(1, 1, 1, 0.4f), 0);
     myVideo->draw(FiscionX::Vector2(400, -250));
+    //myButton->draw();
 
     //FiscionX::Physics::DrawDebugWorld(projection, view);
 
@@ -133,7 +141,7 @@ int main() {
     FiscionX::Core::NewWindow(1280, 720, "FiscionX");
     //FiscionX::Core::SetWindowFullscreen(true, 0);
     FiscionX::Core::SetWindowIcon("assets/icons/fiscionx_logo_big_512.png");
-    FiscionX::Core::SetCursorMode(FISCIONX_CURSOR_DISABLED);
+    FiscionX::Core::SetCursorMode(FISCIONX_CURSOR_LOCKED);
     FiscionX::Physics::CreatePhysicsWorld(FiscionX::Vector3(0, -9.81f, 0), 10);
 
     dirLight = new FiscionX::Light();
@@ -167,7 +175,7 @@ int main() {
 
     FiscionX::Core::CreateAllShadowMaps();
 
-    // Rect, circle, arc, line, polygon; Buttons; Sliders; Viewports; Model Cache; Anisotropic Filter and TAA; Particles; Ambient Occlusion; Post Processing; FPS Limit, Spot light rays
+    // Buttons; Sliders; Viewports; Model Cache; Anisotropic Filter and TAA; Particles; Ambient Occlusion; Post Processing; Spot light rays; Terrains
 
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb",
@@ -197,10 +205,11 @@ int main() {
     skinnedModel->playAnim("Armature|Idle_01", true);
 
     image_didi = new FiscionX::UI::Image("assets/images/didi.png", FiscionX::Vector2(150, 112));
-    myfont = new FiscionX::UI::Font("assets/ui/fonts/FOT-RodinHimawari.otf", 48);
+    myfont = new FiscionX::UI::Font("assets/ui/fonts/FOT-RodinHimawari.otf", 14.5f);
     myVideo = new FiscionX::UI::Video("assets/spheres.mp4");
 	myVideo->scale = FiscionX::Vector2(0.5f, 0.5f);
     myVideo->play();
+    //myButton = new FiscionX::UI::Button(FiscionX::Vector2(200, 200), FiscionX::Vector2(300, 169), nullptr, myfont, "Example Button", FiscionX::Vector4(0, 0, 0, 1), true, FiscionX::Vector2(0, 0.0f), FiscionX::Vector4(1.0f, 1.0f, 1.0f, 1.0f), FiscionX::Vector4(0.9f, 0.9f, 0.9f, 1.0f), FiscionX::Vector4(0.5f, 0.5f, 0.5f, 1.0f), 0.2f, MYBUTTONCALLBACK);
 
     exSound = new FiscionX::Sound("assets/audio/music/K.mp3", false, true, FiscionX::Vector3(0.5f, 0.3f, 0.0f), 2.0f, 10.0f, 1.0f);
     exSound->play();
