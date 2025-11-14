@@ -413,7 +413,14 @@ void main() {
     vec3 diffuse = kD * baseColor * diff;
     vec3 specular = kS * pow(NdotH, glossiness * 128.0);
     vec3 lightCol = lightColor[i] * lightIntensity[i];
-    vec3 contrib = (diffuse + specular) * (1.0 - shadow);
+    
+    // ======= SHADOW FADE  =======
+    float shadowFade = clamp(environmentStrength * 0.7, 0.0, 1.0);
+    // sombras muito escuras → clarear proporcional ao ambiente
+    float shadowTerm = mix(1.0 - shadow, 1.0, shadowFade);
+    // =======================================
+
+    vec3 contrib = (diffuse + specular) * shadowTerm;
 
     diffuseSum += attenuation * intensity * contrib * lightCol;
     ambientSum += attenuation * intensity * 0.05 * baseColor * lightCol;

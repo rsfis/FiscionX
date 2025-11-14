@@ -2091,7 +2091,7 @@ void FiscionX::Model::drawSubMesh(
 	glUniform1i(glGetUniformLocation(shader, "hasSpecularF0Map"), mesh.specularF0Tex != 0);
 
 	// ENVIRONMENT SETTINGS
-	glUniform1f(glGetUniformLocation(shader, "environmentStrength"), 1.0f);
+	glUniform1f(glGetUniformLocation(shader, "environmentStrength"), FiscionX::Core::AMBIENT_LIGHT_INTENSITY);
 	glUniform3f(glGetUniformLocation(shader, "environmentSkyColor"), 0.3f, 0.3f, 0.35f);
 	glUniform3f(glGetUniformLocation(shader, "environmentGroundColor"), 0.05f, 0.05f, 0.07f);
 
