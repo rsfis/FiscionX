@@ -136,19 +136,19 @@ void draw() {
 }
 
 int main() {
-    FiscionX::Core::Set3DSettings(8192, 1024, 512, 15.0f, 0.01f, 100.0f);
+    FiscionX::Core::Set3DSettings(8192, 1024, 512, 25.0f, 0.01f, 100.0f);
     FiscionX::Core::SetCacheSettings(true, true);
     FiscionX::Core::NewWindow(1280, 720, "FiscionX");
     //FiscionX::Core::SetWindowFullscreen(true, 0);
     FiscionX::Core::SetWindowIcon("assets/icons/fiscionx_logo_big_512.png");
-    FiscionX::Core::SetCursorMode(FISCIONX_CURSOR_LOCKED);
+    FiscionX::Core::SetCursorMode(FISCIONX_CURSOR_DISABLED);
     FiscionX::Physics::CreatePhysicsWorld(FiscionX::Vector3(0, -9.81f, 0), 10);
 
     dirLight = new FiscionX::Light();
     dirLight->type = FiscionX::LIGHT_DIRECTIONAL;
     dirLight->direction = FiscionX::Vector3(0.0f, -1.0f, -1.0f);
     dirLight->color = FiscionX::Vector3(1.0f, 1.0f, 1.0f);
-    dirLight->intensity = 1.2f;
+    dirLight->intensity = 1.5f;
     dirLight->maxDistance = 0.0f;
     dirLight->cutOff = 0.0f;
     dirLight->outerCutOff = 0.0f;
@@ -175,7 +175,7 @@ int main() {
 
     FiscionX::Core::CreateAllShadowMaps();
 
-    // Buttons; Sliders; Viewports; Model Cache; Anisotropic Filter and TAA; Particles; Ambient Occlusion; Post Processing; Spot light rays; Terrains
+    // Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Post Processing; Spot light rays & Lens flare; Terrains; Water
 
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb",
