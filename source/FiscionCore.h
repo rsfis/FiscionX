@@ -358,7 +358,7 @@ namespace FiscionX {
 
 		bool operator==(const Vector4& o) const { return x == o.x && y == o.y && z == o.z && w == o.w; }
 		bool operator!=(const Vector4& o) const { return !(*this == o); }
-		
+
 		float dot(const Vector4& o) const {
 			return x * o.x + y * o.y + z * o.z + w * o.w;
 		}
@@ -528,7 +528,7 @@ namespace FiscionX {
 		static float angleBetween(Vector3 a, Vector3 b);
 	};
 
-	struct UI{
+	struct UI {
 		struct Image {
 			GLuint texture;
 			GLuint VAO, VBO;
@@ -560,7 +560,7 @@ namespace FiscionX {
 
 		struct Video {
 			static GLuint shaderVideo;
-			
+
 			libvlc_instance_t* vlcInstance = nullptr;
 			libvlc_media_t* media = nullptr;
 			libvlc_media_player_t* mediaPlayer = nullptr;
@@ -614,7 +614,7 @@ namespace FiscionX {
 			void (*PressCallback)() = nullptr;
 
 			Button(FiscionX::Vector2 _position = 0, FiscionX::Vector2 _size = 0, FiscionX::UI::Image* _image = nullptr,
-				FiscionX::UI::Font* _font = nullptr, std::string _text = "", FiscionX::Vector4 _textColor = 0, bool _textCentered = false, 
+				FiscionX::UI::Font* _font = nullptr, std::string _text = "", FiscionX::Vector4 _textColor = 0, bool _textCentered = false,
 				FiscionX::Vector2 _textOffset = 0, FiscionX::Vector4 _normalColor = 1, FiscionX::Vector4 _hoverColor = 1,
 				FiscionX::Vector4 _pressColor = 1, float cooldownBetweenPresses = 0.5f, void (*_PressCallback)() = nullptr);
 			void update(float deltaTime);
@@ -769,7 +769,49 @@ namespace FiscionX {
 			void setDamping(float damping);
 			void lockAxis(Vector3 axis);
 			void setBouncingFactor(float factor);
+			void setCenterOfMass(const btVector3& newCOMOffset);
 		};
+
+		enum class JointType {
+			POINT2POINT,
+			HINGE,
+			CONETWIST,
+			DOF6,
+			DOF6_SPRING,
+			FIXED
+		};
+
+		struct Joint {
+			JointType type;
+
+			btRigidBody* bodyA = nullptr;
+			btRigidBody* bodyB = nullptr;
+
+			btTransform frameA = btTransform::getIdentity();
+			btTransform frameB = btTransform::getIdentity();
+
+			bool collideConnected = false;
+
+			btVector3 linearLower = btVector3(0, 0, 0);
+			btVector3 linearUpper = btVector3(0, 0, 0);
+			btVector3 angularLower = btVector3(0, 0, 0);
+			btVector3 angularUpper = btVector3(0, 0, 0);
+
+			bool useSpring[6] = { false,false,false,false,false,false };
+			btScalar stiffness[6] = { 0,0,0,0,0,0 };
+			btScalar damping[6] = { 0,0,0,0,0,0 };
+
+			btScalar swing1 = SIMD_PI;
+			btScalar swing2 = SIMD_PI;
+			btScalar twist = SIMD_PI;
+
+			btScalar hingeLower = 0;
+			btScalar hingeUpper = 0;
+
+			btTypedConstraint* constraint = nullptr;
+		};
+
+		static btTypedConstraint* CreateJoint(FiscionX::Physics::Joint& desc);
 
 		struct Vehicle {
 			btRaycastVehicle::btVehicleTuning* tuning;
@@ -828,6 +870,8 @@ namespace FiscionX {
 		GLuint transmissionTex = 0;
 		GLuint glossinessTex = 0;
 		GLuint specularF0Tex = 0;
+		GLuint metallicTex = 0;
+		bool useMetalRoughness = false;
 
 		std::string alphaMode = "OPAQUE";
 		std::string originalAlphaMode = "OPAQUE";
@@ -984,7 +1028,7 @@ namespace FiscionX {
 
 		static void NewWindow(int width, int height, const char* window_label);
 		static void Set3DSettings(const int _DIRECTIONAL_LIGHT_SHADOW_SIZE, const int _SPOT_LIGHT_SHADOW_SIZE,
-			const int _POINT_LIGHT_SHADOW_SIZE, const float _SHADOW_VIEW_RADIUS, const float _NEAR_PLANE, 
+			const int _POINT_LIGHT_SHADOW_SIZE, const float _SHADOW_VIEW_RADIUS, const float _NEAR_PLANE,
 			const float _FAR_PLANE);
 		static void ClockTick();
 		static void SetWindowSize(int width, int height);

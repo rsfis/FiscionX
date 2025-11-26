@@ -243,6 +243,8 @@ uniform sampler2D glossinessTex;
 uniform sampler2D specularF0Tex;
 uniform int hasGlossinessMap;
 uniform int hasSpecularF0Map;
+uniform int useMetalRoughness;
+uniform sampler2D metallicTex;
 uniform sampler2D shadowMaps[15];
 uniform samplerCube shadowCubeMaps[15];
 uniform sampler2D transmissionTex;
