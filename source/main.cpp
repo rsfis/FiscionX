@@ -47,6 +47,8 @@ void update() {
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_I)) {
         vehicle->applyEngineForce(800, 0);
         vehicle->applyEngineForce(800, 1);
+
+        dirLight->direction.y += 0.01f;
     }
     else {
         vehicle->setBrake(2, 0);
@@ -59,14 +61,17 @@ void update() {
         vehicle->setBrake(10, 1);
         vehicle->applyEngineForce(-1000, 0);
         vehicle->applyEngineForce(-1000, 1);
+        dirLight->direction.y -= 0.01f;
     }
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_J)) {
         vehicle->setSteeringValue(0.5f, 0);
         vehicle->setSteeringValue(0.5f, 1);
+        dirLight->direction.x -= 0.01f;
     }
     else if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_L)) {
         vehicle->setSteeringValue(-0.4f, 0);
         vehicle->setSteeringValue(-0.4f, 1);
+        dirLight->direction.x += 0.01f;
     }
     else {
         vehicle->setSteeringValue(0, 0);
@@ -78,7 +83,7 @@ void update() {
 
     // CAPSULE & KRATOS
     capsuleBody->activate();
-    kratosStaticModel->syncTransformWithBody(capsuleBody, FiscionX::Vector3(0, -1.25f, 0), FiscionX::Vector3(0, 0, 0));
+    //kratosStaticModel->syncTransformWithBody(capsuleBody, FiscionX::Vector3(0, -1.25f, 0), FiscionX::Vector3(0, 0, 0));
 
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_E)) {
         std::cout << "Is capsule colliding with ground: " << FiscionX::Physics::CheckCollisionBetween(groundBody, capsuleBody) << std::endl;
@@ -130,7 +135,7 @@ void draw() {
     myVideo->draw(FiscionX::Vector2(400, -250));
     //myButton->draw();
 
-    //FiscionX::Physics::DrawDebugWorld(projection, view);
+    FiscionX::Physics::DrawDebugWorld(projection, view);
 
     FiscionX::Core::Draw::SwapBuffers();
 }
@@ -148,7 +153,7 @@ int main() {
     dirLight->type = FiscionX::LIGHT_DIRECTIONAL;
     dirLight->direction = FiscionX::Vector3(0.0f, -1.0f, -1.0f);
     dirLight->color = FiscionX::Vector3(1.0f, 1.0f, 1.0f);
-    dirLight->intensity = 1.5f;
+    dirLight->intensity = 1.3f;
     dirLight->maxDistance = 0.0f;
     dirLight->cutOff = 0.0f;
     dirLight->outerCutOff = 0.0f;
@@ -175,7 +180,7 @@ int main() {
 
     FiscionX::Core::CreateAllShadowMaps();
 
-    // Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Post Processing; Spot light rays & Lens flare; Terrains; Water
+    // Sliders; Viewports; UI Masks; Model Cache; Particles; Reflections; Joints; Fog; Ambient Occlusion; Post Processing; Spot light rays & Lens flare; Terrains; Water
 
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb",
@@ -190,9 +195,9 @@ int main() {
         FiscionX::Vector3(0.1f, 0.1f, 0.1f)
     );
     boxModel = new FiscionX::Model(
-        "assets/models/wall.glb",
+        "assets/models/metal_water_tank.glb",
         FiscionX::Vector3(0, 0, 4.2f),
-        FiscionX::Vector3(0),
+        FiscionX::Vector3(2, 0, 0),
         FiscionX::Vector3(0.5f, 0.5f, 0.5f)
     );
     skinnedModel = new FiscionX::Model(
@@ -223,7 +228,7 @@ int main() {
     FiscionX::Physics::DynamicWorld->addRigidBody(groundBody->body);
 
     // === Capsule ===
-    FiscionX::Physics::Shape capsuleShape = FiscionX::Physics::CreateCapsuleShape(FiscionX::Vector3(0, 8, 0), FiscionX::Vector3(0, 0, 0), 0.5f, 1.5f, 1.0f);
+    FiscionX::Physics::Shape capsuleShape = FiscionX::Physics::CreateCapsuleShape(FiscionX::Vector3(-11, 4, 0), FiscionX::Vector3(0, 0, 0), 0.5f, 1.5f, 1.0f);
     capsuleBody = new FiscionX::Physics::Rigidbody(capsuleShape);
     capsuleBody->setFriction(0.5f);
     capsuleBody->setRollingFriction(0.3f);
@@ -244,7 +249,7 @@ int main() {
         FiscionX::Vector3(-10, 4, 0),
         FiscionX::Vector3(0, 0, 0),
         FiscionX::Vector3(0.8f, 0.5f, 1.7f),
-        880.0f
+        900.0f
     );
     carChassiBody = new FiscionX::Physics::Rigidbody(carShape);
     FiscionX::Physics::DynamicWorld->addRigidBody(carChassiBody->body);
@@ -254,21 +259,20 @@ int main() {
     FiscionX::Vector3 wheelDirectionCS0(0, -1, 0);
     FiscionX::Vector3 wheelAxleCS(-1, 0, 0);
 
-    float suspensionRestLength = 0.6;
-    float wheelRadius = 0.5;
+    float suspensionRestLength = 0.4;
+    float wheelRadius = 0.3;
 
-    vehicle->addWheel(FiscionX::Vector3(1.0, 0.1f, 1.5), wheelDirectionCS0, wheelAxleCS,
+    vehicle->addWheel(FiscionX::Vector3(1.0, 0.00f, 1.5), wheelDirectionCS0, wheelAxleCS,
         suspensionRestLength, wheelRadius, true); // front left
 
-    vehicle->addWheel(FiscionX::Vector3(-1.0, 0.1f, 1.5), wheelDirectionCS0, wheelAxleCS,
+    vehicle->addWheel(FiscionX::Vector3(-1.0, 0.00f, 1.5), wheelDirectionCS0, wheelAxleCS,
         suspensionRestLength, wheelRadius, true); // frontt right
 
-    vehicle->addWheel(FiscionX::Vector3(1.0, 0.1f, -1.5), wheelDirectionCS0, wheelAxleCS,
+    vehicle->addWheel(FiscionX::Vector3(1.0, 0.00f, -1.5), wheelDirectionCS0, wheelAxleCS,
         suspensionRestLength, wheelRadius, false); // back left
 
-    vehicle->addWheel(FiscionX::Vector3(-1.0, 0.1f, -1.5), wheelDirectionCS0, wheelAxleCS,
+    vehicle->addWheel(FiscionX::Vector3(-1.0, 0.00f, -1.5), wheelDirectionCS0, wheelAxleCS,
         suspensionRestLength, wheelRadius, false); // back right
-
 
     FiscionX::Physics::DynamicWorld->addVehicle(vehicle->vehicle);
 
@@ -286,6 +290,24 @@ int main() {
         wheel.info->m_rollInfluence = 0.1f;                    // great grip on the ground
         wheel.info->m_bIsFrontWheel = (i < 2);                 // front
     }
+
+    // JOINTS
+    /*FiscionX::Physics::Joint j;
+    j.type = FiscionX::Physics::JointType::CONETWIST;
+    j.bodyA = carChassiBody->body;
+    j.bodyB = capsuleBody->body;
+
+    j.frameA.setOrigin(btVector3(0.0, 0.5, 0));
+    j.frameB.setOrigin(btVector3(0, -0.75, 0));
+
+    j.collideConnected = false;
+
+    j.swing1 = SIMD_PI * 0.7f;
+    j.swing2 = SIMD_PI * 0.7f;
+    j.twist = SIMD_PI * 0.5f;
+
+    FiscionX::Physics::CreateJoint(j);
+    */
 
     while (!glfwWindowShouldClose(FiscionX::Core::Window)) {
         update();

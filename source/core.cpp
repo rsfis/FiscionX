@@ -5,7 +5,7 @@
 // last error number: 17
 
 // GLOBALS
-GLFWwindow* FiscionX::Core::Window;
+GLFWwindow * FiscionX::Core::Window;
 int FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT;
 
 GLuint FiscionX::Core::depthShaderStatic;
@@ -71,7 +71,7 @@ GLuint LoadShader(const char* vertexSrc, const char* fragmentSrc);
 
 // ====================== Math ========================
 float FiscionX::Math::getDistance3D(FiscionX::Vector3 pos1, FiscionX::Vector3 pos2) {
-    return std::sqrt(std::pow(pos2.x - pos1.x, 2) + std::pow(pos2.y - pos1.y, 2) + std::pow(pos2.z - pos1.z, 2));
+	return std::sqrt(std::pow(pos2.x - pos1.x, 2) + std::pow(pos2.y - pos1.y, 2) + std::pow(pos2.z - pos1.z, 2));
 }
 
 float FiscionX::Math::clamp(float value, float min, float max) {
@@ -680,13 +680,13 @@ void FiscionX::UI::Video::update() {
 	glBindTexture(GL_TEXTURE_2D, texture);
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
-	#ifdef VIDEO_RGBA_FIX
-		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height,
-			GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-	#else
-		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height,
-			GL_BGRA, GL_UNSIGNED_BYTE, pixels.data());
-	#endif
+#ifdef VIDEO_RGBA_FIX
+	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height,
+		GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+#else
+	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height,
+		GL_BGRA, GL_UNSIGNED_BYTE, pixels.data());
+#endif
 
 	hasNewFrame = false;
 	pixelMutex.unlock();
@@ -790,7 +790,7 @@ void FiscionX::UI::Video::draw(FiscionX::Vector2 position) {
 }
 
 // BUTTONS
-FiscionX::UI::Button::Button(FiscionX::Vector2 _position, FiscionX::Vector2 _size, FiscionX::UI::Image* _image, FiscionX::UI::Font* _font, 
+FiscionX::UI::Button::Button(FiscionX::Vector2 _position, FiscionX::Vector2 _size, FiscionX::UI::Image* _image, FiscionX::UI::Font* _font,
 	std::string _text, FiscionX::Vector4 _textColor, bool _textCentered, FiscionX::Vector2 _textOffset, FiscionX::Vector4 _normalColor, FiscionX::Vector4 _hoverColor, FiscionX::Vector4 _pressColor,
 	float cooldownBetweenPresses, void (*_PressCallback)()) {
 
@@ -822,7 +822,7 @@ void FiscionX::UI::Button::update(float deltaTime) {
 
 	if (!canBePressed) {
 		if (timerToNextPress < cooldownToNextPress) {
-			timerToNextPress += 1*deltaTime;
+			timerToNextPress += 1 * deltaTime;
 		}
 		if (timerToNextPress >= cooldownToNextPress) {
 			timerToNextPress = 0;
@@ -863,10 +863,10 @@ void FiscionX::UI::Button::draw() {
 			textSize += font->Characters[text[i]].sizePx.x;
 		}
 		textSize.y = font->Characters['A'].sizePx.y;
-		
+
 		if (textCentered) {
-			textPos.x = position.x + (size.x - textSize.x)/2;
-			textPos.y = position.y + (size.y - textSize.y) * 0.5f - (FiscionX::Core::SCREEN_HEIGHT*0.0069);
+			textPos.x = position.x + (size.x - textSize.x) / 2;
+			textPos.y = position.y + (size.y - textSize.y) * 0.5f - (FiscionX::Core::SCREEN_HEIGHT * 0.0069);
 		}
 		else {
 			textPos.x = position.x + 8.0f;
@@ -921,17 +921,17 @@ void FiscionX::Camera::updateVectors() {
 
 // =================== Mouse Callback ===================
 void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
-    if (firstMouse) {
-        lastX = xpos;
-        lastY = ypos;
-        firstMouse = false;
-    }
-    float xoffset = xpos - lastX;
-    float yoffset = ypos - lastY;
-    lastX = xpos;
-    lastY = ypos;
+	if (firstMouse) {
+		lastX = xpos;
+		lastY = ypos;
+		firstMouse = false;
+	}
+	float xoffset = xpos - lastX;
+	float yoffset = ypos - lastY;
+	lastX = xpos;
+	lastY = ypos;
 
-    FiscionX::Core::Camera.ProcessMouse(xoffset, yoffset);
+	FiscionX::Core::Camera.ProcessMouse(xoffset, yoffset);
 
 	float mouseX, mouseY;
 	float cartesianMouseX = (float)xpos;
@@ -941,51 +941,51 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos) {
 }
 
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
-    FiscionX::Input::scrollOffset = FiscionX::Vector2(xoffset, yoffset);
+	FiscionX::Input::scrollOffset = FiscionX::Vector2(xoffset, yoffset);
 }
 
 // ==================== LIGHTS ======================
 FiscionX::Light::Light() {
-    FiscionX::Core::AllLights.push_back(this);
+	FiscionX::Core::AllLights.push_back(this);
 }
 
 // ==================== MODELS ======================
 void FiscionX::generateTangents(
-    std::vector<VertexData>& vertices,
-    const std::vector<uint32_t>& indices
+	std::vector<VertexData>& vertices,
+	const std::vector<uint32_t>& indices
 ) {
-    for (size_t i = 0; i < indices.size(); i += 3) {
-        VertexData& v0 = vertices[indices[i + 0]];
-        VertexData& v1 = vertices[indices[i + 1]];
-        VertexData& v2 = vertices[indices[i + 2]];
+	for (size_t i = 0; i < indices.size(); i += 3) {
+		VertexData& v0 = vertices[indices[i + 0]];
+		VertexData& v1 = vertices[indices[i + 1]];
+		VertexData& v2 = vertices[indices[i + 2]];
 
-        glm::vec3 edge1 = v1.position - v0.position;
-        glm::vec3 edge2 = v2.position - v0.position;
+		glm::vec3 edge1 = v1.position - v0.position;
+		glm::vec3 edge2 = v2.position - v0.position;
 
-        glm::vec2 deltaUV1 = v1.uv - v0.uv;
-        glm::vec2 deltaUV2 = v2.uv - v0.uv;
+		glm::vec2 deltaUV1 = v1.uv - v0.uv;
+		glm::vec2 deltaUV2 = v2.uv - v0.uv;
 
-        float f = 1.0f / (deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y);
+		float f = 1.0f / (deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y);
 
-        glm::vec3 tangent = f * (deltaUV2.y * edge1 - deltaUV1.y * edge2);
-        glm::vec3 bitangent = f * (-deltaUV2.x * edge1 + deltaUV1.x * edge2);
+		glm::vec3 tangent = f * (deltaUV2.y * edge1 - deltaUV1.y * edge2);
+		glm::vec3 bitangent = f * (-deltaUV2.x * edge1 + deltaUV1.x * edge2);
 
-        v0.tangent += tangent;
-        v1.tangent += tangent;
-        v2.tangent += tangent;
+		v0.tangent += tangent;
+		v1.tangent += tangent;
+		v2.tangent += tangent;
 
-        v0.bitangent += bitangent;
-        v1.bitangent += bitangent;
-        v2.bitangent += bitangent;
-    }
+		v0.bitangent += bitangent;
+		v1.bitangent += bitangent;
+		v2.bitangent += bitangent;
+	}
 
-    for (auto& v : vertices) {
-        // Orthogonalizes using Gram-Schmidt function
-        v.tangent = glm::normalize(v.tangent - v.normal * glm::dot(v.normal, v.tangent));
-        // Determines handedness (bitangent cross)
-        float handedness = (glm::dot(glm::cross(v.normal, v.tangent), v.bitangent) < 0.0f) ? -1.0f : 1.0f;
-        v.tangent = glm::vec4(v.tangent, handedness);
-    }
+	for (auto& v : vertices) {
+		// Orthogonalizes using Gram-Schmidt function
+		v.tangent = glm::normalize(v.tangent - v.normal * glm::dot(v.normal, v.tangent));
+		// Determines handedness (bitangent cross)
+		float handedness = (glm::dot(glm::cross(v.normal, v.tangent), v.bitangent) < 0.0f) ? -1.0f : 1.0f;
+		v.tangent = glm::vec4(v.tangent, handedness);
+	}
 }
 
 const std::vector<glm::mat4>& FiscionX::Model::getBoneTransforms() const {
@@ -1939,6 +1939,35 @@ void FiscionX::Model::init(const std::string& path) {
 								}
 							}
 						}
+
+						if (mat.pbrMetallicRoughness.metallicRoughnessTexture.index >= 0) {
+							sub.useMetalRoughness = true;
+
+							int texIndex = mat.pbrMetallicRoughness.metallicRoughnessTexture.index;
+							const tinygltf::Texture& tex = gltfModel.textures[texIndex];
+							int imgIndex = tex.source;
+
+							if (imgIndex >= 0 && imgIndex < (int)gltfModel.images.size()) {
+								const auto& img = gltfModel.images[imgIndex];
+
+								glGenTextures(1, &sub.metallicTex);
+								glBindTexture(GL_TEXTURE_2D, sub.metallicTex);
+
+								// Metal/Roughness e AO (canal R) não são sRGB
+								GLenum format = (img.component == 4) ? GL_RGBA : GL_RGB;
+								GLenum internalFormat = (img.component == 4) ? GL_RGBA : GL_RGB;
+
+								glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, img.width, img.height, 0, format, GL_UNSIGNED_BYTE, img.image.data());
+								glGenerateMipmap(GL_TEXTURE_2D);
+
+								// Configurações de textura
+								glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+								glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+								glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+								glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+								GLfloat maxAniso = 0.0f; glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
+							}
+						}
 					}
 
 					meshes.push_back(sub);
@@ -1948,7 +1977,7 @@ void FiscionX::Model::init(const std::string& path) {
 			for (int child : node.children) {
 				processNode(child, globalTransform);
 			}
-								};
+		};
 
 	for (int root : gltfModel.scenes.at(gltfModel.defaultScene).nodes) {
 		processNode(root, glm::mat4(1.0f));
@@ -2089,6 +2118,12 @@ void FiscionX::Model::drawSubMesh(
 	glBindTexture(GL_TEXTURE_2D, mesh.specularF0Tex);
 	glUniform1i(glGetUniformLocation(shader, "specularF0Tex"), 4);
 	glUniform1i(glGetUniformLocation(shader, "hasSpecularF0Map"), mesh.specularF0Tex != 0);
+
+	// Metallic/Roughness texture
+	glActiveTexture(GL_TEXTURE5);
+	glBindTexture(GL_TEXTURE_2D, mesh.metallicTex);
+	glUniform1i(glGetUniformLocation(shader, "metallicTex"), 5);
+	glUniform1i(glGetUniformLocation(shader, "useMetalRoughness"), mesh.useMetalRoughness);
 
 	// ENVIRONMENT SETTINGS
 	glUniform1f(glGetUniformLocation(shader, "environmentStrength"), FiscionX::Core::AMBIENT_LIGHT_INTENSITY);
@@ -2250,29 +2285,29 @@ void FiscionX::Model::syncTransformWithBody(FiscionX::Physics::Rigidbody* body, 
 
 // ================= INPUT ===================
 bool FiscionX::Input::GetKeyPressed(int key) {
-    if (glfwGetKey(FiscionX::Core::Window, key) == GLFW_PRESS) {
-        return true;
-    }
-    return false;
+	if (glfwGetKey(FiscionX::Core::Window, key) == GLFW_PRESS) {
+		return true;
+	}
+	return false;
 }
 
 bool FiscionX::Input::GetKeyReleased(int key) {
-    if (glfwGetKey(FiscionX::Core::Window, key) == GLFW_RELEASE) {
-        return true;
-    }
-    return false;
+	if (glfwGetKey(FiscionX::Core::Window, key) == GLFW_RELEASE) {
+		return true;
+	}
+	return false;
 }
 
 FiscionX::Vector2 FiscionX::Input::GetMousePosition() {
-    return mousePosition;
+	return mousePosition;
 }
 
 FiscionX::Vector2 FiscionX::Input::GetMouseDelta() {
-    return mouseDelta;
+	return mouseDelta;
 }
 
 FiscionX::Vector2 FiscionX::Input::GetScrollOffset() {
-    return scrollOffset;
+	return scrollOffset;
 }
 
 bool FiscionX::Input::GetMouseButtonPressed(int button) {
@@ -2281,494 +2316,610 @@ bool FiscionX::Input::GetMouseButtonPressed(int button) {
 
 // ================ Physics ===================
 void FiscionX::Physics::CreatePhysicsWorld(FiscionX::Vector3 gravity, int maxIterations) {
-    broadphase = new btDbvtBroadphase();
-    collisionConfig = new btDefaultCollisionConfiguration();
-    dispatcher = new btCollisionDispatcher(collisionConfig);
-    solver = new btSequentialImpulseConstraintSolver();
+	broadphase = new btDbvtBroadphase();
+	collisionConfig = new btDefaultCollisionConfiguration();
+	dispatcher = new btCollisionDispatcher(collisionConfig);
+	solver = new btSequentialImpulseConstraintSolver();
 
-    DynamicWorld = new btDiscreteDynamicsWorld(dispatcher, broadphase, solver, collisionConfig);
-    DynamicWorld->setGravity(btVector3(gravity.x, gravity.y, gravity.z));
-    DynamicWorld->getSolverInfo().m_numIterations = maxIterations;
+	DynamicWorld = new btDiscreteDynamicsWorld(dispatcher, broadphase, solver, collisionConfig);
+	DynamicWorld->setGravity(btVector3(gravity.x, gravity.y, gravity.z));
+	DynamicWorld->getSolverInfo().m_numIterations = maxIterations;
 
-    debugShader = LoadShader(vertexDebug, fragmentDebug);
-    debugDrawer = new GLDebugDrawer();
-    debugDrawer->setDebugMode(
-        btIDebugDraw::DBG_DrawWireframe 
-    );
-    FiscionX::Physics::DynamicWorld->setDebugDrawer(debugDrawer);
+	debugShader = LoadShader(vertexDebug, fragmentDebug);
+	debugDrawer = new GLDebugDrawer();
+	debugDrawer->setDebugMode(
+		btIDebugDraw::DBG_DrawWireframe
+	);
+	FiscionX::Physics::DynamicWorld->setDebugDrawer(debugDrawer);
 }
 
 void FiscionX::Physics::GLDebugDrawer::drawLine(const btVector3& from, const btVector3& to, const btVector3& color) {
-    debugLines.push_back(from.getX());
-    debugLines.push_back(from.getY());
-    debugLines.push_back(from.getZ());
-    debugLines.push_back(color.getX());
-    debugLines.push_back(color.getY());
-    debugLines.push_back(color.getZ());
+	debugLines.push_back(from.getX());
+	debugLines.push_back(from.getY());
+	debugLines.push_back(from.getZ());
+	debugLines.push_back(color.getX());
+	debugLines.push_back(color.getY());
+	debugLines.push_back(color.getZ());
 
-    debugLines.push_back(to.getX());
-    debugLines.push_back(to.getY());
-    debugLines.push_back(to.getZ());
-    debugLines.push_back(color.getX());
-    debugLines.push_back(color.getY());
-    debugLines.push_back(color.getZ());
+	debugLines.push_back(to.getX());
+	debugLines.push_back(to.getY());
+	debugLines.push_back(to.getZ());
+	debugLines.push_back(color.getX());
+	debugLines.push_back(color.getY());
+	debugLines.push_back(color.getZ());
 }
 
 void FiscionX::Physics::GLDebugDrawer::setDebugMode(int debugMode) {
-    m_debugMode = debugMode;
+	m_debugMode = debugMode;
 }
 
 int FiscionX::Physics::GLDebugDrawer::getDebugMode() const {
-    return m_debugMode;
+	return m_debugMode;
 }
 
 void FiscionX::Physics::GLDebugDrawer::drawContactPoint(const btVector3&, const btVector3&, btScalar, int, const btVector3&) {}
 void FiscionX::Physics::GLDebugDrawer::reportErrorWarning(const char* warningString) {
-    std::cerr << "Bullet Warning: " << warningString << std::endl;
+	std::cerr << "Bullet Warning: " << warningString << std::endl;
 }
 void FiscionX::Physics::GLDebugDrawer::draw3dText(const btVector3&, const char*) {}
 
 void FiscionX::Physics::DrawDebugWorld(glm::mat4 projection, glm::mat4 view) {
-    glDisable(GL_DEPTH_TEST);
-    glMatrixMode(GL_PROJECTION);
-    glLoadMatrixf(glm::value_ptr(projection));
-    glMatrixMode(GL_MODELVIEW);
-    glLoadMatrixf(glm::value_ptr(view));
-    FiscionX::Physics::DynamicWorld->debugDrawWorld();
-    glUseProgram(debugShader);
-    if (!debugLines.empty()) {
-        if (debugVAO == 0) {
-            glGenVertexArrays(1, &debugVAO);
-            glGenBuffers(1, &debugVBO);
-        }
+	glDisable(GL_DEPTH_TEST);
+	glMatrixMode(GL_PROJECTION);
+	glLoadMatrixf(glm::value_ptr(projection));
+	glMatrixMode(GL_MODELVIEW);
+	glLoadMatrixf(glm::value_ptr(view));
+	FiscionX::Physics::DynamicWorld->debugDrawWorld();
+	glUseProgram(debugShader);
+	if (!debugLines.empty()) {
+		if (debugVAO == 0) {
+			glGenVertexArrays(1, &debugVAO);
+			glGenBuffers(1, &debugVBO);
+		}
 
-        glBindVertexArray(debugVAO);
-        glBindBuffer(GL_ARRAY_BUFFER, debugVBO);
-        glBufferData(GL_ARRAY_BUFFER, debugLines.size() * sizeof(float), debugLines.data(), GL_DYNAMIC_DRAW);
+		glBindVertexArray(debugVAO);
+		glBindBuffer(GL_ARRAY_BUFFER, debugVBO);
+		glBufferData(GL_ARRAY_BUFFER, debugLines.size() * sizeof(float), debugLines.data(), GL_DYNAMIC_DRAW);
 
-        glEnableVertexAttribArray(0); // position
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(1); // color
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+		glEnableVertexAttribArray(0); // position
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
+		glEnableVertexAttribArray(1); // color
+		glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
 
-        glUseProgram(debugShader);
-        glm::mat4 vp = projection * view;
-        glUniformMatrix4fv(glGetUniformLocation(debugShader, "viewProj"), 1, GL_FALSE, glm::value_ptr(vp));
+		glUseProgram(debugShader);
+		glm::mat4 vp = projection * view;
+		glUniformMatrix4fv(glGetUniformLocation(debugShader, "viewProj"), 1, GL_FALSE, glm::value_ptr(vp));
 
-        glDrawArrays(GL_LINES, 0, debugLines.size() / 6);
+		glDrawArrays(GL_LINES, 0, debugLines.size() / 6);
 
-        glBindVertexArray(0);
-        glUseProgram(0);
-        debugLines.clear();
-    }
-    glEnable(GL_DEPTH_TEST);
+		glBindVertexArray(0);
+		glUseProgram(0);
+		debugLines.clear();
+	}
+	glEnable(GL_DEPTH_TEST);
 }
 
 FiscionX::Physics::Rigidbody::Rigidbody(FiscionX::Physics::Shape _shape) : shape(_shape) {
-    body = new btRigidBody(shape.info);
-    body->setCcdMotionThreshold(0.001f);
-    body->setCcdSweptSphereRadius(0.3f);
+	body = new btRigidBody(shape.info);
+	body->setCcdMotionThreshold(0.001f);
+	body->setCcdSweptSphereRadius(0.3f);
 }
 
 void FiscionX::Physics::Rigidbody::activate() {
-    if (body) {
-        body->activate();
-    }
+	if (body) {
+		body->activate();
+	}
 }
 
 void FiscionX::Physics::Rigidbody::setMass(float mass, FiscionX::Vector3 inertia) {
-    if (body) {
-        btVector3 _inertia(inertia.x, inertia.y, inertia.z);
-        if (mass != 0.0f)
-            shape.shape->calculateLocalInertia(mass, _inertia);
-        body->setMassProps(mass, _inertia);
-    }
+	if (body) {
+		btVector3 _inertia(inertia.x, inertia.y, inertia.z);
+		if (mass != 0.0f)
+			shape.shape->calculateLocalInertia(mass, _inertia);
+		body->setMassProps(mass, _inertia);
+	}
 }
 
 void FiscionX::Physics::Rigidbody::setFriction(float friction) {
-    if (body) {
-        body->setFriction(friction);
-    }
+	if (body) {
+		body->setFriction(friction);
+	}
 }
 
 void FiscionX::Physics::Rigidbody::setRollingFriction(float friction) {
-    if (body) {
-        body->setRollingFriction(friction / 5);
-    }
+	if (body) {
+		body->setRollingFriction(friction / 5);
+	}
 }
 
 void FiscionX::Physics::Rigidbody::setDamping(float damping) {
-    body->setDamping(damping, damping);
+	body->setDamping(damping, damping);
 }
 
 void FiscionX::Physics::Rigidbody::applyForce(Vector3 force, Vector3 relPos) {
-    if (body) {
-        body->applyForce(btVector3(force.x, force.y, force.z), btVector3(relPos.x, relPos.y, relPos.z));
-    }
+	if (body) {
+		body->applyForce(btVector3(force.x, force.y, force.z), btVector3(relPos.x, relPos.y, relPos.z));
+	}
 }
 
 void FiscionX::Physics::Rigidbody::applyImpulse(Vector3 impulse, Vector3 relPos) {
-    if (body) {
+	if (body) {
 		body->applyImpulse(btVector3(impulse.x, impulse.y, impulse.z), btVector3(relPos.x, relPos.y, relPos.z));
-    }
+	}
 }
 
 void FiscionX::Physics::Rigidbody::applyTorque(Vector3 torque) {
-    if (body) {
+	if (body) {
 		body->applyTorque(btVector3(torque.x, torque.y, torque.z));
-    }
+	}
 }
 
 void FiscionX::Physics::Rigidbody::applyCentralForce(FiscionX::Vector3 force) {
-    if (body) {
+	if (body) {
 		body->applyCentralForce(btVector3(force.x, force.y, force.z));
-    }
+	}
 }
 
 void FiscionX::Physics::Rigidbody::applyCentralImpulse(FiscionX::Vector3 impulse) {
-    if (body) {
-        body->applyCentralImpulse(btVector3(impulse.x, impulse.y, impulse.z));
-    }
+	if (body) {
+		body->applyCentralImpulse(btVector3(impulse.x, impulse.y, impulse.z));
+	}
 }
 
 void FiscionX::Physics::Rigidbody::applyTorqueImpulse(FiscionX::Vector3 torqueImpulse) {
-    if (body) {
+	if (body) {
 		body->applyTorqueImpulse(btVector3(torqueImpulse.x, torqueImpulse.y, torqueImpulse.z));
-    }
+	}
 }
 
 void FiscionX::Physics::Rigidbody::setLinearVelocity(FiscionX::Vector3 velocity) {
-    if (body) {
+	if (body) {
 		body->setLinearVelocity(btVector3(velocity.x, velocity.y, velocity.z));
-    }
+	}
 }
 
 void FiscionX::Physics::Rigidbody::setAngularVelocity(FiscionX::Vector3 velocity) {
-    if (body) {
+	if (body) {
 		body->setAngularVelocity(btVector3(velocity.x, velocity.y, velocity.z));
-    }
+	}
 }
 
 void FiscionX::Physics::Rigidbody::setTransform(FiscionX::Vector3 position, FiscionX::Vector3 rotation) {
-    if (body) {
-        btTransform transform;
-        transform.setOrigin(btVector3(position.x, position.y, position.z));
+	if (body) {
+		btTransform transform;
+		transform.setOrigin(btVector3(position.x, position.y, position.z));
 
-        float xRad = rotation.x;
-        float yRad = rotation.y;
-        float zRad = rotation.z;
+		float xRad = rotation.x;
+		float yRad = rotation.y;
+		float zRad = rotation.z;
 
-        btQuaternion rot;
-        rot.setEulerZYX(zRad, yRad, xRad);
-        transform.setRotation(rot);
+		btQuaternion rot;
+		rot.setEulerZYX(zRad, yRad, xRad);
+		transform.setRotation(rot);
 
-        body->setWorldTransform(transform);
-    }
+		body->setWorldTransform(transform);
+	}
 }
 
 void FiscionX::Physics::Rigidbody::setLinearFactor(FiscionX::Vector3 factor) {
-    if (body) {
+	if (body) {
 		body->setLinearFactor(btVector3(factor.x, factor.y, factor.z));
-    }
+	}
 }
 
 void FiscionX::Physics::Rigidbody::setAngularFactor(FiscionX::Vector3 factor) {
-    if (body) {
+	if (body) {
 		body->setAngularFactor(btVector3(factor.x, factor.y, factor.z));
-    }
+	}
 }
 
 void FiscionX::Physics::Rigidbody::setCollisionShape(FiscionX::Physics::Shape* newShape) {
-    if (body) {
+	if (body) {
 		body->setCollisionShape(newShape->shape);
-    }
+	}
 }
 
 void FiscionX::Physics::Rigidbody::lockAxis(FiscionX::Vector3 axis) {
-    if (body) {
+	if (body) {
 		body->setAngularFactor(btVector3(axis.x, axis.y, axis.z));
-    }
+	}
 }
 
 void FiscionX::Physics::Rigidbody::setBouncingFactor(float factor) {
-    if (body) {
-        body->setRestitution(factor);
-    }
+	if (body) {
+		body->setRestitution(factor);
+	}
+}
+
+void FiscionX::Physics::Rigidbody::setCenterOfMass(const btVector3& newCOMOffset)
+{
+	if (!body) return;
+
+	btTransform com;
+	com.setIdentity();
+	com.setOrigin(newCOMOffset);
+
+	body->setCenterOfMassTransform(body->getWorldTransform() * com);
+	body->updateInertiaTensor();
 }
 
 FiscionX::Vector3 FiscionX::Physics::Rigidbody::getPosition() {
-    if (body) {
+	if (body) {
 		btTransform transform;
 		body->getMotionState()->getWorldTransform(transform);
 		btVector3 pos = transform.getOrigin();
 		return FiscionX::Vector3(pos.getX(), pos.getY(), pos.getZ());
-    }
+	}
 }
 
 FiscionX::Vector3 FiscionX::Physics::Rigidbody::getRotation() {
-    if (body) {
-        btTransform transform;
-        body->getMotionState()->getWorldTransform(transform);
-        btQuaternion rot = transform.getRotation();
-        btScalar roll, pitch, yaw;
-        rot.getEulerZYX(yaw, pitch, roll);
-        return FiscionX::Vector3(roll, pitch, yaw);
-    }
+	if (body) {
+		btTransform transform;
+		body->getMotionState()->getWorldTransform(transform);
+		btQuaternion rot = transform.getRotation();
+		btScalar roll, pitch, yaw;
+		rot.getEulerZYX(yaw, pitch, roll);
+		return FiscionX::Vector3(roll, pitch, yaw);
+	}
 }
 
 // =================== Physics::Shape ===================
 FiscionX::Physics::Shape::Shape(btCollisionShape* _shape, btRigidBody::btRigidBodyConstructionInfo _info, btDefaultMotionState _motion, btGImpactMeshShape* _gshape)
-    : shape(_shape), gshape(_gshape), info(_info), motion(_motion) {}
+	: shape(_shape), gshape(_gshape), info(_info), motion(_motion) {
+}
 
 FiscionX::Physics::Shape FiscionX::Physics::CreateCapsuleShape(FiscionX::Vector3 position, FiscionX::Vector3 rotation, float radius, float height, float mass) {
-    btCollisionShape* newshape = new btCapsuleShape(radius, height);
-    btTransform start;
-    start.setIdentity();
-    start.setRotation(btQuaternion(rotation.x, rotation.y, rotation.z));
-    start.setOrigin(btVector3(position.x, position.y, position.z));
-    btVector3 inertia(0, 0, 0);
-    newshape->calculateLocalInertia(mass, inertia);
-    btDefaultMotionState* motion = new btDefaultMotionState(start);
-    btRigidBody::btRigidBodyConstructionInfo info(mass, motion, newshape, inertia);
+	btCollisionShape* newshape = new btCapsuleShape(radius, height);
+	btTransform start;
+	start.setIdentity();
+	start.setRotation(btQuaternion(rotation.x, rotation.y, rotation.z));
+	start.setOrigin(btVector3(position.x, position.y, position.z));
+	btVector3 inertia(0, 0, 0);
+	newshape->calculateLocalInertia(mass, inertia);
+	btDefaultMotionState* motion = new btDefaultMotionState(start);
+	btRigidBody::btRigidBodyConstructionInfo info(mass, motion, newshape, inertia);
 
-    FiscionX::Physics::Shape* pshape = new FiscionX::Physics::Shape(newshape, info, *motion, nullptr);
-    return *pshape;
+	FiscionX::Physics::Shape* pshape = new FiscionX::Physics::Shape(newshape, info, *motion, nullptr);
+	return *pshape;
 }
 
 FiscionX::Physics::Shape FiscionX::Physics::CreateBoxShape(Vector3 position, Vector3 rotation, Vector3 scale, float mass) {
-    btCollisionShape* newshape = new btBoxShape(btVector3(scale.x, scale.y, scale.z));
-    btTransform start;
-    start.setIdentity();
-    start.setRotation(btQuaternion(rotation.x, rotation.y, rotation.z));
-    start.setOrigin(btVector3(position.x, position.y, position.z));
-    btVector3 inertia(0, 0, 0);
-    newshape->calculateLocalInertia(mass, inertia);
-    btDefaultMotionState* motion = new btDefaultMotionState(start);
-    btRigidBody::btRigidBodyConstructionInfo info(mass, motion, newshape, inertia);
+	btCollisionShape* newshape = new btBoxShape(btVector3(scale.x, scale.y, scale.z));
+	btTransform start;
+	start.setIdentity();
+	start.setRotation(btQuaternion(rotation.x, rotation.y, rotation.z));
+	start.setOrigin(btVector3(position.x, position.y, position.z));
+	btVector3 inertia(0, 0, 0);
+	newshape->calculateLocalInertia(mass, inertia);
+	btDefaultMotionState* motion = new btDefaultMotionState(start);
+	btRigidBody::btRigidBodyConstructionInfo info(mass, motion, newshape, inertia);
 
-    FiscionX::Physics::Shape pshape(newshape, info, *motion, nullptr);
-    return pshape;
+	FiscionX::Physics::Shape pshape(newshape, info, *motion, nullptr);
+	return pshape;
 }
 
 FiscionX::Physics::Shape FiscionX::Physics::CreateConeShape(Vector3 position, Vector3 rotation, float radius, float height, float mass) {
-    btCollisionShape* newshape = new btConeShape(radius, height);
-    btTransform start;
-    start.setIdentity();
-    start.setRotation(btQuaternion(rotation.x, rotation.y, rotation.z));
-    start.setOrigin(btVector3(position.x, position.y, position.z));
-    btVector3 inertia(0, 0, 0);
-    newshape->calculateLocalInertia(mass, inertia);
-    btDefaultMotionState* motion = new btDefaultMotionState(start);
-    btRigidBody::btRigidBodyConstructionInfo info(mass, motion, newshape, inertia);
+	btCollisionShape* newshape = new btConeShape(radius, height);
+	btTransform start;
+	start.setIdentity();
+	start.setRotation(btQuaternion(rotation.x, rotation.y, rotation.z));
+	start.setOrigin(btVector3(position.x, position.y, position.z));
+	btVector3 inertia(0, 0, 0);
+	newshape->calculateLocalInertia(mass, inertia);
+	btDefaultMotionState* motion = new btDefaultMotionState(start);
+	btRigidBody::btRigidBodyConstructionInfo info(mass, motion, newshape, inertia);
 
-    FiscionX::Physics::Shape pshape(newshape, info, *motion, nullptr);
-    return pshape;
+	FiscionX::Physics::Shape pshape(newshape, info, *motion, nullptr);
+	return pshape;
 }
 
 FiscionX::Physics::Shape FiscionX::Physics::CreateCyllinderShape(Vector3 position, Vector3 rotation, float radius, float height, float mass) {
-    btCollisionShape* newshape = new btCylinderShape(btVector3(radius, height, radius));
-    btTransform start;
-    start.setIdentity();
-    start.setRotation(btQuaternion(rotation.x, rotation.y, rotation.z));
-    start.setOrigin(btVector3(position.x, position.y, position.z));
-    btVector3 inertia(0, 0, 0);
-    newshape->calculateLocalInertia(mass, inertia);
-    btDefaultMotionState* motion = new btDefaultMotionState(start);
-    btRigidBody::btRigidBodyConstructionInfo info(mass, motion, newshape, inertia);
+	btCollisionShape* newshape = new btCylinderShape(btVector3(radius, height, radius));
+	btTransform start;
+	start.setIdentity();
+	start.setRotation(btQuaternion(rotation.x, rotation.y, rotation.z));
+	start.setOrigin(btVector3(position.x, position.y, position.z));
+	btVector3 inertia(0, 0, 0);
+	newshape->calculateLocalInertia(mass, inertia);
+	btDefaultMotionState* motion = new btDefaultMotionState(start);
+	btRigidBody::btRigidBodyConstructionInfo info(mass, motion, newshape, inertia);
 
-    FiscionX::Physics::Shape pshape(newshape, info, *motion, nullptr);
-    return pshape;
+	FiscionX::Physics::Shape pshape(newshape, info, *motion, nullptr);
+	return pshape;
 }
 
 FiscionX::Physics::Shape FiscionX::Physics::CreateSphereShape(Vector3 position, Vector3 rotation, float radius, float mass) {
-    btCollisionShape* newshape = new btSphereShape(radius);
-    btTransform start;
-    start.setIdentity();
-    start.setRotation(btQuaternion(rotation.x, rotation.y, rotation.z));
-    start.setOrigin(btVector3(position.x, position.y, position.z));
-    btVector3 inertia(0, 0, 0);
-    newshape->calculateLocalInertia(mass, inertia);
-    btDefaultMotionState* motion = new btDefaultMotionState(start);
-    btRigidBody::btRigidBodyConstructionInfo info(mass, motion, newshape, inertia);
+	btCollisionShape* newshape = new btSphereShape(radius);
+	btTransform start;
+	start.setIdentity();
+	start.setRotation(btQuaternion(rotation.x, rotation.y, rotation.z));
+	start.setOrigin(btVector3(position.x, position.y, position.z));
+	btVector3 inertia(0, 0, 0);
+	newshape->calculateLocalInertia(mass, inertia);
+	btDefaultMotionState* motion = new btDefaultMotionState(start);
+	btRigidBody::btRigidBodyConstructionInfo info(mass, motion, newshape, inertia);
 
-    FiscionX::Physics::Shape pshape(newshape, info, *motion, nullptr);
-    return pshape;
+	FiscionX::Physics::Shape pshape(newshape, info, *motion, nullptr);
+	return pshape;
 }
 
+btTypedConstraint* FiscionX::Physics::CreateJoint(Joint& desc)
+{
+	if (!desc.bodyA || !desc.bodyB) return nullptr;
+
+	btTypedConstraint* c = nullptr;
+
+	switch (desc.type)
+	{
+	case JointType::POINT2POINT:
+		c = new btPoint2PointConstraint(
+			*desc.bodyA, *desc.bodyB,
+			desc.frameA.getOrigin(),
+			desc.frameB.getOrigin()
+		);
+		break;
+
+	case JointType::HINGE:
+		c = new btHingeConstraint(
+			*desc.bodyA, *desc.bodyB,
+			desc.frameA,
+			desc.frameB
+		);
+		static_cast<btHingeConstraint*>(c)->setLimit(
+			desc.hingeLower, desc.hingeUpper
+		);
+		break;
+
+	case JointType::CONETWIST:
+	{
+		auto* ct = new btConeTwistConstraint(
+			*desc.bodyA, *desc.bodyB,
+			desc.frameA, desc.frameB
+		);
+		ct->setLimit(desc.swing1, desc.swing2, desc.twist);
+		c = ct;
+	}
+	break;
+
+	case JointType::DOF6:
+	{
+		auto* dof = new btGeneric6DofConstraint(
+			*desc.bodyA, *desc.bodyB,
+			desc.frameA, desc.frameB,
+			true
+		);
+		dof->setLinearLowerLimit(desc.linearLower);
+		dof->setLinearUpperLimit(desc.linearUpper);
+		dof->setAngularLowerLimit(desc.angularLower);
+		dof->setAngularUpperLimit(desc.angularUpper);
+		c = dof;
+	}
+	break;
+
+	case JointType::DOF6_SPRING:
+	{
+		auto* dof = new btGeneric6DofSpring2Constraint(
+			*desc.bodyA, *desc.bodyB,
+			desc.frameA, desc.frameB
+		);
+
+		dof->setLinearLowerLimit(desc.linearLower);
+		dof->setLinearUpperLimit(desc.linearUpper);
+		dof->setAngularLowerLimit(desc.angularLower);
+		dof->setAngularUpperLimit(desc.angularUpper);
+
+		for (int i = 0; i < 6; i++) {
+			if (desc.useSpring[i]) {
+				dof->enableSpring(i, true);
+				dof->setStiffness(i, desc.stiffness[i]);
+				dof->setDamping(i, desc.damping[i]);
+			}
+		}
+
+		c = dof;
+	}
+	break;
+
+	case JointType::FIXED:
+	{
+		// fixed = 6DOF com limites 0
+		auto* dof = new btGeneric6DofConstraint(
+			*desc.bodyA, *desc.bodyB,
+			desc.frameA, desc.frameB,
+			true
+		);
+		btVector3 zero(0, 0, 0);
+		dof->setLinearLowerLimit(zero);
+		dof->setLinearUpperLimit(zero);
+		dof->setAngularLowerLimit(zero);
+		dof->setAngularUpperLimit(zero);
+		c = dof;
+	}
+	break;
+	}
+
+	if (!c) return nullptr;
+
+	FiscionX::Physics::DynamicWorld->addConstraint(c, !desc.collideConnected);
+	desc.constraint = c;
+	return c;
+}
+
+
 btTriangleMesh* FiscionX::Physics::LoadMeshFromFile(const char* path, FiscionX::Vector3 scale) {
-    tinygltf::Model model;
-    tinygltf::TinyGLTF loader;
-    std::string err, warn;
+	tinygltf::Model model;
+	tinygltf::TinyGLTF loader;
+	std::string err, warn;
 
-    if (!loader.LoadBinaryFromFile(&model, &err, &warn, path)) {
-        std::cerr << "Failed to load GLB: " << err << std::endl;
-        return nullptr;
-    }
+	if (!loader.LoadBinaryFromFile(&model, &err, &warn, path)) {
+		std::cerr << "Failed to load GLB: " << err << std::endl;
+		return nullptr;
+	}
 
-    btTriangleMesh* triMesh = new btTriangleMesh();
-    glm::mat4 globalScale = glm::scale(glm::mat4(1.0f), glm::vec3(scale.x, scale.y, scale.z));
+	btTriangleMesh* triMesh = new btTriangleMesh();
+	glm::mat4 globalScale = glm::scale(glm::mat4(1.0f), glm::vec3(scale.x, scale.y, scale.z));
 
-    std::function<void(int, glm::mat4)> processNode;
-    processNode = [&](int nodeIndex, glm::mat4 parentTransform) {
-        const auto& node = model.nodes[nodeIndex];
+	std::function<void(int, glm::mat4)> processNode;
+	processNode = [&](int nodeIndex, glm::mat4 parentTransform) {
+		const auto& node = model.nodes[nodeIndex];
 
-        glm::mat4 local(1.0f);
-        if (!node.matrix.empty()) {
-            local = glm::make_mat4(node.matrix.data());
-        }
-        else {
-            glm::vec3 T(0.0f), S(1.0f);
-            glm::quat R(1, 0, 0, 0);
-            if (!node.translation.empty()) T = glm::make_vec3(node.translation.data());
-            if (!node.rotation.empty()) R = glm::make_quat(node.rotation.data());
-            if (!node.scale.empty()) S = glm::make_vec3(node.scale.data());
-            local = glm::translate(glm::mat4(1.0f), T)
-                * glm::mat4_cast(R)
-                * glm::scale(glm::mat4(1.0f), S);
-        }
+		glm::mat4 local(1.0f);
+		if (!node.matrix.empty()) {
+			local = glm::make_mat4(node.matrix.data());
+		}
+		else {
+			glm::vec3 T(0.0f), S(1.0f);
+			glm::quat R(1, 0, 0, 0);
+			if (!node.translation.empty()) T = glm::make_vec3(node.translation.data());
+			if (!node.rotation.empty()) R = glm::make_quat(node.rotation.data());
+			if (!node.scale.empty()) S = glm::make_vec3(node.scale.data());
+			local = glm::translate(glm::mat4(1.0f), T)
+				* glm::mat4_cast(R)
+				* glm::scale(glm::mat4(1.0f), S);
+		}
 
-        glm::mat4 globalTransform = parentTransform * local;
+		glm::mat4 globalTransform = parentTransform * local;
 
-        if (node.mesh >= 0) {
-            const auto& mesh = model.meshes[node.mesh];
-            for (const auto& prim : mesh.primitives) {
-                if (prim.mode != TINYGLTF_MODE_TRIANGLES) continue;
+		if (node.mesh >= 0) {
+			const auto& mesh = model.meshes[node.mesh];
+			for (const auto& prim : mesh.primitives) {
+				if (prim.mode != TINYGLTF_MODE_TRIANGLES) continue;
 
-                const auto& posAcc = model.accessors[prim.attributes.at("POSITION")];
-                const auto& posView = model.bufferViews[posAcc.bufferView];
-                const auto& posBuf = model.buffers[posView.buffer];
-                const float* posData = reinterpret_cast<const float*>(
-                    &posBuf.data[posView.byteOffset + posAcc.byteOffset]);
+				const auto& posAcc = model.accessors[prim.attributes.at("POSITION")];
+				const auto& posView = model.bufferViews[posAcc.bufferView];
+				const auto& posBuf = model.buffers[posView.buffer];
+				const float* posData = reinterpret_cast<const float*>(
+					&posBuf.data[posView.byteOffset + posAcc.byteOffset]);
 
-                std::vector<glm::vec3> vertices(posAcc.count);
-                for (size_t i = 0; i < posAcc.count; ++i) {
-                    glm::vec4 v(posData[i * 3 + 0], posData[i * 3 + 1], posData[i * 3 + 2], 1.0f);
-                    v = globalScale * globalTransform * v;
-                    vertices[i] = glm::vec3(v);
-                }
+				std::vector<glm::vec3> vertices(posAcc.count);
+				for (size_t i = 0; i < posAcc.count; ++i) {
+					glm::vec4 v(posData[i * 3 + 0], posData[i * 3 + 1], posData[i * 3 + 2], 1.0f);
+					v = globalScale * globalTransform * v;
+					vertices[i] = glm::vec3(v);
+				}
 
-                const auto& idxAcc = model.accessors[prim.indices];
-                const auto& idxView = model.bufferViews[idxAcc.bufferView];
-                const auto& idxBuf = model.buffers[idxView.buffer];
-                const void* idxData = &idxBuf.data[idxView.byteOffset + idxAcc.byteOffset];
+				const auto& idxAcc = model.accessors[prim.indices];
+				const auto& idxView = model.bufferViews[idxAcc.bufferView];
+				const auto& idxBuf = model.buffers[idxView.buffer];
+				const void* idxData = &idxBuf.data[idxView.byteOffset + idxAcc.byteOffset];
 
-                for (size_t i = 0; i < idxAcc.count; i += 3) {
-                    uint32_t i0, i1, i2;
-                    switch (idxAcc.componentType) {
-                    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
-                        i0 = ((uint8_t*)idxData)[i + 0];
-                        i1 = ((uint8_t*)idxData)[i + 1];
-                        i2 = ((uint8_t*)idxData)[i + 2];
-                        break;
-                    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
-                        i0 = ((uint16_t*)idxData)[i + 0];
-                        i1 = ((uint16_t*)idxData)[i + 1];
-                        i2 = ((uint16_t*)idxData)[i + 2];
-                        break;
-                    case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
-                        i0 = ((uint32_t*)idxData)[i + 0];
-                        i1 = ((uint32_t*)idxData)[i + 1];
-                        i2 = ((uint32_t*)idxData)[i + 2];
-                        break;
-                    default:
-                        std::cerr << "Unsupported index type\n";
-                        return nullptr;
-                    }
+				for (size_t i = 0; i < idxAcc.count; i += 3) {
+					uint32_t i0, i1, i2;
+					switch (idxAcc.componentType) {
+					case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+						i0 = ((uint8_t*)idxData)[i + 0];
+						i1 = ((uint8_t*)idxData)[i + 1];
+						i2 = ((uint8_t*)idxData)[i + 2];
+						break;
+					case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+						i0 = ((uint16_t*)idxData)[i + 0];
+						i1 = ((uint16_t*)idxData)[i + 1];
+						i2 = ((uint16_t*)idxData)[i + 2];
+						break;
+					case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
+						i0 = ((uint32_t*)idxData)[i + 0];
+						i1 = ((uint32_t*)idxData)[i + 1];
+						i2 = ((uint32_t*)idxData)[i + 2];
+						break;
+					default:
+						std::cerr << "Unsupported index type\n";
+						return nullptr;
+					}
 
-                    triMesh->addTriangle(
-                        btVector3(vertices[i0].x, vertices[i0].y, vertices[i0].z),
-                        btVector3(vertices[i1].x, vertices[i1].y, vertices[i1].z),
-                        btVector3(vertices[i2].x, vertices[i2].y, vertices[i2].z)
-                    );
-                }
-            }
-        }
+					triMesh->addTriangle(
+						btVector3(vertices[i0].x, vertices[i0].y, vertices[i0].z),
+						btVector3(vertices[i1].x, vertices[i1].y, vertices[i1].z),
+						btVector3(vertices[i2].x, vertices[i2].y, vertices[i2].z)
+					);
+				}
+			}
+		}
 
-        for (int child : node.children) {
-            processNode(child, globalTransform);
-        }
-        };
+		for (int child : node.children) {
+			processNode(child, globalTransform);
+		}
+		};
 
-    for (int nodeIndex : model.scenes[model.defaultScene].nodes) {
-        processNode(nodeIndex, glm::mat4(1.0f));
-    }
+	for (int nodeIndex : model.scenes[model.defaultScene].nodes) {
+		processNode(nodeIndex, glm::mat4(1.0f));
+	}
 
-    return triMesh;
+	return triMesh;
 }
 
 FiscionX::Physics::Shape FiscionX::Physics::CreateMeshShape(const char* path, FiscionX::Vector3 position, FiscionX::Vector3 rotation, FiscionX::Vector3 scale, float mass) {
-    btGImpactMeshShape* newshape = new btGImpactMeshShape(FiscionX::Physics::LoadMeshFromFile(path, scale));
-    btTransform start;
-    start.setIdentity();
-    start.setRotation(btQuaternion(rotation.x, rotation.y, rotation.z));
-    start.setOrigin(btVector3(position.x, position.y, position.z));
-    btVector3 inertia(0, 0, 0);
-    newshape->calculateLocalInertia(mass, inertia);
-    btDefaultMotionState* motion = new btDefaultMotionState(start);
-    btRigidBody::btRigidBodyConstructionInfo info(mass, motion, newshape, inertia);
-    FiscionX::Physics::Shape pshape(nullptr, info, *motion, newshape);
-    return pshape;
+	btGImpactMeshShape* newshape = new btGImpactMeshShape(FiscionX::Physics::LoadMeshFromFile(path, scale));
+	btTransform start;
+	start.setIdentity();
+	start.setRotation(btQuaternion(rotation.x, rotation.y, rotation.z));
+	start.setOrigin(btVector3(position.x, position.y, position.z));
+	btVector3 inertia(0, 0, 0);
+	newshape->calculateLocalInertia(mass, inertia);
+	btDefaultMotionState* motion = new btDefaultMotionState(start);
+	btRigidBody::btRigidBodyConstructionInfo info(mass, motion, newshape, inertia);
+	FiscionX::Physics::Shape pshape(nullptr, info, *motion, newshape);
+	return pshape;
 }
 
 bool FiscionX::Physics::CheckCollisionBetween(FiscionX::Physics::Rigidbody* bodyA, FiscionX::Physics::Rigidbody* bodyB) {
-    int numManifolds = DynamicWorld->getDispatcher()->getNumManifolds();
+	int numManifolds = DynamicWorld->getDispatcher()->getNumManifolds();
 
-    btVector3 posA = bodyA->body->getWorldTransform().getOrigin();
-    btVector3 posB = bodyB->body->getWorldTransform().getOrigin();
+	btVector3 posA = bodyA->body->getWorldTransform().getOrigin();
+	btVector3 posB = bodyB->body->getWorldTransform().getOrigin();
 
-    if ((posA - posB).length2() > FiscionX::Physics::maxCollisionDistance * FiscionX::Physics::maxCollisionDistance) {
-        return false;
-    }
+	if ((posA - posB).length2() > FiscionX::Physics::maxCollisionDistance * FiscionX::Physics::maxCollisionDistance) {
+		return false;
+	}
 
-    for (int i = 0; i < numManifolds; ++i) {
-        btPersistentManifold* manifold = DynamicWorld->getDispatcher()->getManifoldByIndexInternal(i);
-        const btCollisionObject* objA = manifold->getBody0();
-        const btCollisionObject* objB = manifold->getBody1();
+	for (int i = 0; i < numManifolds; ++i) {
+		btPersistentManifold* manifold = DynamicWorld->getDispatcher()->getManifoldByIndexInternal(i);
+		const btCollisionObject* objA = manifold->getBody0();
+		const btCollisionObject* objB = manifold->getBody1();
 
-        if ((objA == bodyA->body && objB == bodyB->body) || (objA == bodyB->body && objB == bodyA->body)) {
-            int numContacts = manifold->getNumContacts();
-            for (int j = 0; j < numContacts; ++j) {
-                const btManifoldPoint& pt = manifold->getContactPoint(j);
-                if (pt.getDistance() < 0.0f) {
-                    return true;
-                }
-            }
-        }
-    }
-    return false;
+		if ((objA == bodyA->body && objB == bodyB->body) || (objA == bodyB->body && objB == bodyA->body)) {
+			int numContacts = manifold->getNumContacts();
+			for (int j = 0; j < numContacts; ++j) {
+				const btManifoldPoint& pt = manifold->getContactPoint(j);
+				if (pt.getDistance() < 0.0f) {
+					return true;
+				}
+			}
+		}
+	}
+	return false;
 }
 
 // Vehicle
 FiscionX::Physics::Vehicle::Vehicle(FiscionX::Physics::Rigidbody* chassiBody) {
-    tuning = new btRaycastVehicle::btVehicleTuning;
-    raycaster = new btDefaultVehicleRaycaster(FiscionX::Physics::DynamicWorld);
-    vehicle = new btRaycastVehicle(*tuning, chassiBody->body, raycaster);
-    chassiBody->body->setActivationState(DISABLE_DEACTIVATION);
+	tuning = new btRaycastVehicle::btVehicleTuning;
+	raycaster = new btDefaultVehicleRaycaster(FiscionX::Physics::DynamicWorld);
+	vehicle = new btRaycastVehicle(*tuning, chassiBody->body, raycaster);
+	chassiBody->body->setActivationState(DISABLE_DEACTIVATION);
 }
 
 void FiscionX::Physics::Vehicle::addWheel(FiscionX::Vector3 relativePosition, FiscionX::Vector3 wheelDirectionCS0, FiscionX::Vector3 wheelAxleCS,
-    float suspensionRestLength, float wheelRadius, bool isFrontWheel) {
+	float suspensionRestLength, float wheelRadius, bool isFrontWheel) {
 
-    vehicle->addWheel(btVector3(relativePosition.x, relativePosition.y, relativePosition.z), 
-        btVector3(wheelDirectionCS0.x, wheelDirectionCS0.y, wheelDirectionCS0.z),
-        btVector3(wheelAxleCS.x, wheelAxleCS.y, wheelAxleCS.z),
-        suspensionRestLength, wheelRadius, *tuning, isFrontWheel);
+	vehicle->addWheel(btVector3(relativePosition.x, relativePosition.y, relativePosition.z),
+		btVector3(wheelDirectionCS0.x, wheelDirectionCS0.y, wheelDirectionCS0.z),
+		btVector3(wheelAxleCS.x, wheelAxleCS.y, wheelAxleCS.z),
+		suspensionRestLength, wheelRadius, *tuning, isFrontWheel);
 }
 
 int FiscionX::Physics::Vehicle::getNumWheels() {
-    return vehicle->getNumWheels();
+	return vehicle->getNumWheels();
 }
 
 FiscionX::Physics::Vehicle::WheelInfo& FiscionX::Physics::Vehicle::getWheelInfo(int index) {
-    FiscionX::Physics::Vehicle::WheelInfo* info = new FiscionX::Physics::Vehicle::WheelInfo;
+	FiscionX::Physics::Vehicle::WheelInfo* info = new FiscionX::Physics::Vehicle::WheelInfo;
 	info->info = &vehicle->getWheelInfo(index);
-    return *info;
+	return *info;
 }
 
 void FiscionX::Physics::Vehicle::update(float deltaTime) {
-    vehicle->updateVehicle(FiscionX::Core::deltaTime);
-    vehicle->updateSuspension(FiscionX::Core::deltaTime);
-    vehicle->updateFriction(FiscionX::Core::deltaTime);
+	vehicle->updateVehicle(FiscionX::Core::deltaTime);
+	vehicle->updateSuspension(FiscionX::Core::deltaTime);
+	vehicle->updateFriction(FiscionX::Core::deltaTime);
 }
 
 void FiscionX::Physics::Vehicle::applyEngineForce(float force, int wheelIndex) {
@@ -2784,58 +2935,58 @@ float FiscionX::Physics::Vehicle::getCurrentSpeedKmh() {
 	return vehicle->getCurrentSpeedKmHour();
 }
 FiscionX::Vector3 FiscionX::Physics::Vehicle::getWheelWorldPosition(int index) {
-    FiscionX::Physics::Vehicle::WheelInfo* info = new FiscionX::Physics::Vehicle::WheelInfo;
-    info->info = &vehicle->getWheelInfo(index);
-    
-    return FiscionX::Vector3(info->info->m_worldTransform.getOrigin().getX(),
-        info->info->m_worldTransform.getOrigin().getY(),
+	FiscionX::Physics::Vehicle::WheelInfo* info = new FiscionX::Physics::Vehicle::WheelInfo;
+	info->info = &vehicle->getWheelInfo(index);
+
+	return FiscionX::Vector3(info->info->m_worldTransform.getOrigin().getX(),
+		info->info->m_worldTransform.getOrigin().getY(),
 		info->info->m_worldTransform.getOrigin().getZ());
 }
 FiscionX::Vector3 FiscionX::Physics::Vehicle::getWheelRotation(int index) {
-    FiscionX::Physics::Vehicle::WheelInfo* info = new FiscionX::Physics::Vehicle::WheelInfo;
-    info->info = &vehicle->getWheelInfo(index);
+	FiscionX::Physics::Vehicle::WheelInfo* info = new FiscionX::Physics::Vehicle::WheelInfo;
+	info->info = &vehicle->getWheelInfo(index);
 
-    return FiscionX::Vector3(info->info->m_worldTransform.getRotation().getX(),
-        info->info->m_worldTransform.getRotation().getY(),
-        info->info->m_worldTransform.getRotation().getZ());
+	return FiscionX::Vector3(info->info->m_worldTransform.getRotation().getX(),
+		info->info->m_worldTransform.getRotation().getY(),
+		info->info->m_worldTransform.getRotation().getZ());
 }
 
 // Raycast
 bool FiscionX::Physics::Raycast::CheckCollisionWithBody(FiscionX::Physics::Rigidbody* body, FiscionX::Vector3 origin, FiscionX::Vector3 end)
 {
-    btCollisionWorld::ClosestRayResultCallback rayCallback(btVector3(origin.x, origin.y, origin.z), btVector3(end.x, end.y, end.z));
-    FiscionX::Physics::DynamicWorld->rayTest(btVector3(origin.x, origin.y, origin.z), btVector3(end.x, end.y, end.z), rayCallback);
+	btCollisionWorld::ClosestRayResultCallback rayCallback(btVector3(origin.x, origin.y, origin.z), btVector3(end.x, end.y, end.z));
+	FiscionX::Physics::DynamicWorld->rayTest(btVector3(origin.x, origin.y, origin.z), btVector3(end.x, end.y, end.z), rayCallback);
 
-    if (rayCallback.hasHit())
-    {
-        const btRigidBody* hitBody = btRigidBody::upcast(rayCallback.m_collisionObject);
+	if (rayCallback.hasHit())
+	{
+		const btRigidBody* hitBody = btRigidBody::upcast(rayCallback.m_collisionObject);
 
-        if (body->body == hitBody) {
-            return true;
-        }
-    }
-    else
-    {
-        return false;
-    }
+		if (body->body == hitBody) {
+			return true;
+		}
+	}
+	else
+	{
+		return false;
+	}
 }
 
 const btRigidBody* FiscionX::Physics::Raycast::GetFirstBodyCollided(FiscionX::Vector3 origin, FiscionX::Vector3 end)
 {
-    btCollisionWorld::ClosestRayResultCallback rayCallback(btVector3(origin.x, origin.y, origin.z), btVector3(end.x, end.y, end.z));
-    FiscionX::Physics::DynamicWorld->rayTest(btVector3(origin.x, origin.y, origin.z), btVector3(end.x, end.y, end.z), rayCallback);
+	btCollisionWorld::ClosestRayResultCallback rayCallback(btVector3(origin.x, origin.y, origin.z), btVector3(end.x, end.y, end.z));
+	FiscionX::Physics::DynamicWorld->rayTest(btVector3(origin.x, origin.y, origin.z), btVector3(end.x, end.y, end.z), rayCallback);
 
-    if (rayCallback.hasHit())
-    {
-        const btRigidBody* hitBody = btRigidBody::upcast(rayCallback.m_collisionObject);
+	if (rayCallback.hasHit())
+	{
+		const btRigidBody* hitBody = btRigidBody::upcast(rayCallback.m_collisionObject);
 
-        if (hitBody)
-            return hitBody;
-    }
-    else
-    {
-        return nullptr;
-    }
+		if (hitBody)
+			return hitBody;
+	}
+	else
+	{
+		return nullptr;
+	}
 }
 // =================== CORE ===================
 void FiscionX::Core::CreateShadowMap(ShadowMap& sm, int LIGHT_TYPE) {
@@ -3127,20 +3278,20 @@ void FiscionX::Core::RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 p
 }
 
 void FiscionX::Core::Set3DSettings(const int _DIRECTIONAL_LIGHT_SHADOW_SIZE, const int _SPOT_LIGHT_SHADOW_SIZE,
-    const int _POINT_LIGHT_SHADOW_SIZE, const float _SHADOW_VIEW_RADIUS, const float _NEAR_PLANE, const float _FAR_PLANE) {
+	const int _POINT_LIGHT_SHADOW_SIZE, const float _SHADOW_VIEW_RADIUS, const float _NEAR_PLANE, const float _FAR_PLANE) {
 
-    DIR_SHADOW_SIZE = _DIRECTIONAL_LIGHT_SHADOW_SIZE;
-    SPOT_SHADOW_SIZE = _SPOT_LIGHT_SHADOW_SIZE;
-    POINT_SHADOW_SIZE = _POINT_LIGHT_SHADOW_SIZE;
-    NEAR_PLANE = _NEAR_PLANE;
-    FAR_PLANE = _FAR_PLANE;
-    SHADOW_VIEW_RADIUS = _SHADOW_VIEW_RADIUS;
+	DIR_SHADOW_SIZE = _DIRECTIONAL_LIGHT_SHADOW_SIZE;
+	SPOT_SHADOW_SIZE = _SPOT_LIGHT_SHADOW_SIZE;
+	POINT_SHADOW_SIZE = _POINT_LIGHT_SHADOW_SIZE;
+	NEAR_PLANE = _NEAR_PLANE;
+	FAR_PLANE = _FAR_PLANE;
+	SHADOW_VIEW_RADIUS = _SHADOW_VIEW_RADIUS;
 }
 
 void FiscionX::Core::SetCursorMode(int mode) {
-    if (FiscionX::Core::Window) {
-        glfwSetInputMode(FiscionX::Core::Window, GLFW_CURSOR, mode);
-    }
+	if (FiscionX::Core::Window) {
+		glfwSetInputMode(FiscionX::Core::Window, GLFW_CURSOR, mode);
+	}
 }
 
 void FiscionX::Core::SetCacheSettings(bool _enableShaderCache, bool _enableModelCache) {
@@ -3149,124 +3300,124 @@ void FiscionX::Core::SetCacheSettings(bool _enableShaderCache, bool _enableModel
 }
 
 void FiscionX::Core::NewWindow(int width, int height, const char* window_label) {
-    std::cout << "FiscionX - " << ENGINE_VERSION << std::endl;
+	std::cout << "FiscionX - " << ENGINE_VERSION << std::endl;
 
-    SCREEN_WIDTH = width;
-    SCREEN_HEIGHT = height;
+	SCREEN_WIDTH = width;
+	SCREEN_HEIGHT = height;
 
-    glfwInit();
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 4);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+	glfwInit();
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 4);
+	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    Window = glfwCreateWindow(width, height, window_label, NULL, NULL);
-    if (!Window) {
-        std::cerr << "ERR 0x001 - Failed to initialize GLFW Window\n";
-        glfwTerminate();
-        system("pause");
-        std::exit(-1);
-    }
-    glfwMakeContextCurrent(Window);
-    glfwSwapInterval(0);
-    glfwSetCursorPosCallback(Window, mouse_callback);
+	Window = glfwCreateWindow(width, height, window_label, NULL, NULL);
+	if (!Window) {
+		std::cerr << "ERR 0x001 - Failed to initialize GLFW Window\n";
+		glfwTerminate();
+		system("pause");
+		std::exit(-1);
+	}
+	glfwMakeContextCurrent(Window);
+	glfwSwapInterval(0);
+	glfwSetCursorPosCallback(Window, mouse_callback);
 	glfwSetScrollCallback(Window, scroll_callback);
 
-    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
-        std::cerr << "ERR 0x002 - Failed to initialize GLAD\n";
-        glfwTerminate();
-        system("pause");
-        std::exit(-2);
-    }
+	if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
+		std::cerr << "ERR 0x002 - Failed to initialize GLAD\n";
+		glfwTerminate();
+		system("pause");
+		std::exit(-2);
+	}
 
-    glEnable(GL_DEPTH_TEST);
+	glEnable(GL_DEPTH_TEST);
 
-    // ====== SHADERS ======
+	// ====== SHADERS ======
 	/*
-    File* depthFragFile = new File("shaders/depth_fragment.glsl");
-    const char* depthFrag = depthFragFile->file.c_str();
-    File* depth2DStaticVertFile = new File("shaders/depth_2d_static_vert.glsl");
-    const char* depth2DStaticVert = depth2DStaticVertFile->file.c_str();
-    File* depth2DSkinnedVertFile = new File("shaders/depth_2d_skinned_vert.glsl");
-    const char* depth2DSkinnedVert = depth2DSkinnedVertFile->file.c_str();
-    File* depthCubeStaticVertFile = new File("shaders/depth_cube_static_vert.glsl");
-    const char* depthCubeStaticVert = depthCubeStaticVertFile->file.c_str();
-    File* depthCubeSkinnedVertFile = new File("shaders/depth_cube_skinned_vert.glsl");
-    const char* depthCubeSkinnedVert = depthCubeSkinnedVertFile->file.c_str();
-    File* vertexStaticFile = new File("shaders/vertex_static.glsl");
-    const char* vertexStatic = vertexStaticFile->file.c_str();
-    File* vertexSkinnedFile = new File("shaders/vertex_skinned.glsl");
-    const char* vertexSkinned = vertexSkinnedFile->file.c_str();
-    File* fragmentShaderFile = new File("shaders/fragment.glsl");
-    const char* fragmentShader = fragmentShaderFile->file.c_str();
-    File* imageVertexShaderFile = new File("shaders/image_vertex.glsl");
-    const char* imageVertexShader = imageVertexShaderFile->file.c_str();
-    File* imageFragmentShaderFile = new File("shaders/image_fragment.glsl");
-    const char* imageFragmentShader = imageFragmentShaderFile->file.c_str();
+	File* depthFragFile = new File("shaders/depth_fragment.glsl");
+	const char* depthFrag = depthFragFile->file.c_str();
+	File* depth2DStaticVertFile = new File("shaders/depth_2d_static_vert.glsl");
+	const char* depth2DStaticVert = depth2DStaticVertFile->file.c_str();
+	File* depth2DSkinnedVertFile = new File("shaders/depth_2d_skinned_vert.glsl");
+	const char* depth2DSkinnedVert = depth2DSkinnedVertFile->file.c_str();
+	File* depthCubeStaticVertFile = new File("shaders/depth_cube_static_vert.glsl");
+	const char* depthCubeStaticVert = depthCubeStaticVertFile->file.c_str();
+	File* depthCubeSkinnedVertFile = new File("shaders/depth_cube_skinned_vert.glsl");
+	const char* depthCubeSkinnedVert = depthCubeSkinnedVertFile->file.c_str();
+	File* vertexStaticFile = new File("shaders/vertex_static.glsl");
+	const char* vertexStatic = vertexStaticFile->file.c_str();
+	File* vertexSkinnedFile = new File("shaders/vertex_skinned.glsl");
+	const char* vertexSkinned = vertexSkinnedFile->file.c_str();
+	File* fragmentShaderFile = new File("shaders/fragment.glsl");
+	const char* fragmentShader = fragmentShaderFile->file.c_str();
+	File* imageVertexShaderFile = new File("shaders/image_vertex.glsl");
+	const char* imageVertexShader = imageVertexShaderFile->file.c_str();
+	File* imageFragmentShaderFile = new File("shaders/image_fragment.glsl");
+	const char* imageFragmentShader = imageFragmentShaderFile->file.c_str();
 	*/
 
-    depthShaderStatic = LoadShader(depth2DstaticVertex, depth_fragment);
-    depthShaderSkinned = LoadShader(depth2DskinnedVertex, depth_fragment);
-    depthShaderCubeStatic = LoadShader(depthCubeStaticVertex, depth_fragment);
-    depthShaderCubeSkinned = LoadShader(depthCubeSkinnedVertex, depth_fragment);
-    shaderStatic = LoadShader(vertexStatic, fragment);
-    shaderSkinned = LoadShader(vertexSkinned, fragment);
-    UI::Image::shader = LoadShader(imageVertex, imageFragment);
+	depthShaderStatic = LoadShader(depth2DstaticVertex, depth_fragment);
+	depthShaderSkinned = LoadShader(depth2DskinnedVertex, depth_fragment);
+	depthShaderCubeStatic = LoadShader(depthCubeStaticVertex, depth_fragment);
+	depthShaderCubeSkinned = LoadShader(depthCubeSkinnedVertex, depth_fragment);
+	shaderStatic = LoadShader(vertexStatic, fragment);
+	shaderSkinned = LoadShader(vertexSkinned, fragment);
+	UI::Image::shader = LoadShader(imageVertex, imageFragment);
 	UI::Video::shaderVideo = LoadShader(videoVertex, videoFragment);
 	textShader = LoadShader(textVertexShader, textFragmentShader);
 	shaderUI = LoadShader(uiVertex, uiFragment);
 
-    // Configure Shadow Mapping
-    glGenFramebuffers(1, &depthMapFBO);
-    glGenTextures(1, &depthMap);
-    glBindTexture(GL_TEXTURE_2D, depthMap);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT,
-        DIR_SHADOW_SIZE, DIR_SHADOW_SIZE, 0,
-        GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-    float borderColor[] = { 1.0,1.0,1.0,1.0 };
-    glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
-    GLfloat maxAniso = 0.0f;
-    glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, maxAniso);
+	// Configure Shadow Mapping
+	glGenFramebuffers(1, &depthMapFBO);
+	glGenTextures(1, &depthMap);
+	glBindTexture(GL_TEXTURE_2D, depthMap);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT,
+		DIR_SHADOW_SIZE, DIR_SHADOW_SIZE, 0,
+		GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+	float borderColor[] = { 1.0,1.0,1.0,1.0 };
+	glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
+	GLfloat maxAniso = 0.0f;
+	glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
+	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, maxAniso);
 
-    glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
-    glDrawBuffer(GL_NONE);
-    glReadBuffer(GL_NONE);
-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-        std::cerr << "ERR 0x003 - Shadow FBO non complete\n";
-        glfwTerminate();
-        system("pause");
-        std::exit(-3);
-    }
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
+	glDrawBuffer(GL_NONE);
+	glReadBuffer(GL_NONE);
+	if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+		std::cerr << "ERR 0x003 - Shadow FBO non complete\n";
+		glfwTerminate();
+		system("pause");
+		std::exit(-3);
+	}
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-    AudioSystem = FiscionX::AudioSystem();
-    AudioSystem.init();
+	AudioSystem = FiscionX::AudioSystem();
+	AudioSystem.init();
 }
 
 void FiscionX::Core::ClockTick() {
-    float currentFrame = glfwGetTime();
-    deltaTime = currentFrame - lastFrame;
-    lastFrame = currentFrame;
+	float currentFrame = glfwGetTime();
+	deltaTime = currentFrame - lastFrame;
+	lastFrame = currentFrame;
 
-    FPS++;
+	FPS++;
 
-    AudioSystem.update();
-    for (Sound sound : FiscionX::Core::AllSounds) {
-        sound.updateValues();
-    }
+	AudioSystem.update();
+	for (Sound sound : FiscionX::Core::AllSounds) {
+		sound.updateValues();
+	}
 
-    if (currentFrame - lastFPSTime >= 1.0f) {
-        std::cout << "FPS: " << FPS << std::endl;
-        FPS = 0;
-        lastFPSTime = currentFrame;
-    }
+	if (currentFrame - lastFPSTime >= 1.0f) {
+		std::cout << "FPS: " << FPS << std::endl;
+		FPS = 0;
+		lastFPSTime = currentFrame;
+	}
 
-    glfwPollEvents();
+	glfwPollEvents();
 }
 
 void FiscionX::Core::SetWindowSize(int width, int height) {
@@ -3282,7 +3433,8 @@ void FiscionX::Core::SetWindowIcon(const char* iconPath) {
 	if (icon.pixels) {
 		glfwSetWindowIcon(FiscionX::Core::Window, 1, &icon);
 		stbi_image_free(icon.pixels);
-	} else {
+	}
+	else {
 		std::cerr << "ERR 0x013 - Failed to load window icon from " << iconPath << std::endl;
 	}
 }
@@ -3347,35 +3499,35 @@ void FiscionX::Core::SetWindowFullscreen(bool fullscreen, int monitorIndex) {
 }
 
 void FiscionX::Core::SortModels() {
-    std::sort(AllModels.begin(), AllModels.end(), [](const Model* a, const Model* b) {
-        auto hasBlend = [](const Model* model) {
-            if (model->alpha < 1.0f)
-                return true;
+	std::sort(AllModels.begin(), AllModels.end(), [](const Model* a, const Model* b) {
+		auto hasBlend = [](const Model* model) {
+			if (model->alpha < 1.0f)
+				return true;
 
-            return std::any_of(model->meshes.begin(), model->meshes.end(),
-                [](const SubMesh& m) {
-                    return m.alphaMode == "BLEND";
-                });
-            };
+			return std::any_of(model->meshes.begin(), model->meshes.end(),
+				[](const SubMesh& m) {
+					return m.alphaMode == "BLEND";
+				});
+			};
 
-        bool aBlend = hasBlend(a);
-        bool bBlend = hasBlend(b);
+		bool aBlend = hasBlend(a);
+		bool bBlend = hasBlend(b);
 
-        if (aBlend != bBlend)
-            return !aBlend && bBlend;
+		if (aBlend != bBlend)
+			return !aBlend && bBlend;
 
-        if (aBlend && bBlend) {
-            float da = glm::length2(glm::vec3(a->position.x, a->position.y, a->position.z) - glm::vec3(Camera.position.x, Camera.position.y, Camera.position.z));
-            float db = glm::length2(glm::vec3(b->position.x, b->position.y, b->position.z) - glm::vec3(Camera.position.x, Camera.position.y, Camera.position.z));
-            return da > db;
-        }
+		if (aBlend && bBlend) {
+			float da = glm::length2(glm::vec3(a->position.x, a->position.y, a->position.z) - glm::vec3(Camera.position.x, Camera.position.y, Camera.position.z));
+			float db = glm::length2(glm::vec3(b->position.x, b->position.y, b->position.z) - glm::vec3(Camera.position.x, Camera.position.y, Camera.position.z));
+			return da > db;
+		}
 
-        return false;
-        });
+		return false;
+		});
 }
 
 void FiscionX::Core::Terminate() {
-    glfwTerminate();
+	glfwTerminate();
 }
 
 // ===================== DRAW ========================
@@ -3407,14 +3559,14 @@ void RenderPrimitive(const std::vector<glm::vec2>& vertices,
 }
 
 void FiscionX::Core::Draw::ClearBackground(float r, float g, float b, float alpha) {
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
-    glClearColor(r, g, b, alpha);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glViewport(0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
+	glClearColor(r, g, b, alpha);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
 
 void FiscionX::Core::Draw::SwapBuffers() {
-    glfwSwapBuffers(FiscionX::Core::Window);
+	glfwSwapBuffers(FiscionX::Core::Window);
 }
 
 void FiscionX::Core::Draw::DrawLine(
@@ -3848,5 +4000,5 @@ GLuint LoadShader(const char* vertexSrc, const char* fragmentSrc) {
 		}
 	}
 
-    return program;
+	return program;
 }
