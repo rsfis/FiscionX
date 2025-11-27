@@ -1,6 +1,6 @@
 ﻿#include "FiscionCore.h"
 #include "FiscionShaders.h"
-#define ENGINE_VERSION "1.0.0"
+#define ENGINE_VERSION "0.6.0"
 
 // last error number: 17
 
@@ -27,6 +27,7 @@ glm::vec3     FiscionX::Core::AMBIENT_LIGHT_SKYCOLOR = { 0.3f, 0.3f, 0.35f };
 glm::vec3     FiscionX::Core::AMBIENT_LIGHT_GROUNDCOLOR = { 0.05f, 0.05f, 0.07f };
 GLuint FiscionX::Core::depthMapFBO;
 GLuint FiscionX::Core::depthMap;
+bool FiscionX::Core::compressTexturesAutomatically = false;
 
 GLuint FiscionX::Core::textShader;
 
@@ -457,7 +458,10 @@ FiscionX::UI::Font::Font(const char* fontPath, int pixelSize) {
 	glBindTexture(GL_TEXTURE_2D, textureAtlas);
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, atlasWidth, atlasHeight, 0, GL_RED, GL_UNSIGNED_BYTE, nullptr);
 
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glGenerateMipmap(GL_TEXTURE_2D);
+
+	// Filtros que ativam mipmaps
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
@@ -663,8 +667,15 @@ void FiscionX::UI::Video::createTextureIfNeeded() {
 	glGenTextures(1, &texture);
 	glBindTexture(GL_TEXTURE_2D, texture);
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
-		GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+	if (FiscionX::Core::compressTexturesAutomatically) {
+		glHint(GL_TEXTURE_COMPRESSION_HINT, GL_NICEST);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_RGBA_BPTC_UNORM,
+			width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+	}
+	else {
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+			width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+	}
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -1230,11 +1241,15 @@ GLuint FiscionX::Model::getBaseColorTexture(const tinygltf::Model& model, int ma
 	GLuint texID;
 	glGenTextures(1, &texID);
 	glBindTexture(GL_TEXTURE_2D, texID);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
-		img.width, img.height, 0,
-		GL_RGBA, GL_UNSIGNED_BYTE,
-		img.image.data());
-
+	if (FiscionX::Core::compressTexturesAutomatically) {
+		glHint(GL_TEXTURE_COMPRESSION_HINT, GL_NICEST);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_RGBA_BPTC_UNORM,
+			img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+	}
+	else {
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+			img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+	}
 	glGenerateMipmap(GL_TEXTURE_2D);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -1263,8 +1278,15 @@ GLuint FiscionX::Model::getDiffuseTextureFromSpecGloss(const tinygltf::Model& mo
 					GLuint texID;
 					glGenTextures(1, &texID);
 					glBindTexture(GL_TEXTURE_2D, texID);
-					glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, img.width, img.height, 0,
-						GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+					if (FiscionX::Core::compressTexturesAutomatically) {
+						glHint(GL_TEXTURE_COMPRESSION_HINT, GL_NICEST);
+						glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_RGBA_BPTC_UNORM,
+							img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+					}
+					else {
+						glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+							img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+					}
 					glGenerateMipmap(GL_TEXTURE_2D);
 					glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
 					glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -1304,8 +1326,15 @@ GLuint FiscionX::Model::getGlossinessTextureFromSpecGloss(const tinygltf::Model&
 					GLuint texID;
 					glGenTextures(1, &texID);
 					glBindTexture(GL_TEXTURE_2D, texID);
-					glTexImage2D(GL_TEXTURE_2D, 0, format, img.width, img.height, 0,
-						format, GL_UNSIGNED_BYTE, img.image.data());
+					if (FiscionX::Core::compressTexturesAutomatically) {
+						glHint(GL_TEXTURE_COMPRESSION_HINT, GL_NICEST);
+						glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_RGBA_BPTC_UNORM,
+							img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+					}
+					else {
+						glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+							img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+					}
 					glGenerateMipmap(GL_TEXTURE_2D);
 					glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
 					glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -1336,7 +1365,15 @@ GLuint FiscionX::Model::getNormalMapTexture(const tinygltf::Model& model, int ma
 	GLuint texID;
 	glGenTextures(1, &texID);
 	glBindTexture(GL_TEXTURE_2D, texID);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+	if (FiscionX::Core::compressTexturesAutomatically) {
+		glHint(GL_TEXTURE_COMPRESSION_HINT, GL_NICEST);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_RGBA_BPTC_UNORM,
+			img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+	}
+	else {
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+			img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+	}
 	glGenerateMipmap(GL_TEXTURE_2D);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -1876,7 +1913,15 @@ void FiscionX::Model::init(const std::string& path) {
 									const auto& img = gltfModel.images[imgIndex];
 									glGenTextures(1, &sub.glossinessTex);
 									glBindTexture(GL_TEXTURE_2D, sub.glossinessTex);
-									glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+									if (FiscionX::Core::compressTexturesAutomatically) {
+										glHint(GL_TEXTURE_COMPRESSION_HINT, GL_NICEST);
+										glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_RGBA_BPTC_UNORM,
+											img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+									}
+									else {
+										glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+											img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+									}
 									glGenerateMipmap(GL_TEXTURE_2D);
 									glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
 									glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -1904,7 +1949,15 @@ void FiscionX::Model::init(const std::string& path) {
 									const auto& img = gltfModel.images[imgIndex];
 									glGenTextures(1, &sub.specularF0Tex);
 									glBindTexture(GL_TEXTURE_2D, sub.specularF0Tex);
-									glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+									if (FiscionX::Core::compressTexturesAutomatically) {
+										glHint(GL_TEXTURE_COMPRESSION_HINT, GL_NICEST);
+										glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_RGBA_BPTC_UNORM,
+											img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+									}
+									else {
+										glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+											img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+									}
 									glGenerateMipmap(GL_TEXTURE_2D);
 									glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
 									glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -1929,7 +1982,15 @@ void FiscionX::Model::init(const std::string& path) {
 										const auto& img = gltfModel.images[imgIndex];
 										glGenTextures(1, &sub.transmissionTex);
 										glBindTexture(GL_TEXTURE_2D, sub.transmissionTex);
-										glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+										if (FiscionX::Core::compressTexturesAutomatically) {
+											glHint(GL_TEXTURE_COMPRESSION_HINT, GL_NICEST);
+											glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_RGBA_BPTC_UNORM,
+												img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+										}
+										else {
+											glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+												img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+										}
 										glGenerateMipmap(GL_TEXTURE_2D);
 										glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
 										glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -1957,7 +2018,15 @@ void FiscionX::Model::init(const std::string& path) {
 								GLenum format = (img.component == 4) ? GL_RGBA : GL_RGB;
 								GLenum internalFormat = (img.component == 4) ? GL_RGBA : GL_RGB;
 
-								glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, img.width, img.height, 0, format, GL_UNSIGNED_BYTE, img.image.data());
+								if (FiscionX::Core::compressTexturesAutomatically) {
+									glHint(GL_TEXTURE_COMPRESSION_HINT, GL_NICEST);
+									glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_RGBA_BPTC_UNORM,
+										img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+								}
+								else {
+									glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+										img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+								}
 								glGenerateMipmap(GL_TEXTURE_2D);
 
 								// Configurações de textura
@@ -2994,16 +3063,16 @@ void FiscionX::Core::CreateShadowMap(ShadowMap& sm, int LIGHT_TYPE) {
 	glGenTextures(1, &sm.depthMap);
 	glBindTexture(GL_TEXTURE_2D, sm.depthMap);
 	if (LIGHT_TYPE == LIGHT_DIRECTIONAL) {
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT,
-			DIR_SHADOW_SIZE, DIR_SHADOW_SIZE, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24,
+			DIR_SHADOW_SIZE, DIR_SHADOW_SIZE, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, NULL);
 	}
 	else if (LIGHT_TYPE == LIGHT_SPOT) {
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT,
-			SPOT_SHADOW_SIZE, SPOT_SHADOW_SIZE, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24,
+			SPOT_SHADOW_SIZE, SPOT_SHADOW_SIZE, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, NULL);
 	}
 	else if (LIGHT_TYPE == LIGHT_POINT) {
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT,
-			POINT_SHADOW_SIZE, POINT_SHADOW_SIZE, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24,
+			POINT_SHADOW_SIZE, POINT_SHADOW_SIZE, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, NULL);
 	}
 
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -3277,8 +3346,8 @@ void FiscionX::Core::RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 p
 	}
 }
 
-void FiscionX::Core::Set3DSettings(const int _DIRECTIONAL_LIGHT_SHADOW_SIZE, const int _SPOT_LIGHT_SHADOW_SIZE,
-	const int _POINT_LIGHT_SHADOW_SIZE, const float _SHADOW_VIEW_RADIUS, const float _NEAR_PLANE, const float _FAR_PLANE) {
+void FiscionX::Core::Set3DSettings(const int _DIRECTIONAL_LIGHT_SHADOW_SIZE, const int _SPOT_LIGHT_SHADOW_SIZE, const int _POINT_LIGHT_SHADOW_SIZE, 
+	const float _SHADOW_VIEW_RADIUS, const float _NEAR_PLANE, const float _FAR_PLANE, const bool _COMPRESS_TEXTURES_AUTOMATICALLY) {
 
 	DIR_SHADOW_SIZE = _DIRECTIONAL_LIGHT_SHADOW_SIZE;
 	SPOT_SHADOW_SIZE = _SPOT_LIGHT_SHADOW_SIZE;
@@ -3286,6 +3355,7 @@ void FiscionX::Core::Set3DSettings(const int _DIRECTIONAL_LIGHT_SHADOW_SIZE, con
 	NEAR_PLANE = _NEAR_PLANE;
 	FAR_PLANE = _FAR_PLANE;
 	SHADOW_VIEW_RADIUS = _SHADOW_VIEW_RADIUS;
+	compressTexturesAutomatically = _COMPRESS_TEXTURES_AUTOMATICALLY;
 }
 
 void FiscionX::Core::SetCursorMode(int mode) {
@@ -3370,9 +3440,9 @@ void FiscionX::Core::NewWindow(int width, int height, const char* window_label) 
 	glGenFramebuffers(1, &depthMapFBO);
 	glGenTextures(1, &depthMap);
 	glBindTexture(GL_TEXTURE_2D, depthMap);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT,
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24,
 		DIR_SHADOW_SIZE, DIR_SHADOW_SIZE, 0,
-		GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+		GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, NULL);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
