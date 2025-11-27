@@ -1017,6 +1017,7 @@ namespace FiscionX {
 
 		static bool enableShaderCache;
 		static bool enableModelCache;
+		static bool compressTexturesAutomatically;
 
 		static void CreateShadowMap(ShadowMap& sm, int LIGHT_TYPE);
 		static void CreateAllShadowMaps();
@@ -1029,7 +1030,7 @@ namespace FiscionX {
 		static void NewWindow(int width, int height, const char* window_label);
 		static void Set3DSettings(const int _DIRECTIONAL_LIGHT_SHADOW_SIZE, const int _SPOT_LIGHT_SHADOW_SIZE,
 			const int _POINT_LIGHT_SHADOW_SIZE, const float _SHADOW_VIEW_RADIUS, const float _NEAR_PLANE,
-			const float _FAR_PLANE);
+			const float _FAR_PLANE, const bool _COMPRESS_TEXTURES_AUTOMATICALLY);
 		static void ClockTick();
 		static void SetWindowSize(int width, int height);
 		static void SetWindowIcon(const char* path);

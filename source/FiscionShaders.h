@@ -211,19 +211,17 @@ const int LIGHT_DIRECTIONAL = 0;
 const int LIGHT_POINT = 1;
 const int LIGHT_SPOT = 2;
 
-// PCF omnidirecional para point lights
-const int PCF_SAMPLES = 20;
+// PCF otimizado: 8 amostras - bom custo/benefício
+const int PCF_SAMPLES = 8;
 const vec3 gridSamplingOffset[PCF_SAMPLES] = vec3[](
-  vec3(0.5381, 0.1856, -0.4319), vec3(0.1379, 0.2486, 0.4430),
-  vec3(0.3371, 0.5679, -0.0057), vec3(-0.6999, -0.0451, -0.0019),
-  vec3(0.0689, -0.1598, -0.8547), vec3(0.0560, 0.0069, -0.1843),
-  vec3(-0.0146, 0.1402, 0.0762), vec3(0.0100, -0.1924, -0.0344),
-  vec3(-0.3577, -0.5301, -0.4358), vec3(-0.3169, 0.1063, 0.0158),
-  vec3(0.0103, -0.5869, 0.0046), vec3(-0.0897, -0.4940, 0.3287),
-  vec3(0.7119, -0.0154, -0.0918), vec3(-0.0533, 0.0596, -0.5411),
-  vec3(0.0352, -0.0631, 0.5460), vec3(-0.4776, 0.2847, -0.0271),
-  vec3(0.2083, -0.6554, 0.4233), vec3(-0.2899, 0.7535, -0.2406),
-  vec3(0.4190, 0.1449, 0.3743), vec3(-0.5871, -0.4252, 0.1035)
+    vec3( 0.1,  0.1,  0.0),
+    vec3(-0.1,  0.1,  0.0),
+    vec3( 0.1, -0.1,  0.0),
+    vec3(-0.1, -0.1,  0.0),
+    vec3( 0.15, 0.0,  0.15),
+    vec3(-0.15, 0.0,  0.15),
+    vec3( 0.15, 0.0, -0.15),
+    vec3(-0.15, 0.0, -0.15)
 );
 
 out vec4 FragColor;
@@ -276,9 +274,19 @@ uniform vec3 environmentGroundColor;
 uniform int isAffectedByLight;
 uniform int acceptsShadows;
 
-uniform float alpha;
-
 const float diskRadius = 0.1;
+
+// --- Poisson disk reduced to 8 for 2D sampling (cheap, good quality)
+const vec2 poisson8[8] = vec2[](
+    vec2(-0.326212, -0.40581),
+    vec2(-0.840144,  0.07358),
+    vec2(-0.695914, -0.45755),
+    vec2(-0.203345,  0.620716),
+    vec2( 0.96234,  -0.194983),
+    vec2( 0.473434, -0.480026),
+    vec2( 0.519456,  0.767022),
+    vec2( 0.185461, -0.893124)
+);
 
 float ShadowCalculation2D(vec4 fragPosLS, sampler2D shadowMap, vec3 N, vec3 L) {
     if (acceptsShadows == 0) return 0.0;
@@ -288,47 +296,29 @@ float ShadowCalculation2D(vec4 fragPosLS, sampler2D shadowMap, vec3 N, vec3 L) {
 
     // fora do shadowmap → sem sombra
     if (projCoords.z > 1.0 || projCoords.x < 0.0 || projCoords.y < 0.0 ||
-        projCoords.x > 1.0 || projCoords.y > 1.0) 
+        projCoords.x > 1.0 || projCoords.y > 1.0)
         return 0.0;
 
     float currentDepth = projCoords.z;
     vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
 
-    // bias adaptativo
+    // bias adaptativo (combinação sólida e segura)
     float bias = max(0.003 * (1.0 - dot(N, L)), 0.001);
 
-    // raio ajustado pela distância
-    float distFactor = clamp(currentDepth * 6.0, 1.0, 4.0);
-    float radius = 1.5 * distFactor;
-
-    const vec2 poissonDisk[32] = vec2[](
-        vec2(-0.613392, 0.617481), vec2(0.170019, -0.040254),
-        vec2(-0.299417, -0.791925), vec2(0.645680, 0.493210),
-        vec2(-0.651784, -0.717887), vec2(0.421003, -0.027070),
-        vec2(-0.817194, 0.271096), vec2(0.676962, -0.611195),
-        vec2(-0.205527, 0.780980), vec2(0.881396, -0.458965),
-        vec2(-0.613392, 0.995210), vec2(0.156989, 0.819345),
-        vec2(-0.102147, -0.171599), vec2(0.849747, 0.300822),
-        vec2(-0.207641, -0.617362), vec2(0.320019, -0.920254),
-        vec2(0.562210, -0.326998), vec2(-0.783316, -0.253210),
-        vec2(0.230144, 0.305274), vec2(-0.185660, 0.147680),
-        vec2(0.698422, -0.027080), vec2(-0.970138, 0.134580),
-        vec2(0.198182, -0.577850), vec2(-0.451879, 0.353680),
-        vec2(0.401144, -0.705274), vec2(-0.298182, 0.977850),
-        vec2(0.870138, 0.284580), vec2(-0.598422, -0.127080),
-        vec2(0.285660, 0.247680), vec2(-0.701144, 0.505274),
-        vec2(0.498182, -0.377850), vec2(-0.870138, -0.384580)
-    );
+    // raio adaptativo pela profundidade (suaviza a penumbra)
+    float distFactor = clamp(currentDepth * 6.0, 1.0, 3.0);
+    float radius = 1.2 * distFactor;
 
     float shadow = 0.0;
-    for (int i = 0; i < 32; ++i) {
-        vec2 offset = poissonDisk[i] * texelSize * radius;
+
+    // amostragem reduzida (8) com poisson
+    for (int i = 0; i < 8; ++i) {
+        vec2 offset = poisson8[i] * texelSize * radius;
         float closestDepth = texture(shadowMap, projCoords.xy + offset).r;
-        if (currentDepth - bias > closestDepth)
-            shadow += 1.0;
+        if (currentDepth - bias > closestDepth) shadow += 1.0;
     }
 
-    return shadow / 32.0; // fração de sombra
+    return shadow / 8.0;
 }
 
 float ShadowCalculationPoint(int idx, vec3 fragPos) {
@@ -337,24 +327,30 @@ float ShadowCalculationPoint(int idx, vec3 fragPos) {
     vec3 fragToLight = fragPos - lightPos[idx];
     float currentDepth = length(fragToLight);
 
-    float bias = 0.05 + currentDepth * 0.005;
+    // bias base mais seguro para point lights
+    float bias = max(0.02 * (1.0 - (currentDepth / max(lightMaxDistance[idx], 0.0001))), 0.01);
+
+    // amostragem adaptativa: mais amostras perto (detalhe), menos longe
+    float nd = clamp(currentDepth / max(lightMaxDistance[idx], 0.0001), 0.0, 1.0);
+    int samples = 4; // default cheap
+    if (nd < 0.3) samples = 8;     // perto -> mais samples
+    else if (nd < 0.6) samples = 6;
+    else samples = 3;             // longe -> very cheap
 
     float shadow = 0.0;
-    for (int i = 0; i < PCF_SAMPLES; ++i) {
-        float closestDepth = texture(
-            shadowCubeMaps[idx],
-            fragToLight + gridSamplingOffset[i] * diskRadius
-        ).r;
-
+    // sampling loop - note: gridSamplingOffset has 8 entries; reuse first N
+    for (int i = 0; i < samples; ++i) {
+        vec3 samplePos = fragToLight + gridSamplingOffset[i] * diskRadius * (1.0 + nd * 2.0);
+        float closestDepth = texture(shadowCubeMaps[idx], samplePos).r;
         closestDepth *= lightMaxDistance[idx];
-        if (currentDepth - bias > closestDepth)
-            shadow += 1.0;
+        if (currentDepth - bias > closestDepth) shadow += 1.0;
     }
 
-    return shadow / float(PCF_SAMPLES); // fração de sombra
+    return shadow / float(samples);
 }
 
 vec3 fresnelSchlick(float cosTheta, vec3 F0) {
+  // Schlick é barato; mantive para qualidade
   return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
 }
 
@@ -364,34 +360,68 @@ void main() {
   vec3 baseColor = baseSample.rgb;
 
   float glossiness = hasGlossinessMap == 1 ? clamp(texture(glossinessTex, fs_in.TexCoords).r, 0.05, 1.0) : 1.0;
+
   vec3 F0 = vec3(0.04);
   if (hasSpecularF0Map == 1) {
     vec3 texF0 = texture(specularF0Tex, fs_in.TexCoords).rgb;
     if (length(texF0) > 0.01) F0 = clamp(texF0, vec3(0.0), vec3(0.5));
   }
 
-  vec3 tangentNormal = hasNormalMap == 1 ? texture(normalMapTex, fs_in.TexCoords).rgb * 2.0 - 1.0 : vec3(0, 0, 1);
-  mat3 TBN = mat3(normalize(fs_in.Tangent), normalize(fs_in.Bitangent), normalize(fs_in.Normal));
-  vec3 N = normalize(TBN * tangentNormal);
+  // Normal mapping: compute TBN only if map exists - avoids cost if not needed
+  vec3 N;
+  if (hasNormalMap == 1) {
+    vec3 tangentNormal = texture(normalMapTex, fs_in.TexCoords).rgb * 2.0 - 1.0;
+    // build orthonormal TBN (normalize once)
+    vec3 T = normalize(fs_in.Tangent);
+    vec3 B = normalize(fs_in.Bitangent);
+    vec3 Nor = normalize(fs_in.Normal);
+    mat3 TBN = mat3(T, B, Nor);
+    N = normalize(TBN * tangentNormal);
+  } else {
+    N = normalize(fs_in.Normal);
+  }
+
+  // precompute view vector once
+  vec3 V = normalize(viewPos - fs_in.FragPos);
 
   vec3 ambientSum = vec3(0.0);
   vec3 diffuseSum = vec3(0.0);
 
+  // loop por luzes
   for (int i = 0; i < numLights; ++i) {
+    // fetch light data
+    int ltype = lightType[i];
     vec3 L;
-    float attenuation = 1.0, intensity = 1.0, shadow = 0.0;
+    float attenuation = 1.0;
+    float intensity = lightIntensity[i];
+    float shadow = 0.0;
 
-    if (lightType[i] == LIGHT_DIRECTIONAL) {
+    if (ltype == LIGHT_DIRECTIONAL) {
       L = normalize(-lightDir[i]);
+      // early skip: if N·L <= 0 nothing to add (but ambient still counted)
+      float NdotL = dot(N, L);
+      if (NdotL <= 0.0) {
+        // accumulate ambient only
+        ambientSum += 0.05 * baseColor * lightColor[i] * intensity;
+        continue;
+      }
       shadow = ShadowCalculation2D(fs_in.FragPosLightSpace[i], shadowMaps[i], N, L);
-    } else if (lightType[i] == LIGHT_POINT) {
+    }
+    else if (ltype == LIGHT_POINT) {
       vec3 toLight = lightPos[i] - fs_in.FragPos;
       float dist = length(toLight);
       if (dist > lightMaxDistance[i]) continue;
       L = normalize(toLight);
-      attenuation = pow(clamp(1.0 - dist / lightMaxDistance[i], 0.0, 1.0), 2.0);
+      float attFactor = clamp(1.0 - dist / lightMaxDistance[i], 0.0, 1.0);
+      attenuation = attFactor * attFactor;
+      float NdotL = dot(N, L);
+      if (NdotL <= 0.0) {
+        ambientSum += attenuation * 0.05 * baseColor * lightColor[i] * intensity;
+        continue;
+      }
       shadow = ShadowCalculationPoint(i, fs_in.FragPos);
-    } else {
+    }
+    else { // SPOT
       vec3 toLight = lightPos[i] - fs_in.FragPos;
       float dist = length(toLight);
       if (dist > lightMaxDistance[i]) continue;
@@ -399,37 +429,47 @@ void main() {
       attenuation = 1.0 / (lightConstant[i] + lightLinear[i] * dist + lightQuadratic[i] * dist * dist);
       float theta = dot(-L, normalize(lightDir[i]));
       float eps = max(lightCutOff[i] - lightOuterCutOff[i], 0.001);
-      intensity = clamp((theta - lightOuterCutOff[i]) / eps, 0.0, 1.0);
-      if (theta < lightOuterCutOff[i]) continue;
+      float spotIntensity = clamp((theta - lightOuterCutOff[i]) / eps, 0.0, 1.0);
+      intensity *= spotIntensity;
+      float NdotL = dot(N, L);
+      if (NdotL <= 0.0) {
+        ambientSum += attenuation * 0.05 * baseColor * lightColor[i] * intensity;
+        continue;
+      }
       shadow = ShadowCalculation2D(fs_in.FragPosLightSpace[i], shadowMaps[i], N, L);
     }
 
+    // BRDF cheap-ish
     float diff = max(dot(N, L), 0.0);
-    vec3 V = normalize(viewPos - fs_in.FragPos);
     vec3 H = normalize(L + V);
     float NdotH = max(dot(N, H), 0.0);
 
     vec3 kS = fresnelSchlick(NdotH, F0);
     vec3 kD = max(vec3(1.0) - kS, vec3(0.05));
 
+    // cheaper specular: use pow but with clamped exponent
+    float specPower = clamp(glossiness * 128.0, 8.0, 256.0); // keep reasonable
+    float specFactor = pow(NdotH, specPower);
+
     vec3 diffuse = kD * baseColor * diff;
-    vec3 specular = kS * pow(NdotH, glossiness * 128.0);
-    vec3 lightCol = lightColor[i] * lightIntensity[i];
-    
-    // ======= SHADOW FADE  =======
+    vec3 specular = kS * specFactor;
+
+    vec3 lightCol = lightColor[i] * intensity;
+
+    // sombra com fade pro ambiente
     float shadowFade = clamp(environmentStrength * 0.7, 0.0, 1.0);
-    // sombras muito escuras → clarear proporcional ao ambiente
     float shadowTerm = mix(1.0 - shadow, 1.0, shadowFade);
-    // =======================================
 
     vec3 contrib = (diffuse + specular) * shadowTerm;
 
-    diffuseSum += attenuation * intensity * contrib * lightCol;
-    ambientSum += attenuation * intensity * 0.05 * baseColor * lightCol;
+    diffuseSum += attenuation * contrib * lightCol;
+    ambientSum += attenuation * 0.05 * baseColor * lightCol;
   }
 
+  // transmission (unchanged)
   float transAmt = texture(transmissionTex, fs_in.TexCoords).r * transmissionFactor;
   vec3 transLight = baseColor * transAmt * 0.5;
+
   vec3 result = ambientSum + diffuseSum;
 
   // environment hemispheric light
@@ -446,9 +486,9 @@ void main() {
     result += baseColor * ambientHemi * environmentStrength * 1.3;
     result = max(result, baseColor * 0.7);
     result = mix(result, result + transLight, transAmt);
-    FragColor = vec4(result, (alphaMode == 2 ? baseSample.a : 1.0) * alpha);
+    FragColor = vec4(result, (alphaMode == 2 ? baseSample.a : 1.0));
   } else {
-    FragColor = vec4(result, (alphaMode == 2 ? baseSample.a : 1.0) * alpha);
+    FragColor = vec4(result, (alphaMode == 2 ? baseSample.a : 1.0));
   }
 }
 )";
