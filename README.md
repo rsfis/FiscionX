@@ -88,6 +88,10 @@ int main() {
 - Paste "redist/plugins" into your release folders
 - Link the static libraries (.lib) and the FiscionX cpp (core.cpp, tiny_gltf.cpp, stb_image.cpp and stb_image_write.cpp) and headers (FiscionCore.h and FiscionShaders.h) files to your compiler.
 
+Or:
+
+- Download the FiscionX Hub at Releases and create your project automatically with it.
+
 ## Links
 Discord - https://discord.gg/42ScmJA2t6.
 Wiki - https://github.com/rsfis/fiscionx/wiki.
