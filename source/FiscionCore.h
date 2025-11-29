@@ -684,6 +684,7 @@ namespace FiscionX {
 		int         type = LIGHT_DIRECTIONAL;
 		FiscionX::Vector3 position = FiscionX::Vector3(0, 0, 0);
 		FiscionX::Vector3 direction = FiscionX::Vector3(0, 0, 0);
+		float yaw, pitch;
 		FiscionX::Vector3 color = FiscionX::Vector3(1.0f, 1.0f, 1.0f);
 		float       intensity = 1.0f;
 
@@ -1021,7 +1022,7 @@ namespace FiscionX {
 
 		static void CreateShadowMap(ShadowMap& sm, int LIGHT_TYPE);
 		static void CreateAllShadowMaps();
-		static glm::mat4 ComputeLightSpaceMatrix(const Light& L);
+		static glm::mat4 ComputeLightSpaceMatrix(Light& L);
 		static void RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 projection, FiscionX::Mat4 viewProj);
 
 		static void SetCursorMode(int mode);
