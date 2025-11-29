@@ -1,6 +1,6 @@
 ﻿#include "FiscionCore.h"
 #include "FiscionShaders.h"
-#define ENGINE_VERSION "0.6.0"
+#define ENGINE_VERSION "0.7.0"
 
 // last error number: 17
 
@@ -27,6 +27,7 @@ glm::vec3     FiscionX::Core::AMBIENT_LIGHT_SKYCOLOR = { 0.3f, 0.3f, 0.35f };
 glm::vec3     FiscionX::Core::AMBIENT_LIGHT_GROUNDCOLOR = { 0.05f, 0.05f, 0.07f };
 GLuint FiscionX::Core::depthMapFBO;
 GLuint FiscionX::Core::depthMap;
+std::vector<float> FiscionX::Core::shadowCascadeLevels = { 20.0f, 70.0f, 200.0f };
 bool FiscionX::Core::compressTexturesAutomatically = false;
 
 GLuint FiscionX::Core::textShader;
@@ -2252,6 +2253,37 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 	glUniform3fv(glGetUniformLocation(shader, "viewPos"), 1, glm::value_ptr(glm::vec3(FiscionX::Core::Camera.position.x, FiscionX::Core::Camera.position.y, FiscionX::Core::Camera.position.z)));
 	glUniform1i(glGetUniformLocation(shader, "numLights"), numLights);
 
+	// --- CSM: ENVIANDO DADOS DA DIREÇÃO (SOL) ---
+	// Procura a primeira luz direcional (nosso Sol)
+	int dirLightIndex = -1;
+	for (int i = 0; i < numLights; ++i) {
+		if (FiscionX::Core::AllLights[i]->type == 0) { // LIGHT_DIRECTIONAL
+			dirLightIndex = i;
+			break;
+		}
+	}
+
+	if (dirLightIndex != -1 && !depthPass) {
+		const FiscionX::ShadowMap& sm = FiscionX::Core::AllShadowMaps[dirLightIndex];
+
+		// Slot 30 pra garantir que não bate com as outras sombras
+		glActiveTexture(GL_TEXTURE30);
+		glBindTexture(GL_TEXTURE_2D_ARRAY, sm.depthMap);
+		glUniform1i(glGetUniformLocation(shader, "shadowMapDir"), 30);
+
+		// Envia distâncias de corte
+		glUniform1i(glGetUniformLocation(shader, "cascadeCount"), (int)FiscionX::Core::shadowCascadeLevels.size());
+		for (size_t i = 0; i < FiscionX::Core::shadowCascadeLevels.size(); ++i) {
+			glUniform1f(glGetUniformLocation(shader, ("cascadePlaneDistances[" + std::to_string(i) + "]").c_str()), FiscionX::Core::shadowCascadeLevels[i]);
+		}
+
+		// Envia as matrizes das cascatas
+		for (size_t i = 0; i < sm.cascadeLightSpaceMatrices.size(); ++i) {
+			glUniformMatrix4fv(glGetUniformLocation(shader, ("cascadeLightSpaceMatrices[" + std::to_string(i) + "]").c_str()), 1, GL_FALSE, glm::value_ptr(sm.cascadeLightSpaceMatrices[i]));
+		}
+	}
+	// --------------------------------------------
+
 	for (int i = 0; i < numLights; ++i) {
 		const Light& L = *FiscionX::Core::AllLights[i];
 		const ShadowMap& sm = FiscionX::Core::AllShadowMaps[i];
@@ -2272,18 +2304,20 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 		glUniform3fv(glGetUniformLocation(shader, ("lightGlowColor[" + idx + "]").c_str()), 1, glm::value_ptr(glm::vec3(L.glowColor.x, L.glowColor.y, L.glowColor.z)));
 		glUniform1f(glGetUniformLocation(shader, ("lightGlowRadius[" + idx + "]").c_str()), L.glowRadius);
 
-		if (L.type == LIGHT_POINT) {
+		if (L.type == 1) { // LIGHT_POINT
 			glActiveTexture(GL_TEXTURE20 + i);
 			glBindTexture(GL_TEXTURE_CUBE_MAP, sm.depthMap);
 			glUniform1i(glGetUniformLocation(shader, ("shadowCubeMaps[" + idx + "]").c_str()), 20 + i);
 		}
-		else {
+		else if (L.type == 2) { // LIGHT_SPOT
 			glActiveTexture(GL_TEXTURE10 + i);
 			glBindTexture(GL_TEXTURE_2D, sm.depthMap);
 			glUniform1i(glGetUniformLocation(shader, ("shadowMaps[" + idx + "]").c_str()), 10 + i);
 			glUniformMatrix4fv(glGetUniformLocation(shader, ("lightSpaceMatrices[" + idx + "]").c_str()), 1, GL_FALSE, glm::value_ptr(sm.lightSpaceMatrix));
 		}
+		// DIRECTIONAL ja foi tratado lá em cima com Array Texture
 	}
+
 	glm::mat4 baseMatrix =
 		glm::translate(glm::mat4(1.0f), glm::vec3(position.x, position.y, position.z))
 		* glm::eulerAngleXYZ(rotation.y, rotation.x, rotation.z)
@@ -3061,30 +3095,49 @@ const btRigidBody* FiscionX::Physics::Raycast::GetFirstBodyCollided(FiscionX::Ve
 void FiscionX::Core::CreateShadowMap(ShadowMap& sm, int LIGHT_TYPE) {
 	glGenFramebuffers(1, &sm.fbo);
 	glGenTextures(1, &sm.depthMap);
-	glBindTexture(GL_TEXTURE_2D, sm.depthMap);
-	if (LIGHT_TYPE == LIGHT_DIRECTIONAL) {
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24,
-			DIR_SHADOW_SIZE, DIR_SHADOW_SIZE, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, NULL);
-	}
-	else if (LIGHT_TYPE == LIGHT_SPOT) {
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24,
-			SPOT_SHADOW_SIZE, SPOT_SHADOW_SIZE, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, NULL);
-	}
-	else if (LIGHT_TYPE == LIGHT_POINT) {
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24,
-			POINT_SHADOW_SIZE, POINT_SHADOW_SIZE, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, NULL);
-	}
 
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-	float borderColor[] = { 1.0, 1.0, 1.0, 1.0 };
-	glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
+	if (LIGHT_TYPE == LIGHT_DIRECTIONAL) {
+		glBindTexture(GL_TEXTURE_2D_ARRAY, sm.depthMap);
+		glTexImage3D(
+			GL_TEXTURE_2D_ARRAY, 0, GL_DEPTH_COMPONENT32F,
+			DIR_SHADOW_SIZE, DIR_SHADOW_SIZE, (int)shadowCascadeLevels.size() + 1,
+			0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+
+		glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+		glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+
+		constexpr float borderColor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
+		glTexParameterfv(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_BORDER_COLOR, borderColor);
+	}
+	else {
+		glBindTexture(GL_TEXTURE_2D, sm.depthMap);
+		if (LIGHT_TYPE == LIGHT_SPOT) {
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24,
+				SPOT_SHADOW_SIZE, SPOT_SHADOW_SIZE, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, NULL);
+		}
+		else if (LIGHT_TYPE == LIGHT_POINT) {
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24,
+				POINT_SHADOW_SIZE, POINT_SHADOW_SIZE, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, NULL);
+		}
+
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+		float borderColor[] = { 1.0, 1.0, 1.0, 1.0 };
+		glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
+	}
 
 	glBindFramebuffer(GL_FRAMEBUFFER, sm.fbo);
-	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, sm.depthMap, 0);
+	if (LIGHT_TYPE == LIGHT_DIRECTIONAL) {
+		glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, sm.depthMap, 0);
+	}
+	else {
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, sm.depthMap, 0);
+	}
+
 	glDrawBuffer(GL_NONE);
 	glReadBuffer(GL_NONE);
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -3095,9 +3148,31 @@ void FiscionX::Core::CreateAllShadowMaps() {
 	for (FiscionX::Light* L : FiscionX::Core::AllLights) {
 		FiscionX::ShadowMap sm;
 		FiscionX::Core::CreateShadowMap(sm, L->type);
-		sm.lightSpaceMatrix = FiscionX::Core::ComputeLightSpaceMatrix(*L);
+		sm.lightSpaceMatrix = FiscionX::Core::getLightSpaceMatrix(*L, NEAR_PLANE, FAR_PLANE);
 		FiscionX::Core::AllShadowMaps.push_back(sm);
 	}
+}
+
+std::vector<glm::vec4> FiscionX::Core::getFrustumCornersWorldSpace(const glm::mat4& proj, const glm::mat4& view)
+{
+	const auto inv = glm::inverse(proj * view);
+	std::vector<glm::vec4> frustumCorners;
+	for (unsigned int x = 0; x < 2; ++x)
+	{
+		for (unsigned int y = 0; y < 2; ++y)
+		{
+			for (unsigned int z = 0; z < 2; ++z)
+			{
+				const glm::vec4 pt = inv * glm::vec4(
+					2.0f * x - 1.0f,
+					2.0f * y - 1.0f,
+					2.0f * z - 1.0f,
+					1.0f);
+				frustumCorners.push_back(pt / pt.w);
+			}
+		}
+	}
+	return frustumCorners;
 }
 
 glm::mat4 FiscionX::Core::ComputeLightSpaceMatrix(Light& L) {
@@ -3119,7 +3194,7 @@ glm::mat4 FiscionX::Core::ComputeLightSpaceMatrix(Light& L) {
 		float orthoSize = FiscionX::Core::SHADOW_VIEW_RADIUS;
 		glm::vec3 dir = glm::normalize(glm::vec3(L.direction.x, L.direction.y, L.direction.z));
 
-		glm::vec3 center = glm::vec3(Camera.position.x, Camera.position.y, Camera.position.z) + glm::vec3(Camera.front.x, Camera.front.y, Camera.front.z) * glm::vec3(orthoSize);
+		glm::vec3 center = glm::vec3(Camera.position.x, Camera.position.y, Camera.position.z);
 		glm::vec3 lightPos = center - dir * 30.0f;
 
 		glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
@@ -3153,6 +3228,70 @@ glm::mat4 FiscionX::Core::ComputeLightSpaceMatrix(Light& L) {
 	return glm::mat4(1.0f);
 }
 
+glm::mat4 FiscionX::Core::getLightSpaceMatrix(FiscionX::Light& L, const float nearPlane, const float farPlane)
+{
+	// 1. Recalcula direção (Tua lógica original mantida)
+	float yawRads = glm::radians(L.yaw);
+	float pitchRads = glm::radians(L.pitch);
+
+	glm::vec3 newDirection;
+	newDirection.x = glm::cos(pitchRads) * glm::sin(yawRads);
+	newDirection.y = glm::sin(pitchRads);
+	newDirection.z = glm::cos(pitchRads) * glm::cos(yawRads);
+
+	L.direction = FiscionX::Vector3(glm::normalize(newDirection).x, glm::normalize(newDirection).y, glm::normalize(newDirection).z); // Atualiza na struct pra garantir
+
+	// 2. Calcula o Frustum da fatia atual da câmera
+	const auto proj = glm::perspective(
+		glm::radians(FiscionX::Core::Camera.fov),
+		(float)FiscionX::Core::SCREEN_WIDTH / (float)FiscionX::Core::SCREEN_HEIGHT,
+		nearPlane,
+		farPlane
+	);
+
+	const auto corners = getFrustumCornersWorldSpace(proj, FiscionX::Core::Camera.GetView());
+
+	// 3. Acha o centro geométrico dessa fatia
+	glm::vec3 center = glm::vec3(0, 0, 0);
+	for (const auto& v : corners)
+		center += glm::vec3(v);
+	center /= corners.size();
+
+	// 4. Cria a View Matrix da Luz olhando para esse centro
+	// O "up" vector precisa ser estável pra sombra não tremer igual vara verde
+	const auto lightView = glm::lookAt(center - glm::vec3(L.direction.x, L.direction.y, L.direction.z), center, glm::vec3(0.0f, 1.0f, 0.0f));
+
+	// 5. Ajusta o Ortho (Bounding Box) pra cobrir EXATAMENTE os cantos dessa fatia vistos da luz
+	float minX = std::numeric_limits<float>::max();
+	float maxX = std::numeric_limits<float>::lowest();
+	float minY = std::numeric_limits<float>::max();
+	float maxY = std::numeric_limits<float>::lowest();
+	float minZ = std::numeric_limits<float>::max();
+	float maxZ = std::numeric_limits<float>::lowest();
+
+	for (const auto& v : corners)
+	{
+		const auto trf = lightView * v;
+		minX = std::min(minX, trf.x);
+		maxX = std::max(maxX, trf.x);
+		minY = std::min(minY, trf.y);
+		maxY = std::max(maxY, trf.y);
+		minZ = std::min(minZ, trf.z);
+		maxZ = std::max(maxZ, trf.z);
+	}
+
+	// Tunez: Multiplicador zMult pra pegar objetos que estão atrás da câmera mas projetam sombra nela (árvores, prédios)
+	// Se ficar cortando sombra atrás de você, aumenta isso aqui.
+	float zMult = 10.0f;
+	if (minZ < 0) minZ *= zMult;
+	else minZ /= zMult;
+	if (maxZ < 0) maxZ /= zMult;
+	else maxZ *= zMult;
+
+	const glm::mat4 lightProjection = glm::ortho(minX, maxX, minY, maxY, minZ, maxZ);
+	return lightProjection * lightView;
+}
+
 void FiscionX::Core::RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 projection, FiscionX::Mat4 viewProj) {
 	// update skin UBOs once
 	for (auto& model : AllModels) {
@@ -3182,7 +3321,7 @@ void FiscionX::Core::RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 p
 	_lastCameraPos = glm::vec3(Camera.position.x, Camera.position.y, Camera.position.z);
 
 	for (size_t i = 0; i < AllLights.size(); ++i) {
-		Light& L = *AllLights[i];             // Non-const to update timing fields
+		Light& L = *AllLights[i]; // Non-const to update timing fields
 		ShadowMap& sm = AllShadowMaps[i];
 
 		if (!L.enableShadows) continue;
@@ -3202,7 +3341,59 @@ void FiscionX::Core::RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 p
 		L.lastShadowUpdateTime = now;
 		L.lastPosition = glm::vec3(L.position.x, L.position.y, L.position.z);
 
-		if (L.type == LIGHT_POINT) {
+		// ==========================================
+		// CASCADE SHADOW MAP (DIRECTIONAL LIGHT)
+		// ==========================================
+		if (L.type == LIGHT_DIRECTIONAL) {
+			sm.cascadeLightSpaceMatrices.clear();
+
+			// Loopa pelas camadas (cascatas)
+			for (size_t c = 0; c < shadowCascadeLevels.size() + 1; ++c) {
+				float prevSplit = (c == 0) ? NEAR_PLANE : shadowCascadeLevels[c - 1];
+				float currSplit = (c < shadowCascadeLevels.size()) ? shadowCascadeLevels[c] : FAR_PLANE;
+
+				// Calcula matriz ajustada para essa fatia
+				sm.cascadeLightSpaceMatrices.push_back(getLightSpaceMatrix(L, prevSplit, currSplit));
+			}
+
+			glViewport(0, 0, DIR_SHADOW_SIZE, DIR_SHADOW_SIZE);
+			glBindFramebuffer(GL_FRAMEBUFFER, sm.fbo);
+
+			// Renderiza cada Layer do Texture Array
+			for (unsigned int layer = 0; layer < sm.cascadeLightSpaceMatrices.size(); ++layer) {
+				glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, sm.depthMap, 0, layer);
+				glClear(GL_DEPTH_BUFFER_BIT);
+
+				// Fix Peter Panning
+				glEnable(GL_CULL_FACE);
+				glCullFace(GL_FRONT);
+
+				// STATIC PASS
+				glUseProgram(depthShaderStatic);
+				glUniformMatrix4fv(glGetUniformLocation(depthShaderStatic, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(sm.cascadeLightSpaceMatrices[layer]));
+
+				for (auto& m : AllModels) {
+					if (m->castsShadows && !m->isSkinned)
+						m->draw(depthShaderStatic, glm::mat4(1.0f), 0, true, view, projection);
+				}
+
+				// SKINNED PASS
+				glUseProgram(depthShaderSkinned);
+				glUniformMatrix4fv(glGetUniformLocation(depthShaderSkinned, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(sm.cascadeLightSpaceMatrices[layer]));
+
+				for (auto& m : AllModels) {
+					if (m->castsShadows && m->isSkinned)
+						m->draw(depthShaderSkinned, glm::mat4(1.0f), 0, true, view, projection);
+				}
+			}
+
+			glCullFace(GL_BACK);
+			glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		}
+		// ==========================================
+		// POINT LIGHT (CUBEMAP)
+		// ==========================================
+		else if (L.type == LIGHT_POINT) {
 			// --- OPTIMIZED: prefilter models in range once ---
 			glm::vec3 pos = glm::vec3(L.position.x, L.position.y, L.position.z);
 			std::vector<size_t> staticIndices;
@@ -3272,9 +3463,12 @@ void FiscionX::Core::RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 p
 
 			glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		}
+		// ==========================================
+		// SPOT LIGHT (LEGACY 2D SHADOW)
+		// ==========================================
 		else if (L.type == LIGHT_SPOT) {
 			// Spot: distance + cone culling (kept as-is)
-			sm.lightSpaceMatrix = ComputeLightSpaceMatrix(L);
+			sm.lightSpaceMatrix = ComputeLightSpaceMatrix(L); // Essa aqui ainda usa a antiga pra spot, ta safe
 			glm::vec3 lightPos = glm::vec3(L.position.x, L.position.y, L.position.z);
 
 			glViewport(0, 0, SPOT_SHADOW_SIZE, SPOT_SHADOW_SIZE);
@@ -3322,53 +3516,18 @@ void FiscionX::Core::RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 p
 			glCullFace(GL_BACK);
 			glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		}
-		else if (L.type == LIGHT_DIRECTIONAL) {
-			// Directional
-			sm.lightSpaceMatrix = ComputeLightSpaceMatrix(L);
-
-			glViewport(0, 0, DIR_SHADOW_SIZE, DIR_SHADOW_SIZE);
-			glBindFramebuffer(GL_FRAMEBUFFER, sm.fbo);
-			glClear(GL_DEPTH_BUFFER_BIT);
-			glEnable(GL_CULL_FACE);
-			glCullFace(GL_FRONT);
-
-			// STATIC
-			glUseProgram(depthShaderStatic);
-			glUniformMatrix4fv(glGetUniformLocation(depthShaderStatic, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(sm.lightSpaceMatrix));
-
-			for (size_t mi = 0; mi < AllModels.size(); ++mi) {
-				if (!AllModels[mi]->castsShadows) continue;
-				if (!AllModels[mi]->isSkinned) {
-					AllModels[mi]->draw(depthShaderStatic, glm::mat4(1.0f), 0, true, view, projection);
-				}
-			}
-
-			// SKINNED
-			glUseProgram(depthShaderSkinned);
-			glUniformMatrix4fv(glGetUniformLocation(depthShaderSkinned, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(sm.lightSpaceMatrix));
-
-			for (size_t mi = 0; mi < AllModels.size(); ++mi) {
-				if (!AllModels[mi]->castsShadows) continue;
-				if (AllModels[mi]->isSkinned) {
-					AllModels[mi]->draw(depthShaderSkinned, glm::mat4(1.0f), 0, true, view, projection);
-				}
-			}
-
-			glCullFace(GL_BACK);
-			glBindFramebuffer(GL_FRAMEBUFFER, 0);
-		}
 	}
 }
 
 void FiscionX::Core::Set3DSettings(const int _DIRECTIONAL_LIGHT_SHADOW_SIZE, const int _SPOT_LIGHT_SHADOW_SIZE, const int _POINT_LIGHT_SHADOW_SIZE, 
-	const float _SHADOW_VIEW_RADIUS, const float _NEAR_PLANE, const float _FAR_PLANE, const bool _COMPRESS_TEXTURES_AUTOMATICALLY) {
+	const std::vector<float> SHADOW_CASCADE_LEVELS, const float _NEAR_PLANE, const float _FAR_PLANE, const bool _COMPRESS_TEXTURES_AUTOMATICALLY) {
 
 	DIR_SHADOW_SIZE = _DIRECTIONAL_LIGHT_SHADOW_SIZE;
 	SPOT_SHADOW_SIZE = _SPOT_LIGHT_SHADOW_SIZE;
 	POINT_SHADOW_SIZE = _POINT_LIGHT_SHADOW_SIZE;
 	NEAR_PLANE = _NEAR_PLANE;
 	FAR_PLANE = _FAR_PLANE;
-	SHADOW_VIEW_RADIUS = _SHADOW_VIEW_RADIUS;
+	shadowCascadeLevels = SHADOW_CASCADE_LEVELS;
 	compressTexturesAutomatically = _COMPRESS_TEXTURES_AUTOMATICALLY;
 }
 

@@ -249,6 +249,14 @@ uniform sampler2D shadowMaps[15];
 uniform samplerCube shadowCubeMaps[15];
 uniform sampler2D transmissionTex;
 
+// --- [CSM] UNIFORMS PARA LUZ DIRECIONAL ---
+uniform sampler2DArray shadowMapDir; // Texture Array do Sol
+uniform float cascadePlaneDistances[16]; // Distâncias de corte
+uniform int cascadeCount; 
+uniform mat4 cascadeLightSpaceMatrices[16]; // Matrizes de cada cascata
+uniform mat4 view; // View Matrix para calcular profundidade linear
+// ------------------------------------------
+
 uniform float transmissionFactor;
 uniform int hasNormalMap;
 uniform int numLights;
@@ -289,6 +297,55 @@ const vec2 poisson8[8] = vec2[](
     vec2( 0.519456,  0.767022),
     vec2( 0.185461, -0.893124)
 );
+
+// --- [CSM] FUNÇÃO DE CALCULO DE SOMBRA EM CASCATA ---
+float ShadowCalculationCSM(vec3 fragPosWorld, vec3 N, vec3 L) {
+    if (acceptsShadows == 0) return 0.0;
+
+    // 1. Seleciona a cascata baseada na profundidade da view (Z view space)
+    vec4 fragPosViewSpace = view * vec4(fragPosWorld, 1.0);
+    float depthValue = abs(fragPosViewSpace.z);
+
+    int layer = -1;
+    for (int i = 0; i < cascadeCount; ++i) {
+        if (depthValue < cascadePlaneDistances[i]) {
+            layer = i;
+            break;
+        }
+    }
+    if (layer == -1) layer = cascadeCount; // Última cascata
+
+    // 2. Transforma para Light Space da cascata correta
+    vec4 fragPosLS = cascadeLightSpaceMatrices[layer] * vec4(fragPosWorld, 1.0);
+    
+    // 3. Perspectiva divide e shift [0,1]
+    vec3 projCoords = fragPosLS.xyz / fragPosLS.w;
+    projCoords = projCoords * 0.5 + 0.5;
+
+    // Se estiver fora do range Z da luz, não tem sombra
+    float currentDepth = projCoords.z;
+    if (currentDepth > 1.0) return 0.0;
+
+    // 4. Bias variavel dependendo da cascata (quanto mais longe, menor a precisão necessária no bias)
+    float bias = max(0.005 * (1.0 - dot(N, L)), 0.0005);
+    if (layer == cascadeCount) bias *= 0.5;
+    else bias *= 1.0 / (float(layer) + 1.0); 
+
+    // 5. PCF Simples no Array Texture (Layer selecionado)
+    float shadow = 0.0;
+    vec2 texelSize = 1.0 / vec2(textureSize(shadowMapDir, 0));
+    
+    for(int x = -1; x <= 1; ++x) {
+        for(int y = -1; y <= 1; ++y) {
+            float pcfDepth = texture(shadowMapDir, vec3(projCoords.xy + vec2(x, y) * texelSize, layer)).r; 
+            shadow += (currentDepth - bias) > pcfDepth ? 1.0 : 0.0;        
+        }    
+    }
+    shadow /= 9.0;
+    
+    return shadow;
+}
+// ----------------------------------------------------
 
 float ShadowCalculation2D(vec4 fragPosLS, sampler2D shadowMap, vec3 N, vec3 L) {
     if (acceptsShadows == 0) return 0.0;
@@ -465,9 +522,7 @@ void main() {
   vec3 ambientSum = vec3(0.0);
   vec3 directLightSum = vec3(0.0);
 
-  // Loop principal - A iteração é feita no tamanho máximo do array (15) para garantir
-  // o desdobramento (unrolling) pelo compilador GLSL 330, necessário para
-  // indexar arrays uniformes dinamicamente.
+  // Loop principal
   for (int i = 0; i < 15; ++i) { 
     if (i >= numLights) break; // Termina se o índice ultrapassar as luzes ativas
     
@@ -485,8 +540,10 @@ void main() {
         ambientSum += 0.05 * baseColor * lightColor[i] * intensity;
         continue;
       }
-      // Light Space Matrix (Light Space Array) is available in fs_in.FragPosLightSpace[i]
-      shadow = ShadowCalculation2D(fs_in.FragPosLightSpace[i], shadowMaps[i], N, L);
+      
+      // --- AQUI A MAGICA DO CSM ---
+      // Chama a nova função de cascata, ignorando o FragPosLightSpace antigo
+      shadow = ShadowCalculationCSM(fs_in.FragPos, N, L);
     }
     else if (ltype == LIGHT_POINT) {
       vec3 toLight = lightPos[i] - fs_in.FragPos;
