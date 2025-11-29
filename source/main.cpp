@@ -32,7 +32,8 @@ void update() {
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_J)) dirLight->pitch += 0.01f;
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_L)) dirLight->pitch -= 0.01f;
 
-    std::cout << dirLight->pitch << std::endl;
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_SPACE)) skinnedModel->position.y += 0.004f;
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_B)) skinnedModel->position.z += 0.004f;
 }
 
 void draw() {
@@ -60,7 +61,7 @@ void draw() {
 }
 
 int main() {
-    FiscionX::Core::Set3DSettings(8192, 1024, 512, 28.0f, 0.01f, 3000.0f, false);
+    FiscionX::Core::Set3DSettings(8128, 1024, 512, { 20.0f, 70.0f, 200.0f }, 0.01f, 3000.0f, false);
     FiscionX::Core::SetCacheSettings(true, true);
     FiscionX::Core::NewWindow(1280, 720, "FiscionX");
     //FiscionX::Core::SetWindowFullscreen(true, 0);
@@ -101,7 +102,7 @@ int main() {
 
     FiscionX::Core::CreateAllShadowMaps();
 
-    // PROBLEMA: DIRECTIONAL LIGHTS TEM LIMITES DE DIREÇÃO - QUANDO A DIREÇÃO CHEGA A UM PONTO, ELA NÃO AVANÇA. NÃO FAZ 360 GRAUS EM TODOS OS EIXOS; CSM; Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Post Processing; Spot light rays & Lens flare; Terrains; Water
+    // SURFACES REFLECTS EVEN WHEN ARE COVERED BY SHADOWS; Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Post Processing; Spot light rays & Lens flare; Terrains; Water
 
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb",

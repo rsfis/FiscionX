@@ -672,6 +672,7 @@ namespace FiscionX {
 		GLuint fbo = 0;
 		GLuint depthMap = 0;
 		glm::mat4 lightSpaceMatrix = glm::mat4(1.0f);
+		std::vector<glm::mat4> cascadeLightSpaceMatrices;
 	};
 
 	enum LightType {
@@ -999,6 +1000,7 @@ namespace FiscionX {
 		static float SHADOW_VIEW_RADIUS;
 		static GLuint depthMapFBO;
 		static GLuint depthMap;
+		static std::vector<float> shadowCascadeLevels;
 
 		static GLuint textShader;
 
@@ -1022,6 +1024,8 @@ namespace FiscionX {
 
 		static void CreateShadowMap(ShadowMap& sm, int LIGHT_TYPE);
 		static void CreateAllShadowMaps();
+		static std::vector<glm::vec4> getFrustumCornersWorldSpace(const glm::mat4& proj, const glm::mat4& view);
+		static glm::mat4 getLightSpaceMatrix(FiscionX::Light& L, const float nearPlane, const float farPlane);
 		static glm::mat4 ComputeLightSpaceMatrix(Light& L);
 		static void RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 projection, FiscionX::Mat4 viewProj);
 
@@ -1030,7 +1034,7 @@ namespace FiscionX {
 
 		static void NewWindow(int width, int height, const char* window_label);
 		static void Set3DSettings(const int _DIRECTIONAL_LIGHT_SHADOW_SIZE, const int _SPOT_LIGHT_SHADOW_SIZE,
-			const int _POINT_LIGHT_SHADOW_SIZE, const float _SHADOW_VIEW_RADIUS, const float _NEAR_PLANE,
+			const int _POINT_LIGHT_SHADOW_SIZE, const std::vector<float> SHADOW_CASCADE_LEVELS, const float _NEAR_PLANE,
 			const float _FAR_PLANE, const bool _COMPRESS_TEXTURES_AUTOMATICALLY);
 		static void ClockTick();
 		static void SetWindowSize(int width, int height);
