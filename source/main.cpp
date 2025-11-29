@@ -9,6 +9,8 @@ FiscionX::Model* boxModel;
 FiscionX::Model* skinnedModel;
 FiscionX::Model* kratosStaticModel;
 
+float yaw, pitch;
+
 void update() {
     FiscionX::Core::ClockTick();
 
@@ -24,6 +26,13 @@ void update() {
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_S)) FiscionX::Core::Camera.position -= FiscionX::Core::Camera.front * camVel;
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_A)) FiscionX::Core::Camera.position -= FiscionX::Core::Camera.right * camVel;
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_D)) FiscionX::Core::Camera.position += FiscionX::Core::Camera.right * camVel;
+
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_I)) dirLight->yaw += 0.01f;
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_K)) dirLight->yaw -= 0.01f;
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_J)) dirLight->pitch += 0.01f;
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_L)) dirLight->pitch -= 0.01f;
+
+    std::cout << dirLight->pitch << std::endl;
 }
 
 void draw() {
@@ -51,7 +60,7 @@ void draw() {
 }
 
 int main() {
-    FiscionX::Core::Set3DSettings(8192, 1024, 512, 30.0f, 0.01f, 3000.0f, true);
+    FiscionX::Core::Set3DSettings(8192, 1024, 512, 28.0f, 0.01f, 3000.0f, false);
     FiscionX::Core::SetCacheSettings(true, true);
     FiscionX::Core::NewWindow(1280, 720, "FiscionX");
     //FiscionX::Core::SetWindowFullscreen(true, 0);
@@ -61,9 +70,10 @@ int main() {
 
     dirLight = new FiscionX::Light();
     dirLight->type = FiscionX::LIGHT_DIRECTIONAL;
-    dirLight->direction = FiscionX::Vector3(0.0f, -1.0f, -1.0f);
+    dirLight->yaw = 0;
+    dirLight->pitch = -138;
     dirLight->color = FiscionX::Vector3(1.0f, 1.0f, 1.0f);
-    dirLight->intensity = 1.3f;
+    dirLight->intensity = 3.3f;
     dirLight->maxDistance = 0.0f;
     dirLight->cutOff = 0.0f;
     dirLight->outerCutOff = 0.0f;
@@ -73,12 +83,12 @@ int main() {
     dirLight->hasGlow = false;
     dirLight->enableShadows = true;
 
-    spotLight = new FiscionX::Light();
+    /*spotLight = new FiscionX::Light();
     spotLight->type = FiscionX::LIGHT_SPOT;
     spotLight->position = FiscionX::Vector3(0.0f, 1.0f, -4.0f);
     spotLight->direction = FiscionX::Vector3(0.0f, 0.0f, 1.0f);
     spotLight->color = FiscionX::Vector3(0.0f, 1, 0);
-    spotLight->intensity = 2.0f;
+    spotLight->intensity = 6.0f;
     spotLight->maxDistance = 15.0f;
     spotLight->cutOff = glm::cos(glm::radians(25.0f));
     spotLight->outerCutOff = glm::cos(glm::radians(30.0f));
@@ -87,10 +97,11 @@ int main() {
     spotLight->quadratic = 0.032f;
     spotLight->hasGlow = false;
     spotLight->enableShadows = true;
+    */
 
     FiscionX::Core::CreateAllShadowMaps();
 
-    // CSM; Sliders; Viewports; UI Masks; Model Cache; Particles; Reflections; Fog; Ambient Occlusion; Post Processing; Spot light rays & Lens flare; Terrains; Water
+    // PROBLEMA: DIRECTIONAL LIGHTS TEM LIMITES DE DIREÇÃO - QUANDO A DIREÇÃO CHEGA A UM PONTO, ELA NÃO AVANÇA. NÃO FAZ 360 GRAUS EM TODOS OS EIXOS; CSM; Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Post Processing; Spot light rays & Lens flare; Terrains; Water
 
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb",
@@ -105,7 +116,7 @@ int main() {
         FiscionX::Vector3(0.1f, 0.1f, 0.1f)
     );
     boxModel = new FiscionX::Model(
-        "assets/models/metal_water_tank.glb",
+        "assets/models/metal_water_tank_2.glb",
         FiscionX::Vector3(0, 0, 4.2f),
         FiscionX::Vector3(2, 0, 0),
         FiscionX::Vector3(0.5f, 0.5f, 0.5f)

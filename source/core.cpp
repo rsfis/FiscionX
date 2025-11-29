@@ -3092,7 +3092,7 @@ void FiscionX::Core::CreateShadowMap(ShadowMap& sm, int LIGHT_TYPE) {
 
 void FiscionX::Core::CreateAllShadowMaps() {
 	// ======= Create and Compute Shadow Maps =======
-	for (const FiscionX::Light* L : FiscionX::Core::AllLights) {
+	for (FiscionX::Light* L : FiscionX::Core::AllLights) {
 		FiscionX::ShadowMap sm;
 		FiscionX::Core::CreateShadowMap(sm, L->type);
 		sm.lightSpaceMatrix = FiscionX::Core::ComputeLightSpaceMatrix(*L);
@@ -3100,8 +3100,22 @@ void FiscionX::Core::CreateAllShadowMaps() {
 	}
 }
 
-glm::mat4 FiscionX::Core::ComputeLightSpaceMatrix(const Light& L) {
+glm::mat4 FiscionX::Core::ComputeLightSpaceMatrix(Light& L) {
 	if (L.type == LIGHT_DIRECTIONAL) {
+		// CHANGE DIRECTION BASED ON YAW AND PITCH TO DONT LIMIT DIRECTION TO 90 DEGREES EACH AXIS
+		float yawRads = glm::radians(L.yaw);
+		float pitchRads = glm::radians(L.pitch);
+
+		glm::vec3 newDirection;
+		newDirection.x = glm::cos(pitchRads) * glm::sin(yawRads);
+		newDirection.y = glm::sin(pitchRads);
+		newDirection.z = glm::cos(pitchRads) * glm::cos(yawRads);
+
+		L.direction.x = newDirection.x;
+		L.direction.y = newDirection.y;
+		L.direction.z = newDirection.z;
+
+		// COMPUTE LIGHT SPACE
 		float orthoSize = FiscionX::Core::SHADOW_VIEW_RADIUS;
 		glm::vec3 dir = glm::normalize(glm::vec3(L.direction.x, L.direction.y, L.direction.z));
 

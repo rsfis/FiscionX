@@ -211,6 +211,8 @@ const int LIGHT_DIRECTIONAL = 0;
 const int LIGHT_POINT = 1;
 const int LIGHT_SPOT = 2;
 
+const float PI = 3.14159265359;
+
 // PCF otimizado: 8 amostras - bom custo/benefício
 const int PCF_SAMPLES = 8;
 const vec3 gridSamplingOffset[PCF_SAMPLES] = vec3[](
@@ -227,12 +229,12 @@ const vec3 gridSamplingOffset[PCF_SAMPLES] = vec3[](
 out vec4 FragColor;
 
 in VS_OUT {
-  vec3 FragPos;
-  vec3 Normal;
-  vec3 Tangent;
-  vec3 Bitangent;
-  vec2 TexCoords;
-  vec4 FragPosLightSpace[15];
+    vec3 FragPos;
+    vec3 Normal;
+    vec3 Tangent;
+    vec3 Bitangent;
+    vec2 TexCoords;
+    vec4 FragPosLightSpace[15];
 } fs_in;
 
 uniform sampler2D baseColorTex;
@@ -333,7 +335,7 @@ float ShadowCalculationPoint(int idx, vec3 fragPos) {
     // amostragem adaptativa: mais amostras perto (detalhe), menos longe
     float nd = clamp(currentDepth / max(lightMaxDistance[idx], 0.0001), 0.0, 1.0);
     int samples = 4; // default cheap
-    if (nd < 0.3) samples = 8;     // perto -> mais samples
+    if (nd < 0.3) samples = 8;    // perto -> mais samples
     else if (nd < 0.6) samples = 6;
     else samples = 3;             // longe -> very cheap
 
@@ -349,24 +351,100 @@ float ShadowCalculationPoint(int idx, vec3 fragPos) {
     return shadow / float(samples);
 }
 
+// -----------------------------------------------------
+// --- PBR Microfacet BRDF Functions (Cook-Torrance) ---
+// -----------------------------------------------------
+
+// Fresnel (F) - Schlick approximation
 vec3 fresnelSchlick(float cosTheta, vec3 F0) {
-  // Schlick é barato; mantive para qualidade
-  return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
+  // Usado para calcular a contribuição de reflexão (especular)
+  return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
+
+// Normal Distribution Function (D) - Trowbridge-Reitz (GGX)
+float DistributionGGX(vec3 N, vec3 H, float roughness) {
+    float a = roughness*roughness;
+    float a2 = a*a;
+    float NdotH = max(dot(N, H), 0.0);
+    float NdotH2 = NdotH*NdotH;
+
+    float nom = a2;
+    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
+    denom = PI * denom * denom;
+
+    return nom / max(denom, 0.0000001); // Evita divisão por zero
+}
+
+// Geometry (G) - Schlick-GGX approximation (termos G1 e G2)
+float GeometrySchlickGGX(float NdotV, float roughness) {
+    // k otimizado para luzes directas/pontuais/spots
+    float r = (roughness + 1.0);
+    float k = (r*r) / 8.0; 
+    float nom = NdotV;
+    float denom = NdotV * (1.0 - k) + k;
+    return nom / max(denom, 0.0000001);
+}
+
+// Geometry (G) - Smith's method (combina G1(N,L) * G1(N,V))
+float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
+    float NdotV = max(dot(N, V), 0.0);
+    float NdotL = max(dot(N, L), 0.0);
+    float ggx2 = GeometrySchlickGGX(NdotV, roughness);
+    float ggx1 = GeometrySchlickGGX(NdotL, roughness);
+    return ggx1 * ggx2;
+}
+
+// -----------------------------------------------------
 
 void main() {
   vec4 baseSample = texture(baseColorTex, fs_in.TexCoords);
   if (alphaMode == 1 && baseSample.a < alphaCutoff) discard;
   vec3 baseColor = baseSample.rgb;
 
-  float glossiness = hasGlossinessMap == 1 ? clamp(texture(glossinessTex, fs_in.TexCoords).r, 0.05, 1.0) : 1.0;
+  // 1. Determinação das Propriedades do Material
+  float metallic;
+  float roughness;
+  vec3  F0_base; // F0 base para dielétricos
 
-  vec3 F0 = vec3(0.04);
-  if (hasSpecularF0Map == 1) {
-    vec3 texF0 = texture(specularF0Tex, fs_in.TexCoords).rgb;
-    if (length(texF0) > 0.01) F0 = clamp(texF0, vec3(0.0), vec3(0.5));
+  if (useMetalRoughness == 1) {
+    // Metal/Roughness Workflow
+    vec4 metallicProps = texture(metallicTex, fs_in.TexCoords);
+    
+    // Canal Verde = Roughness
+    roughness = metallicProps.g; 
+    
+    // Canal Azul (Metallic) ignorado por solicitação
+    metallic = 0.0;
+    
+    // F0 padrão para dielétricos (não-metais)
+    F0_base = vec3(0.04); 
+  } else {
+    // Specular/Glossiness Workflow (Tratado como Dielétrico para manter consistência)
+    
+    // Glossiness é 1 - Roughness
+    // FIX: Se o mapa de glossiness não existir, assumimos alta rugosidade (baixa reflexão/gloss) por padrão (0.8)
+    if (hasGlossinessMap == 1) {
+        float glossiness = texture(glossinessTex, fs_in.TexCoords).r;
+        roughness = 1.0 - glossiness;
+    } else {
+        // High default roughness (low reflectivity) if no map is supplied
+        roughness = 0.8;
+    }
+    
+    metallic = 0.0;
+    
+    // F0 da textura specularF0Tex, fallback para 0.04
+    if (hasSpecularF0Map == 1) {
+      F0_base = texture(specularF0Tex, fs_in.TexCoords).rgb;
+    } else {
+      F0_base = vec3(0.04);
+    }
   }
-
+  
+  // Clamp roughness (evita artefatos e reflexos infinitamente nítidos)
+  // FIX: Reduzido o clamp mínimo de 0.05 para 0.01 para permitir superfícies muito mais brilhantes (low roughness)
+  roughness = clamp(roughness, 0.01, 1.0);
+  
   // Normal mapping: compute TBN only if map exists - avoids cost if not needed
   vec3 N;
   if (hasNormalMap == 1) {
@@ -385,10 +463,14 @@ void main() {
   vec3 V = normalize(viewPos - fs_in.FragPos);
 
   vec3 ambientSum = vec3(0.0);
-  vec3 diffuseSum = vec3(0.0);
+  vec3 directLightSum = vec3(0.0);
 
-  // loop por luzes
-  for (int i = 0; i < numLights; ++i) {
+  // Loop principal - A iteração é feita no tamanho máximo do array (15) para garantir
+  // o desdobramento (unrolling) pelo compilador GLSL 330, necessário para
+  // indexar arrays uniformes dinamicamente.
+  for (int i = 0; i < 15; ++i) { 
+    if (i >= numLights) break; // Termina se o índice ultrapassar as luzes ativas
+    
     // fetch light data
     int ltype = lightType[i];
     vec3 L;
@@ -398,13 +480,12 @@ void main() {
 
     if (ltype == LIGHT_DIRECTIONAL) {
       L = normalize(-lightDir[i]);
-      // early skip: if N·L <= 0 nothing to add (but ambient still counted)
       float NdotL = dot(N, L);
       if (NdotL <= 0.0) {
-        // accumulate ambient only
         ambientSum += 0.05 * baseColor * lightColor[i] * intensity;
         continue;
       }
+      // Light Space Matrix (Light Space Array) is available in fs_in.FragPosLightSpace[i]
       shadow = ShadowCalculation2D(fs_in.FragPosLightSpace[i], shadowMaps[i], N, L);
     }
     else if (ltype == LIGHT_POINT) {
@@ -439,40 +520,59 @@ void main() {
       shadow = ShadowCalculation2D(fs_in.FragPosLightSpace[i], shadowMaps[i], N, L);
     }
 
-    // BRDF cheap-ish
-    float diff = max(dot(N, L), 0.0);
+    // Vetor Halfway
     vec3 H = normalize(L + V);
     float NdotH = max(dot(N, H), 0.0);
+    float NdotL = max(dot(N, L), 0.0);
+    float VdotH = max(dot(V, H), 0.0);
 
-    vec3 kS = fresnelSchlick(NdotH, F0);
-    vec3 kD = max(vec3(1.0) - kS, vec3(0.05));
 
-    // cheaper specular: use pow but with clamped exponent
-    float specPower = clamp(glossiness * 128.0, 8.0, 256.0); // keep reasonable
-    float specFactor = pow(NdotH, specPower);
+    // 2. PBR BRDF Terms
+    
+    // Fresnel (F)
+    vec3 F = fresnelSchlick(VdotH, F0_base);
+    
+    // Normal Distribution Function (D)
+    float D = DistributionGGX(N, H, roughness);
+    
+    // Geometry (G)
+    float G = GeometrySmith(N, V, L, roughness);
 
-    vec3 diffuse = kD * baseColor * diff;
-    vec3 specular = kS * specFactor;
+    // Specular BRDF (Cook-Torrance)
+    vec3 specularBRDF = (D * G * F) / max(4.0 * NdotL * max(dot(N, V), 0.0), 0.000001);
 
+    // Diffuse BRDF (Lambertian ajustado para energia)
+    // kS (Specular Contribution) é o Fresnel (F)
+    vec3 kS = F;
+    // kD (Diffuse Contribution) é a energia restante (1 - kS), modulada pelo metallic (que é 0.0)
+    vec3 kD = (vec3(1.0) - kS) * (1.0 - metallic);
+    
+    // Diffuse Lambertian: kD * BaseColor / PI
+    vec3 diffuse = kD * baseColor / PI;
+    
+    // Contribuição total da luz direta
     vec3 lightCol = lightColor[i] * intensity;
+    vec3 directContrib = (diffuse + specularBRDF) * lightCol * NdotL;
 
-    // sombra com fade pro ambiente
+    // Sombra com fade pro ambiente
     float shadowFade = clamp(environmentStrength * 0.7, 0.0, 1.0);
     float shadowTerm = mix(1.0 - shadow, 1.0, shadowFade);
 
-    vec3 contrib = (diffuse + specular) * shadowTerm;
-
-    diffuseSum += attenuation * contrib * lightCol;
-    ambientSum += attenuation * 0.05 * baseColor * lightCol;
+    // Aplica sombra à contribuição direta
+    directLightSum += attenuation * directContrib * shadowTerm;
+    
+    // Acumula uma pequena parte da luz (ambiente) mesmo em sombra total para evitar preto puro
+    ambientSum += attenuation * 0.02 * baseColor * lightCol;
   }
 
   // transmission (unchanged)
   float transAmt = texture(transmissionTex, fs_in.TexCoords).r * transmissionFactor;
   vec3 transLight = baseColor * transAmt * 0.5;
 
-  vec3 result = ambientSum + diffuseSum;
+  // Soma das luzes diretas e ambiente base
+  vec3 result = ambientSum + directLightSum;
 
-  // environment hemispheric light
+  // environment hemispheric light (continua como antes)
   float hemi = 0.5 * (dot(N, vec3(0, 1, 0)) + 1.0);
   vec3 ambientHemi = mix(environmentGroundColor, environmentSkyColor, hemi);
   result += ambientHemi * baseColor * environmentStrength * 1.3;
@@ -482,6 +582,7 @@ void main() {
   result = mix(result, result + transLight, transAmt);
 
   if (isAffectedByLight == 0) {
+    // Fallback para objetos não afetados por luzes diretas (usam apenas iluminação ambiente e auto-iluminação)
     result = ambientSum;
     result += baseColor * ambientHemi * environmentStrength * 1.3;
     result = max(result, baseColor * 0.7);
