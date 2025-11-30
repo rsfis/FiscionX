@@ -65,7 +65,7 @@ void draw() {
 }
 
 int main() {
-    FiscionX::Core::Set3DSettings(4096, 4096, 4096, 15.0f, 0.01f, 100.0f);
+    FiscionX::Core::Set3DSettings(8128, 1024, 512, {20.0f, 70.0f, 200.0f}, 0.01f, 3000.0f, true); // Disable compressTexturesAutomatically when debugging. Slows down the starting
     FiscionX::Core::NewWindow(1280, 720, "FiscionX");
 
     FiscionX::Core::CreateAllShadowMaps();
