@@ -69,12 +69,14 @@ int main() {
     FiscionX::Core::SetCursorMode(FISCIONX_CURSOR_DISABLED);
     FiscionX::Physics::CreatePhysicsWorld(FiscionX::Vector3(0, -9.81f, 0), 10);
 
+    FiscionX::Core::AMBIENT_LIGHT_INTENSITY = 0.8f;
+
     dirLight = new FiscionX::Light();
     dirLight->type = FiscionX::LIGHT_DIRECTIONAL;
     dirLight->yaw = 0;
     dirLight->pitch = -138;
     dirLight->color = FiscionX::Vector3(1.0f, 1.0f, 1.0f);
-    dirLight->intensity = 3.3f;
+    dirLight->intensity = 4.3f;
     dirLight->maxDistance = 0.0f;
     dirLight->cutOff = 0.0f;
     dirLight->outerCutOff = 0.0f;
