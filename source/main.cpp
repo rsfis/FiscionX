@@ -9,8 +9,6 @@ FiscionX::Model* boxModel;
 FiscionX::Model* skinnedModel;
 FiscionX::Model* kratosStaticModel;
 
-float yaw, pitch;
-
 void update() {
     FiscionX::Core::ClockTick();
 
@@ -27,10 +25,10 @@ void update() {
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_A)) FiscionX::Core::Camera.position -= FiscionX::Core::Camera.right * camVel;
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_D)) FiscionX::Core::Camera.position += FiscionX::Core::Camera.right * camVel;
 
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_I)) dirLight->yaw += 0.01f;
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_K)) dirLight->yaw -= 0.01f;
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_J)) dirLight->pitch += 0.01f;
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_L)) dirLight->pitch -= 0.01f;
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_I)) dirLight->yaw += 0.04f;
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_K)) dirLight->yaw -= 0.04f;
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_J)) dirLight->pitch += 0.04f;
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_L)) dirLight->pitch -= 0.04f;
 
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_SPACE)) skinnedModel->position.y += 0.004f;
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_B)) skinnedModel->position.z += 0.004f;
@@ -61,7 +59,7 @@ void draw() {
 }
 
 int main() {
-    FiscionX::Core::Set3DSettings(8128, 1024, 512, { 20.0f, 70.0f, 200.0f }, 0.01f, 3000.0f, false);
+    FiscionX::Core::Set3DSettings(8128, 1024, 512, { 25.0f, 70.0f, 200.0f }, 0.01f, 3000.0f, false);
     FiscionX::Core::SetCacheSettings(true, true);
     FiscionX::Core::NewWindow(1280, 720, "FiscionX");
     //FiscionX::Core::SetWindowFullscreen(true, 0);
@@ -69,14 +67,14 @@ int main() {
     FiscionX::Core::SetCursorMode(FISCIONX_CURSOR_DISABLED);
     FiscionX::Physics::CreatePhysicsWorld(FiscionX::Vector3(0, -9.81f, 0), 10);
 
-    FiscionX::Core::AMBIENT_LIGHT_INTENSITY = 0.8f;
+    FiscionX::Core::AMBIENT_LIGHT_INTENSITY = 2.0f;
 
     dirLight = new FiscionX::Light();
     dirLight->type = FiscionX::LIGHT_DIRECTIONAL;
     dirLight->yaw = 0;
     dirLight->pitch = -138;
     dirLight->color = FiscionX::Vector3(1.0f, 1.0f, 1.0f);
-    dirLight->intensity = 4.3f;
+    dirLight->intensity = 4.0f;
     dirLight->maxDistance = 0.0f;
     dirLight->cutOff = 0.0f;
     dirLight->outerCutOff = 0.0f;
@@ -86,13 +84,13 @@ int main() {
     dirLight->hasGlow = false;
     dirLight->enableShadows = true;
 
-    /*spotLight = new FiscionX::Light();
-    spotLight->type = FiscionX::LIGHT_SPOT;
+    spotLight = new FiscionX::Light();
+    spotLight->type = FiscionX::LIGHT_POINT;
     spotLight->position = FiscionX::Vector3(0.0f, 1.0f, -4.0f);
-    spotLight->direction = FiscionX::Vector3(0.0f, 0.0f, 1.0f);
-    spotLight->color = FiscionX::Vector3(0.0f, 1, 0);
-    spotLight->intensity = 6.0f;
-    spotLight->maxDistance = 15.0f;
+    spotLight->direction = FiscionX::Vector3(0.0f, 0.0f, 0.0f);
+    spotLight->color = FiscionX::Vector3(1.0f, 0, 0);
+    spotLight->intensity = 15.0f;
+    spotLight->maxDistance = 30.0f;
     spotLight->cutOff = glm::cos(glm::radians(25.0f));
     spotLight->outerCutOff = glm::cos(glm::radians(30.0f));
     spotLight->constant = 1.0f;
@@ -100,11 +98,10 @@ int main() {
     spotLight->quadratic = 0.032f;
     spotLight->hasGlow = false;
     spotLight->enableShadows = true;
-    */
 
     FiscionX::Core::CreateAllShadowMaps();
 
-    // SURFACES REFLECTS EVEN WHEN ARE COVERED BY SHADOWS; Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Post Processing; Spot light rays & Lens flare; Terrains; Water
+    // Point lights are traversing walls/solid objects (Criação da textura está correta. Problema: Shader ou Computando); Soft Shadows; Sombras e Luz devem passar por malhas com transparência; Blend Meshes estão sendo iluminadas muito pouco; Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Post Processing; Spot light rays & Lens flare; Terrains; Water
 
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb",
@@ -119,8 +116,8 @@ int main() {
         FiscionX::Vector3(0.1f, 0.1f, 0.1f)
     );
     boxModel = new FiscionX::Model(
-        "assets/models/metal_water_tank_2.glb",
-        FiscionX::Vector3(0, 0, 4.2f),
+        "assets/models/wall.glb",
+        FiscionX::Vector3(0, 0.09f, 4.2f),
         FiscionX::Vector3(2, 0, 0),
         FiscionX::Vector3(0.5f, 0.5f, 0.5f)
     );

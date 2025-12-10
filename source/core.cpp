@@ -22,7 +22,7 @@ int FiscionX::Core::POINT_SHADOW_SIZE = 512;
 float        FiscionX::Core::NEAR_PLANE;
 float         FiscionX::Core::FAR_PLANE;
 float         FiscionX::Core::SHADOW_VIEW_RADIUS;
-float         FiscionX::Core::AMBIENT_LIGHT_INTENSITY = 1.0f;
+float         FiscionX::Core::AMBIENT_LIGHT_INTENSITY = 0.0f;
 glm::vec3     FiscionX::Core::AMBIENT_LIGHT_SKYCOLOR = { 0.3f, 0.3f, 0.35f };
 glm::vec3     FiscionX::Core::AMBIENT_LIGHT_GROUNDCOLOR = { 0.05f, 0.05f, 0.07f };
 GLuint FiscionX::Core::depthMapFBO;
