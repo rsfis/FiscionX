@@ -956,6 +956,7 @@ namespace FiscionX {
 			GLuint depthMap,
 			bool depthPass
 		);
+		void destroy();
 		void draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLuint depthMap, bool depthPass, FiscionX::Mat4 view, FiscionX::Mat4 projection);
 	};
 
