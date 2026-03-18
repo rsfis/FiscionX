@@ -2060,6 +2060,72 @@ void FiscionX::Model::init(const std::string& path) {
 	FiscionX::Core::AllModels.push_back(this);
 }
 
+void FiscionX::Model::destroy() {
+
+		// ========= MESHES =========
+		for (auto& mesh : meshes) {
+
+			if (mesh.vao) {
+				glDeleteVertexArrays(1, &mesh.vao);
+				mesh.vao = 0;
+			}
+
+			if (mesh.vbo) {
+				glDeleteBuffers(1, &mesh.vbo);
+				mesh.vbo = 0;
+			}
+
+			if (mesh.ebo) {
+				glDeleteBuffers(1, &mesh.ebo);
+				mesh.ebo = 0;
+			}
+		}
+
+		// ========= TEXTURAS =========
+		for (auto& mesh : meshes) {
+			if (mesh.baseColorTex) {
+				glDeleteTextures(1, &mesh.baseColorTex);
+				mesh.baseColorTex = 0;
+			}
+
+			if (mesh.normalMapTex) {
+				glDeleteTextures(1, &mesh.normalMapTex);
+				mesh.normalMapTex = 0;
+			}
+
+			if (mesh.transmissionTex) {
+				glDeleteTextures(1, &mesh.transmissionTex);
+				mesh.transmissionTex = 0;
+			}
+
+			if (mesh.glossinessTex) {
+				glDeleteTextures(1, &mesh.glossinessTex);
+				mesh.glossinessTex = 0;
+			}
+
+			if (mesh.specularF0Tex) {
+				glDeleteTextures(1, &mesh.specularF0Tex);
+				mesh.specularF0Tex = 0;
+			}
+
+			if (mesh.metallicTex) {
+				glDeleteTextures(1, &mesh.metallicTex);
+				mesh.metallicTex = 0;
+			}
+		}
+
+		// ========= LIMPEZA CPU & GPU =========
+		meshes.clear();
+		nodes.clear();
+		skins.clear();
+		animations.clear();
+
+		FiscionX::Core::AllModels.erase(
+			std::remove(FiscionX::Core::AllModels.begin(), FiscionX::Core::AllModels.end(), this),
+			FiscionX::Core::AllModels.end()
+		);
+}
+
 void FiscionX::Model::updateOcclusion(const glm::mat4& viewProj) {
 	glm::mat4 baseMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(position.x, position.y, position.z))
 		* glm::eulerAngleXYZ(rotation.y, rotation.x, rotation.z)
@@ -3770,6 +3836,54 @@ void FiscionX::Core::SortModels() {
 }
 
 void FiscionX::Core::Terminate() {
+
+	// ========= MODELS =========
+	for (auto* model : AllModels) {
+		if (model) {
+			model->destroy();
+			delete model;
+			model = nullptr;
+		}
+	}
+	AllModels.clear();
+
+	// ========= LIGHTS =========
+	for (auto* light : AllLights) {
+		delete light;
+	}
+	AllLights.clear();
+
+	// ========= SHADOW MAPS =========
+	for (auto& sm : AllShadowMaps) {
+		if (sm.depthMap) {
+			glDeleteTextures(1, &sm.depthMap);
+		}
+		if (sm.fbo) {
+			glDeleteFramebuffers(1, &sm.fbo);
+		}
+	}
+	AllShadowMaps.clear();
+
+	// ========= PHYSICS =========
+	//if (FiscionX::Physics::DynamicWorld) {
+	//	delete FiscionX::Physics::DynamicWorld;
+	//	delete FiscionX::Physics::solver;
+	//	delete FiscionX::Physics::dispatcher;
+	//	delete FiscionX::Physics::collisionConfig;
+	//	delete FiscionX::Physics::broadphase;
+	//}
+
+	// ========= DEBUG (physics) =========
+	if (FiscionX::Physics::debugVAO)
+		glDeleteVertexArrays(1, &FiscionX::Physics::debugVAO);
+
+	if (FiscionX::Physics::debugVBO)
+		glDeleteBuffers(1, &FiscionX::Physics::debugVBO);
+
+	if (FiscionX::Physics::debugShader)
+		glDeleteProgram(FiscionX::Physics::debugShader);
+
+	// ========= WINDOW =========
 	glfwTerminate();
 }
 

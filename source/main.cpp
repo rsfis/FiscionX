@@ -1,4 +1,6 @@
 ﻿#include "FiscionCore.h"
+#include <Windows.h>
+#include <psapi.h>
 #define PROJECT_VERSION "1.0.0"
 
 FiscionX::Light* dirLight;
@@ -9,6 +11,18 @@ FiscionX::Model* boxModel;
 FiscionX::Model* skinnedModel;
 FiscionX::Model* kratosStaticModel;
 
+void PrintRAMUsage() {
+    PROCESS_MEMORY_COUNTERS_EX pmc;
+
+    if (GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc))) {
+
+        SIZE_T ramBytes = pmc.WorkingSetSize; // RAM real usada
+        SIZE_T ramMB = ramBytes / (1024 * 1024);
+
+        std::cout << "RAM usada: " << ramMB << " MB\n";
+    }
+}
+
 void update() {
     FiscionX::Core::ClockTick();
 
@@ -16,7 +30,9 @@ void update() {
     FiscionX::Core::AudioSystem.forward = { -FiscionX::Core::Camera.front.x, FiscionX::Core::Camera.front.y , -FiscionX::Core::Camera.front.z };
     FiscionX::Core::AudioSystem.up = { -FiscionX::Core::Camera.up.x, FiscionX::Core::Camera.up.y, -FiscionX::Core::Camera.up.z };
 
-    skinnedModel->update(FiscionX::Core::deltaTime);
+    if (skinnedModel) {
+        skinnedModel->update(FiscionX::Core::deltaTime);
+    }
 
     // CAMERA
     float camVel = FiscionX::Core::Camera.speed * FiscionX::Core::deltaTime;
@@ -29,9 +45,20 @@ void update() {
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_K)) dirLight->yaw -= 0.04f;
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_J)) dirLight->pitch += 0.04f;
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_L)) dirLight->pitch -= 0.04f;
+    if (skinnedModel) {
+        if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_M)) {
+            skinnedModel->destroy();
+            delete skinnedModel;
+            skinnedModel = nullptr;
+        }
+    }
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_ESCAPE)) FiscionX::Core::Terminate();
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_Z)) PrintRAMUsage();
 
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_SPACE)) skinnedModel->position.y += 0.004f;
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_B)) skinnedModel->position.z += 0.004f;
+    if (skinnedModel) {
+        if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_SPACE)) skinnedModel->position.y += 0.004f;
+        if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_B)) skinnedModel->position.z += 0.004f;
+    }
 }
 
 void draw() {
@@ -51,7 +78,9 @@ void draw() {
     staticModel->draw(FiscionX::Core::shaderStatic, glm::mat4(1.0f), 0, false, view, projection);
     boxModel->draw(FiscionX::Core::shaderStatic, glm::mat4(1.0f), 0, false, view, projection);
     kratosStaticModel->draw(FiscionX::Core::shaderStatic, glm::mat4(1.0f), 0, false, view, projection);
-    skinnedModel->draw(FiscionX::Core::shaderSkinned, glm::mat4(1.0f), 0, false, view, projection);
+    if (skinnedModel) {
+        skinnedModel->draw(FiscionX::Core::shaderSkinned, glm::mat4(1.0f), 0, false, view, projection);
+    }
 
     //FiscionX::Physics::DrawDebugWorld(projection, view);
 
@@ -59,7 +88,7 @@ void draw() {
 }
 
 int main() {
-    FiscionX::Core::Set3DSettings(8128, 1024, 512, { 25.0f, 70.0f, 200.0f }, 0.01f, 3000.0f, false);
+    FiscionX::Core::Set3DSettings(8128, 1024, 512, { 20.0f, 70.0f, 200.0f }, 0.01f, 3000.0f, false);
     FiscionX::Core::SetCacheSettings(true, true);
     FiscionX::Core::NewWindow(1280, 720, "FiscionX");
     //FiscionX::Core::SetWindowFullscreen(true, 0);
@@ -84,6 +113,7 @@ int main() {
     dirLight->hasGlow = false;
     dirLight->enableShadows = true;
 
+    /*
     spotLight = new FiscionX::Light();
     spotLight->type = FiscionX::LIGHT_POINT;
     spotLight->position = FiscionX::Vector3(0.0f, 1.0f, -4.0f);
@@ -98,6 +128,7 @@ int main() {
     spotLight->quadratic = 0.032f;
     spotLight->hasGlow = false;
     spotLight->enableShadows = true;
+    */
 
     FiscionX::Core::CreateAllShadowMaps();
 
@@ -110,10 +141,10 @@ int main() {
         FiscionX::Vector3(0.01f, 0.01f, 0.01f)
     );
     kratosStaticModel = new FiscionX::Model(
-        "assets/models/kratos.glb",
+        "assets/models/thor.glb",
         FiscionX::Vector3(0, 0, 7.0f),
         FiscionX::Vector3(0),
-        FiscionX::Vector3(0.1f, 0.1f, 0.1f)
+        FiscionX::Vector3(0.3f, 0.3f, 0.3f)
     );
     boxModel = new FiscionX::Model(
         "assets/models/wall.glb",
