@@ -1280,3 +1280,125 @@ void main() {
     gl_Position = projection * view * worldPos;
 }
 )";
+
+const char* postProcessVertex = R"(
+#version 330 core
+layout (location = 0) in vec2 aPos;
+layout (location = 1) in vec2 aTexCoords;
+
+out vec2 TexCoords;
+
+void main() {
+    TexCoords = aTexCoords;
+    gl_Position = vec4(aPos.x, aPos.y, 0.0, 1.0);
+}
+)";
+
+const char* godRaysFragment = R"(
+#version 330 core
+out vec4 FragColor;
+in vec2 TexCoords;
+
+uniform sampler2D screenTexture;
+uniform vec2 lightPosOnScreen;
+uniform float sunVisibility;
+uniform float aspect;
+uniform float time;
+
+uniform float sunDiskSize = 0.012;
+uniform float sunHaloSize = 0.08;
+uniform vec3 sunColor = vec3(1.0, 0.95, 0.8);
+
+uniform float rayDensity = 0.98;
+uniform float rayWeight = 0.15;
+uniform float rayDecay = 0.97;
+uniform float rayExposure = 1.4;
+uniform int NUM_SAMPLES = 90;
+
+// Função de ruído para Dithering e Poeira Atmosférica
+float hash(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+
+vec3 drawGhost(vec2 uv, vec2 pos, float size, float hardness, vec3 color) {
+    float d = distance(uv, pos);
+    return color * pow(smoothstep(size, size * hardness, d), 2.0);
+}
+
+void main() {
+    vec3 sceneColor = texture(screenTexture, TexCoords).rgb;
+
+    if (sunVisibility <= 0.02) {
+        FragColor = vec4(sceneColor, 1.0);
+        return;
+    }
+
+    vec2 uv_corr = TexCoords * vec2(aspect, 1.0);
+    vec2 sunPos_corr = lightPosOnScreen * vec2(aspect, 1.0);
+    vec2 center_corr = vec2(0.5) * vec2(aspect, 1.0);
+
+    // 1. SOL PROCEDURAL (Mantido conforme solicitado)
+    float distToSun = distance(uv_corr, sunPos_corr);
+    float sunDisk = smoothstep(sunDiskSize, sunDiskSize * 0.9, distToSun);
+    float sunHalo = pow(smoothstep(sunHaloSize, 0.0, distToSun), 4.0);
+    vec3 proceduralSun = sunColor * (sunDisk * 40.0 + sunHalo * 2.0) * sunVisibility;
+
+    // 2. GOD RAYS REAIS (DITHERING + VOLUMETRIC NOISE)
+    vec2 deltaTexCoord = (TexCoords - lightPosOnScreen) * (1.0 / float(NUM_SAMPLES)) * rayDensity;
+    
+    // Injetamos um jitter inicial (dithering) para eliminar o banding (degraus de cor)
+    float jitter = hash(TexCoords + time);
+    vec2 coord = TexCoords + deltaTexCoord * jitter;
+    
+    float illuminationDecay = 1.0;
+    vec3 raysColor = vec3(0.0);
+
+    for(int i = 0; i < NUM_SAMPLES; i++) {
+        coord -= deltaTexCoord;
+        vec3 samp = texture(screenTexture, coord).rgb;
+        
+        // Threshold para pegar apenas pontos de luz reais
+        float luma = dot(samp, vec3(0.2126, 0.7152, 0.0722));
+        float mask = pow(max(luma - 0.72, 0.0), 2.5) * 6.0;
+        
+        // Poeira Atmosférica: Pequenas variações de densidade no ar
+        float noise = 0.85 + 0.15 * hash(coord * 0.5 + time * 0.05);
+        
+        raysColor += samp * mask * illuminationDecay * rayWeight * noise;
+        illuminationDecay *= rayDecay;
+    }
+
+    // 3. LENS FLARE (Mantido conforme solicitado)
+    vec3 flareColor = vec3(0.0);
+    vec2 sunToCenter = center_corr - sunPos_corr;
+    flareColor += drawGhost(uv_corr, center_corr + sunToCenter * 0.4, 0.05, 0.0, vec3(0.05, 0.1, 0.2));
+    flareColor += drawGhost(uv_corr, center_corr + sunToCenter * -0.3, 0.03, 0.5, vec3(0.2, 0.1, 0.05));
+    flareColor += drawGhost(uv_corr, center_corr + sunToCenter * 1.1, 0.02, 0.7, vec3(0.1, 0.2, 0.1));
+
+    // 4. COMPOSIÇÃO HDR E ANTI-CINZA
+    // Somamos os efeitos (God Rays agora são mais orgânicos)
+    vec3 effectHDR = (proceduralSun * 0.3) + 
+                     (raysColor * rayExposure * sunVisibility) + 
+                     (flareColor * sunVisibility);
+    
+    if(length(effectHDR) < 0.001) {
+        FragColor = vec4(sceneColor, 1.0);
+        return;
+    }
+
+    // Tonemapping de exposição para efeito "Glow"
+    vec3 effectLDR = vec3(1.0) - exp(-effectHDR * 1.3);
+
+    // Composição Final (Additive Blend)
+    vec3 finalColor = sceneColor + effectLDR;
+    
+    // Punch final no contraste e saturação
+    finalColor = pow(finalColor, vec3(1.05)); // Ajuste de Gamma leve para matar o cinza
+    float gray = dot(finalColor, vec3(0.3, 0.59, 0.11));
+    finalColor = mix(vec3(gray), finalColor, 1.15);
+
+    FragColor = vec4(clamp(finalColor, 0.0, 1.0), 1.0);
+}
+)";

@@ -16,6 +16,21 @@ GLuint FiscionX::Core::shaderStatic;
 GLuint FiscionX::Core::shaderSkinned;
 GLuint FiscionX::Core::shaderUI;
 
+GLuint FiscionX::Core::mainFBO;
+GLuint FiscionX::Core::mainColorBuffer;
+GLuint FiscionX::Core::mainDepthBuffer;
+GLuint FiscionX::Core::screenQuadVAO;
+GLuint FiscionX::Core::screenQuadVBO;
+GLuint FiscionX::Core::godRaysShader;
+float FiscionX::Core::sunDiskSize = 0.012;
+float FiscionX::Core::sunHaloSize = 0.08;
+FiscionX::Vector3 FiscionX::Core::sunColor = FiscionX::Vector3(1.0, 0.95, 0.8);
+float FiscionX::Core::godRaysDensity = 0.98;
+float FiscionX::Core::godRaysWeight = 0.15;
+float FiscionX::Core::godRaysDecay = 0.97;
+float FiscionX::Core::godRaysExposure = 1.4;
+int FiscionX::Core::godRaysNumOfSamples = 90;
+
 int FiscionX::Core::DIR_SHADOW_SIZE = 4096;
 int FiscionX::Core::SPOT_SHADOW_SIZE = 1024;
 int FiscionX::Core::POINT_SHADOW_SIZE = 512;
@@ -3704,6 +3719,57 @@ void FiscionX::Core::NewWindow(int width, int height, const char* window_label) 
 	}
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
+	// =================== POST PROCESSING SETUP ===================
+	// Garanta que o tamanho seja válido
+	int w = (FiscionX::Core::SCREEN_WIDTH > 0) ? FiscionX::Core::SCREEN_WIDTH : 1280;
+	int h = (FiscionX::Core::SCREEN_HEIGHT > 0) ? FiscionX::Core::SCREEN_HEIGHT : 720;
+
+	glGenFramebuffers(1, &mainFBO);
+	glBindFramebuffer(GL_FRAMEBUFFER, mainFBO);
+
+	// Textura de Cor
+	glGenTextures(1, &mainColorBuffer);
+	glBindTexture(GL_TEXTURE_2D, mainColorBuffer);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, w, h, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, mainColorBuffer, 0);
+
+	// Renderbuffer de Depth (VITAL!)
+	glGenRenderbuffers(1, &mainDepthBuffer);
+	glBindRenderbuffer(GL_RENDERBUFFER, mainDepthBuffer);
+	glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h);
+	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, mainDepthBuffer);
+
+	if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+		std::cerr << "FiscionX ERR: FBO incompleto! Status: " << glCheckFramebufferStatus(GL_FRAMEBUFFER) << std::endl;
+	}
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	// Quad para cobrir a tela no post-processing
+	float quadVertices[] = {
+		// posições   // texCoords
+		-1.0f,  1.0f,  0.0f, 1.0f,
+		-1.0f, -1.0f,  0.0f, 0.0f,
+		 1.0f, -1.0f,  1.0f, 0.0f,
+
+		-1.0f,  1.0f,  0.0f, 1.0f,
+		 1.0f, -1.0f,  1.0f, 0.0f,
+		 1.0f,  1.0f,  1.0f, 1.0f
+	};
+	glGenVertexArrays(1, &screenQuadVAO);
+	glGenBuffers(1, &screenQuadVBO);
+	glBindVertexArray(screenQuadVAO);
+	glBindBuffer(GL_ARRAY_BUFFER, screenQuadVBO);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), &quadVertices, GL_STATIC_DRAW);
+	glEnableVertexAttribArray(0);
+	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+	glEnableVertexAttribArray(1);
+	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+
+	// Carrega o shader de God Rays
+	godRaysShader = LoadShader(postProcessVertex, godRaysFragment);
+
 	AudioSystem = FiscionX::AudioSystem();
 	AudioSystem.init();
 }
@@ -3916,14 +3982,75 @@ void RenderPrimitive(const std::vector<glm::vec2>& vertices,
 }
 
 void FiscionX::Core::Draw::ClearBackground(float r, float g, float b, float alpha) {
-	glBindFramebuffer(GL_FRAMEBUFFER, 0);
-	glViewport(0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
+	glBindFramebuffer(GL_FRAMEBUFFER, FiscionX::Core::mainFBO);
+    glViewport(0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
+
 	glClearColor(r, g, b, alpha);
-	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST);
 }
 
 void FiscionX::Core::Draw::SwapBuffers() {
 	glfwSwapBuffers(FiscionX::Core::Window);
+}
+
+void FiscionX::Core::Draw::PostProcessing(FiscionX::Mat4 viewProj, FiscionX::Light* dirLight) {
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glViewport(0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
+
+	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	glDisable(GL_DEPTH_TEST);
+
+	glUseProgram(FiscionX::Core::godRaysShader);
+	float aspectRatio = (float)FiscionX::Core::SCREEN_WIDTH / FiscionX::Core::SCREEN_HEIGHT;
+	glUniform1f(glGetUniformLocation(FiscionX::Core::godRaysShader, "aspect"), aspectRatio);
+
+	glm::vec3 sunDir = -glm::normalize(glm::vec3(dirLight->direction.x, dirLight->direction.y, dirLight->direction.z));
+	glm::vec4 sunPosWorld = glm::vec4(glm::vec3(FiscionX::Core::Camera.position.x, FiscionX::Core::Camera.position.y, FiscionX::Core::Camera.position.z) + (sunDir * 1000.0f), 1.0f);
+	glm::vec4 sunClip = glm::mat4(viewProj) * sunPosWorld;
+
+	glm::vec2 sunScreen = glm::vec2(0.5f);
+	float finalVisibility = 0.0f;
+
+	if (sunClip.w > 0) {
+		glm::vec3 sunNDC = glm::vec3(sunClip) / sunClip.w;
+		sunScreen = (glm::vec2(sunNDC.x, sunNDC.y) + 1.0f) / 2.0f;
+
+		glm::vec3 camDir = glm::vec3(FiscionX::Core::Camera.front.x, FiscionX::Core::Camera.front.y, FiscionX::Core::Camera.front.z);
+
+		float angleDot = glm::dot(camDir, sunDir);
+
+		if (angleDot > 0.0f) {
+			finalVisibility = angleDot;
+		}
+	}
+
+	glUniform2f(glGetUniformLocation(FiscionX::Core::godRaysShader, "lightPosOnScreen"), sunScreen.x, sunScreen.y);
+	glUniform1f(glGetUniformLocation(FiscionX::Core::godRaysShader, "sunVisibility"), finalVisibility);
+	glUniform1f(glGetUniformLocation(FiscionX::Core::godRaysShader, "time"), (float)glfwGetTime());
+
+	glUniform1f(glGetUniformLocation(FiscionX::Core::godRaysShader, "sunDiskSize"), FiscionX::Core::sunDiskSize);
+	glUniform1f(glGetUniformLocation(FiscionX::Core::godRaysShader, "sunHaloSize"), FiscionX::Core::sunHaloSize);
+	glUniform3f(glGetUniformLocation(FiscionX::Core::godRaysShader, "sunColor"), sunColor.x, sunColor.y, sunColor.z);
+
+	glUniform1f(glGetUniformLocation(FiscionX::Core::godRaysShader, "rayDensity"), FiscionX::Core::godRaysDensity);
+	glUniform1f(glGetUniformLocation(FiscionX::Core::godRaysShader, "rayWeight"), FiscionX::Core::godRaysWeight);
+	glUniform1f(glGetUniformLocation(FiscionX::Core::godRaysShader, "rayDecay"), FiscionX::Core::godRaysDecay);
+	glUniform1f(glGetUniformLocation(FiscionX::Core::godRaysShader, "rayExposure"), FiscionX::Core::godRaysExposure);
+	glUniform1f(glGetUniformLocation(FiscionX::Core::godRaysShader, "NUM_SAMPLES"), FiscionX::Core::godRaysNumOfSamples);
+
+	glm::vec3 camDir = glm::vec3(FiscionX::Core::Camera.front.x, FiscionX::Core::Camera.front.y, FiscionX::Core::Camera.front.z);
+
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainColorBuffer);
+	glUniform1i(glGetUniformLocation(FiscionX::Core::godRaysShader, "screenTexture"), 0);
+
+	glBindVertexArray(FiscionX::Core::screenQuadVAO);
+	glDrawArrays(GL_TRIANGLES, 0, 6);
+	glBindVertexArray(0);
+
+	glEnable(GL_DEPTH_TEST);
 }
 
 void FiscionX::Core::Draw::DrawLine(

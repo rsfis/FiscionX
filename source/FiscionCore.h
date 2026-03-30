@@ -985,6 +985,23 @@ namespace FiscionX {
 		static GLuint shaderSkinned;
 		static GLuint shaderUI;
 
+		// --- POST PROCESSING ---
+		static GLuint mainFBO;
+		static GLuint mainColorBuffer;
+		static GLuint mainDepthBuffer;
+		static GLuint screenQuadVAO, screenQuadVBO;
+		static GLuint godRaysShader;
+
+		static float sunDiskSize;
+		static float sunHaloSize;
+		static Vector3 sunColor;
+
+		static float godRaysDensity;
+		static float godRaysWeight;
+		static float godRaysDecay;
+		static float godRaysExposure;
+		static int godRaysNumOfSamples;
+
 		//static unsigned int SHADOW_WIDTH;
 		//static unsigned int SHADOW_HEIGHT;
 		//static unsigned int SHADOW_CUBE_SIZE;
@@ -1046,6 +1063,7 @@ namespace FiscionX {
 
 		static struct Draw {
 			static void SwapBuffers();
+			static void PostProcessing(FiscionX::Mat4 viewProj, FiscionX::Light* dirLight);
 			static void ClearBackground(float r, float g, float b, float a);
 			static void DrawLine(Vector2 startPosition, Vector2 endPosition, float thickness, Vector4 color);
 			static void DrawRect(Vector2 position, Vector2 size, Vector4 color, float borderThickness = 0, float borderRadius = 0, int segments = 16);
