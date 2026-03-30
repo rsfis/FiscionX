@@ -62,6 +62,7 @@ void update() {
 }
 
 void draw() {
+    // DRAW NORMAL
     FiscionX::Mat4 view = FiscionX::Core::Camera.GetView();
     FiscionX::Mat4 projection = FiscionX::Mat4(0).perspective(
         glm::radians(FiscionX::Core::Camera.fov),
@@ -72,7 +73,10 @@ void draw() {
     FiscionX::Mat4 viewProj = projection * view;
 
     FiscionX::Core::RenderAllShadowPasses(view, projection, viewProj);
-    FiscionX::Core::Draw::ClearBackground(0.1f, 0.1f, 0.1f, 1.0f);
+
+    FiscionX::Core::Draw::ClearBackground(0.2f, 0.2f, 1.0f, 1.0f);
+
+    // DRAW NORMAL
     FiscionX::Core::SortModels();
 
     staticModel->draw(FiscionX::Core::shaderStatic, glm::mat4(1.0f), 0, false, view, projection);
@@ -82,7 +86,7 @@ void draw() {
         skinnedModel->draw(FiscionX::Core::shaderSkinned, glm::mat4(1.0f), 0, false, view, projection);
     }
 
-    //FiscionX::Physics::DrawDebugWorld(projection, view);
+    FiscionX::Core::Draw::PostProcessing(viewProj, dirLight);
 
     FiscionX::Core::Draw::SwapBuffers();
 }
@@ -132,7 +136,7 @@ int main() {
 
     FiscionX::Core::CreateAllShadowMaps();
 
-    // Point lights are traversing walls/solid objects (Criação da textura está correta. Problema: Shader ou Computando); Soft Shadows; Sombras e Luz devem passar por malhas com transparência; Blend Meshes estão sendo iluminadas muito pouco; Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Post Processing; Spot light rays & Lens flare; Terrains; Water
+    // Adicionar variaveis em FiscionX::Core  do shader de pós processamento;Point lights are traversing walls/solid objects (Criação da textura está correta. Problema: Shader ou Computando); Soft Shadows; Sombras e Luz devem passar por malhas com transparência; Blend Meshes estão sendo iluminadas muito pouco; Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Post Processing; Spot light rays & Lens flare; Terrains; Water
 
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb",
@@ -141,10 +145,10 @@ int main() {
         FiscionX::Vector3(0.01f, 0.01f, 0.01f)
     );
     kratosStaticModel = new FiscionX::Model(
-        "assets/models/thor.glb",
+        "assets/models/kratos.glb",
         FiscionX::Vector3(0, 0, 7.0f),
         FiscionX::Vector3(0),
-        FiscionX::Vector3(0.3f, 0.3f, 0.3f)
+        FiscionX::Vector3(0.1f, 0.1f, 0.1f)
     );
     boxModel = new FiscionX::Model(
         "assets/models/wall.glb",
