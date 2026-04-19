@@ -1,6 +1,6 @@
 ﻿#include "FiscionCore.h"
-#include <Windows.h>
-#include <psapi.h>
+//#include <Windows.h>
+//#include <psapi.h>
 #define PROJECT_VERSION "1.0.0"
 
 FiscionX::Light* dirLight;
@@ -11,6 +11,7 @@ FiscionX::Model* boxModel;
 FiscionX::Model* skinnedModel;
 FiscionX::Model* kratosStaticModel;
 
+/*
 void PrintRAMUsage() {
     PROCESS_MEMORY_COUNTERS_EX pmc;
 
@@ -22,6 +23,7 @@ void PrintRAMUsage() {
         std::cout << "RAM usada: " << ramMB << " MB\n";
     }
 }
+*/
 
 void update() {
     FiscionX::Core::ClockTick();
@@ -53,7 +55,7 @@ void update() {
         }
     }
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_ESCAPE)) FiscionX::Core::Terminate();
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_Z)) PrintRAMUsage();
+    //if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_Z)) PrintRAMUsage();
 
     if (skinnedModel) {
         if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_SPACE)) skinnedModel->position.y += 0.004f;
@@ -92,7 +94,7 @@ void draw() {
 }
 
 int main() {
-    FiscionX::Core::Set3DSettings(8128, 1024, 512, { 20.0f, 70.0f, 200.0f }, 0.01f, 3000.0f, false);
+    FiscionX::Core::Set3DSettings(5120, 1024, 512, { 15.0f, 70.0f, 150.0f }, 0.01f, 3000.0f, false);
     FiscionX::Core::SetCacheSettings(true, true);
     FiscionX::Core::NewWindow(1280, 720, "FiscionX");
     //FiscionX::Core::SetWindowFullscreen(true, 0);
@@ -117,7 +119,6 @@ int main() {
     dirLight->hasGlow = false;
     dirLight->enableShadows = true;
 
-    /*
     spotLight = new FiscionX::Light();
     spotLight->type = FiscionX::LIGHT_POINT;
     spotLight->position = FiscionX::Vector3(0.0f, 1.0f, -4.0f);
@@ -130,13 +131,12 @@ int main() {
     spotLight->constant = 1.0f;
     spotLight->linear = 0.09f;
     spotLight->quadratic = 0.032f;
-    spotLight->hasGlow = false;
+    spotLight->hasGlow = true;
     spotLight->enableShadows = true;
-    */
 
     FiscionX::Core::CreateAllShadowMaps();
 
-    // Adicionar variaveis em FiscionX::Core  do shader de pós processamento;Point lights are traversing walls/solid objects (Criação da textura está correta. Problema: Shader ou Computando); Soft Shadows; Sombras e Luz devem passar por malhas com transparência; Blend Meshes estão sendo iluminadas muito pouco; Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Post Processing; Spot light rays & Lens flare; Terrains; Water
+    // Draw halo and glow also for point lights and spot lights; Point lights are traversing walls/solid objects (Criação da textura está correta. Problema: Shader ou Computando); Soft Shadows; Sombras e Luz devem passar por malhas com transparência; Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Terrains; Water
 
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb",
