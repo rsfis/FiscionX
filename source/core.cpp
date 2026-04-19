@@ -29,9 +29,9 @@ float FiscionX::Core::godRaysDensity = 0.98;
 float FiscionX::Core::godRaysWeight = 0.15;
 float FiscionX::Core::godRaysDecay = 0.97;
 float FiscionX::Core::godRaysExposure = 1.4;
-int FiscionX::Core::godRaysNumOfSamples = 90;
+int FiscionX::Core::godRaysNumOfSamples = 10;
 
-int FiscionX::Core::DIR_SHADOW_SIZE = 4096;
+int FiscionX::Core::DIR_SHADOW_SIZE = 1024;
 int FiscionX::Core::SPOT_SHADOW_SIZE = 1024;
 int FiscionX::Core::POINT_SHADOW_SIZE = 512;
 float        FiscionX::Core::NEAR_PLANE;
@@ -43,7 +43,7 @@ glm::vec3     FiscionX::Core::AMBIENT_LIGHT_GROUNDCOLOR = { 0.05f, 0.05f, 0.07f 
 GLuint FiscionX::Core::depthMapFBO;
 GLuint FiscionX::Core::depthMap;
 std::vector<float> FiscionX::Core::shadowCascadeLevels = { 20.0f, 70.0f, 200.0f };
-bool FiscionX::Core::compressTexturesAutomatically = false;
+bool FiscionX::Core::compressTexturesAutomatically = true;
 
 GLuint FiscionX::Core::textShader;
 
@@ -3184,8 +3184,8 @@ void FiscionX::Core::CreateShadowMap(ShadowMap& sm, int LIGHT_TYPE) {
 			DIR_SHADOW_SIZE, DIR_SHADOW_SIZE, (int)shadowCascadeLevels.size() + 1,
 			0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
 
-		glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-		glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 		glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
 		glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
 

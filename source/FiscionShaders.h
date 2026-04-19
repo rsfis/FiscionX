@@ -299,10 +299,34 @@ const vec2 poisson8[8] = vec2[](
 );
 
 // --- [CSM] FUNÇÃO DE CALCULO DE SOMBRA EM CASCATA CORRIGIDA ---
+float random(vec3 seed, int i) {
+    vec4 seed4 = vec4(seed, i);
+    float dot_product = dot(seed4, vec4(12.9898, 78.233, 45.164, 94.673));
+    return fract(sin(dot_product) * 43758.5453);
+}
+
+// --- Poisson disk de 16 amostras para suavidade máxima ---
+const vec2 poisson16[16] = vec2[](
+    vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725),
+    vec2(-0.094184101, -0.92938870), vec2(0.34495938, 0.29387760),
+    vec2(-0.91588581, 0.45771432), vec2(-0.81544232, -0.87912464),
+    vec2(-0.38277543, 0.27676845), vec2(0.97484398, 0.75648379),
+    vec2(0.44323325, -0.97511554), vec2(0.53742981, -0.47373420),
+    vec2(-0.26496911, -0.41893023), vec2(0.79197514, 0.19090188),
+    vec2(-0.24188840, 0.99706507), vec2(-0.81409955, 0.91437590),
+    vec2(0.19984126, 0.78641367), vec2(0.14383161, -0.14100790)
+);
+
+// Função de ruído para rotacionar o disco de amostragem por pixel
+float interleavedGradientNoise(vec2 n) {
+    return fract(3.378 * fract(dot(n, vec2(0.754877666, 0.56984029))));
+}
+
+// --- [CSM] FUNÇÃO DE CÁLCULO DE SOMBRA EM CASCATA ---
 float ShadowCalculationCSM(vec3 fragPosWorld, vec3 N, vec3 L) {
     if (acceptsShadows == 0) return 0.0;
 
-    // 1. Seleciona a cascata baseada na profundidade da view (Z view space)
+    // 1. Seleciona a cascata baseada na profundidade da view
     vec4 fragPosViewSpace = view * vec4(fragPosWorld, 1.0);
     float depthValue = abs(fragPosViewSpace.z);
 
@@ -313,96 +337,95 @@ float ShadowCalculationCSM(vec3 fragPosWorld, vec3 N, vec3 L) {
             break;
         }
     }
-    // CORREÇÃO: Se estiver fora de todas as cascatas, usa a última válida.
     if (layer == -1) layer = max(0, cascadeCount - 1);
 
-    // 2. Transforma para Light Space da cascata correta
+    // 2. Transforma para Light Space da cascata
     vec4 fragPosLS = cascadeLightSpaceMatrices[layer] * vec4(fragPosWorld, 1.0);
-    
-    // 3. Perspectiva divide e shift [0,1]
     vec3 projCoords = fragPosLS.xyz / fragPosLS.w;
     projCoords = projCoords * 0.5 + 0.5;
 
-    // Se estiver fora do range Z da luz, não tem sombra
     float currentDepth = projCoords.z;
     if (currentDepth > 1.0) return 0.0;
 
-    // 4. Bias variavel dependendo da cascata
-    float bias = max(0.00018 * (1.0 - dot(N, L)), 0.000018);
+    // 3. Bias adaptativo por cascata e inclinação
+    float bias = max(0.0007 * (1.0 - dot(N, L)), 0.00007);
     if (layer == cascadeCount - 1) bias *= 0.5; 
     else bias *= 1.0 / (float(layer) + 1.0); 
 
-    // 5. PCF Simples no Array Texture (Layer selecionado)
+    // 4. Configuração do PCF Rotacionado
     float shadow = 0.0;
-    ivec2 texSize = textureSize(shadowMapDir, 0).xy;
-    vec2 texelSize = 1.0 / vec2(texSize);
+    vec2 texelSize = 1.0 / vec2(textureSize(shadowMapDir, 0));
     
-    for(int x = -1; x <= 1; ++x) {
-        for(int y = -1; y <= 1; ++y) {
-            float pcfDepth = texture(shadowMapDir, vec3(projCoords.xy + vec2(x, y) * texelSize, layer)).r;
-            shadow += (currentDepth - bias) > pcfDepth ? 1.0 : 0.0;
-        }
+    // Gera rotação aleatória baseada na posição da tela
+    float noise = interleavedGradientNoise(gl_FragCoord.xy);
+    float angle = noise * 2.0 * PI;
+    float s = sin(angle);
+    float c = cos(angle);
+    mat2 rotation = mat2(c, -s, s, c);
+
+    // Spread: 1.0 é nítido, 2.0+ é bem borrado (Soft Shadow)
+    float spread = 1.5; 
+
+    for(int i = 0; i < 16; ++i) {
+        vec2 offset = (rotation * poisson16[i]) * texelSize * spread;
+        float pcfDepth = texture(shadowMapDir, vec3(projCoords.xy + offset, layer)).r;
+        shadow += (currentDepth - bias) > pcfDepth ? 1.0 : 0.0;
     }
-    shadow /= 9.0;
 
-    return shadow;
+    return shadow / 16.0;
 }
-// ----------------------------------------------------
 
+// --- SOMBRA PARA SPOT LIGHTS (2D) ---
 float ShadowCalculation2D(vec4 fragPosLS, sampler2D shadowMap, vec3 N, vec3 L) {
     if (acceptsShadows == 0) return 0.0;
 
     vec3 projCoords = fragPosLS.xyz / fragPosLS.w;
     projCoords = projCoords * 0.5 + 0.5;
 
-    // fora do shadowmap → sem sombra
-    if (projCoords.z > 1.0 || projCoords.x < 0.0 || projCoords.y < 0.0 ||
-        projCoords.x > 1.0 || projCoords.y > 1.0)
+    if (projCoords.z > 1.0 || projCoords.x < 0.0 || projCoords.y < 0.0 || projCoords.x > 1.0 || projCoords.y > 1.0)
         return 0.0;
 
     float currentDepth = projCoords.z;
     vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
-
-    // bias adaptativo (combinação sólida e segura)
     float bias = max(0.003 * (1.0 - dot(N, L)), 0.001);
 
-    // raio adaptativo pela profundidade (suaviza a penumbra)
-    float distFactor = clamp(currentDepth * 6.0, 1.0, 3.0);
-    float radius = 1.2 * distFactor;
+    // Rotação para Spot Lights
+    float noise = interleavedGradientNoise(gl_FragCoord.xy);
+    float angle = noise * 2.0 * PI;
+    float s = sin(angle);
+    float c = cos(angle);
+    mat2 rotation = mat2(c, -s, s, c);
 
     float shadow = 0.0;
+    float spread = 1.8;
 
-    // amostragem reduzida (8) com poisson
-    for (int i = 0; i < 8; ++i) {
-        vec2 offset = poisson8[i] * texelSize * radius;
+    for (int i = 0; i < 16; ++i) {
+        vec2 offset = (rotation * poisson16[i]) * texelSize * spread;
         float closestDepth = texture(shadowMap, projCoords.xy + offset).r;
         if (currentDepth - bias > closestDepth) shadow += 1.0;
     }
 
-    // CORREÇÃO: dividimos por 8 (número real de amostras)
-    return shadow / 8.0;
+    return shadow / 16.0;
 }
 
+// --- SOMBRA PARA POINT LIGHTS (CUBEMAP) ---
 float ShadowCalculationPoint(int idx, vec3 fragPos) {
     if (acceptsShadows == 0) return 0.0;
 
     vec3 fragToLight = fragPos - lightPos[idx];
     float currentDepth = length(fragToLight);
-
-    // bias base mais seguro para point lights
-    float bias = max(0.02 * (1.0 - (currentDepth / max(lightMaxDistance[idx], 0.0001))), 0.01);
-
-    // amostragem adaptativa: mais amostras perto (detalhe), menos longe
-    float nd = clamp(currentDepth / max(lightMaxDistance[idx], 0.0001), 0.0, 1.0);
-    int samples = 4; // default cheap
-    if (nd < 0.3) samples = 8;    // perto -> mais samples
-    else if (nd < 0.6) samples = 6;
-    else samples = 3;             // longe -> very cheap
+    float bias = 0.15; 
 
     float shadow = 0.0;
-    // sampling loop - note: gridSamplingOffset has 8 entries; reuse first N
+    int samples = 16;
+    
+    // Suavização baseada na distância (simula penumbra)
+    float viewDistance = length(viewPos - fragPos);
+    float diskRadiusLocal = (1.0 + (viewDistance / lightMaxDistance[idx])) * diskRadius;
+
     for (int i = 0; i < samples; ++i) {
-        vec3 samplePos = fragToLight + gridSamplingOffset[i] * diskRadius * (1.0 + nd * 2.0);
+        // Reutilizamos a lógica de grid mas com maior densidade ou offset poisson
+        vec3 samplePos = fragToLight + gridSamplingOffset[i % 8] * diskRadiusLocal;
         float closestDepth = texture(shadowCubeMaps[idx], samplePos).r;
         closestDepth *= lightMaxDistance[idx];
         if (currentDepth - bias > closestDepth) shadow += 1.0;
@@ -410,10 +433,6 @@ float ShadowCalculationPoint(int idx, vec3 fragPos) {
 
     return shadow / float(samples);
 }
-
-// -----------------------------------------------------
-// --- PBR Microfacet BRDF Functions (Cook-Torrance) ---
-// -----------------------------------------------------
 
 // Fresnel (F) - Schlick approximation
 vec3 fresnelSchlick(float cosTheta, vec3 F0) {
@@ -523,13 +542,10 @@ void main() {
   vec3 ambientSum = vec3(0.0);
   vec3 directLightSum = vec3(0.0);
 
-  // environment hemispheric light (computado cedo e usado sempre)
   float hemi = 0.5 * (dot(N, vec3(0, 1, 0)) + 1.0);
   vec3 ambientHemi = mix(environmentGroundColor, environmentSkyColor, hemi);
-  // contribuição ambiente global (multiplica pelo baseColor para resposta difusa)
   vec3 ambientContribution = baseColor * ambientHemi * environmentStrength;
 
-  // LOCAL: fator ambiente por luz (centralizado para evitar diferenças)
   const float localAmbientFactor = 0.05;
 
   // Loop principal
@@ -548,8 +564,6 @@ void main() {
       L = normalize(-lightDir[i]);
       float NdotL = dot(N, L);
       if (NdotL <= 0.0) {
-        // adiciona apenas uma contribuição ambiente LOCAL consistente para luzes que não iluminam este fragmento
-        // (usamos same localAmbientFactor para evitar que "não iluminado" fique mais escuro que "em sombra")
         ambientSum += localAmbientFactor * baseColor * lightCol * intensity; // attenuation == 1 para directional
         continue;
       }
@@ -590,7 +604,6 @@ void main() {
       shadow = ShadowCalculation2D(fs_in.FragPosLightSpace[i], shadowMaps[i], N, L);
     }
 
-    // Vetor Halfway
     vec3 H = normalize(L + V);
     float NdotH = max(dot(N, H), 0.0);
     float NdotL = max(dot(N, L), 0.0);
@@ -598,59 +611,42 @@ void main() {
 
     // 2. PBR BRDF Terms
     
-    // Fresnel (F)
     vec3 F = fresnelSchlick(VdotH, F0_base);
     
     // Normal Distribution Function (D)
     float D = DistributionGGX(N, H, roughness);
     
-    // Geometry (G)
     float G = GeometrySmith(N, V, L, roughness);
 
-    // Specular BRDF (Cook-Torrance)
     vec3 specularBRDF = (D * G * F) / max(4.0 * NdotL * max(dot(N, V), 0.0), 0.000001);
 
-    // Diffuse BRDF (Lambertian ajustado para energia)
     vec3 kS = F;
     vec3 kD = (vec3(1.0) - kS) * (1.0 - metallic);
     vec3 diffuse = kD * baseColor / PI;
     
-    // Contribuição total da luz direta (antes de sombra)
     vec3 directContrib = (diffuse + specularBRDF) * lightCol * NdotL * intensity;
 
-    // Sombra com fade pro ambiente - comportamento mais previsível:
-    // shadow varia 0..1 (1 = fully in shadow). Queremos que direct light seja reduzida em shadow,
-    // mas a contribuição ambiente (ambientContribution) permanece (ou seja, sombras são clareadas pelo ambiente).
-    // Mantemos shadow afetando diretamente a luz direta:
     float shadowTerm = 1.0 - shadow; // reduz a luz direta proporcional à sombra
 
-    // Aplica sombra à contribuição direta
     directLightSum += attenuation * directContrib * shadowTerm;
     
-    // Acumula uma pequena parte da luz (ambiente/local) mesmo em sombra total para evitar preto puro
-    // USAMOS O MESMO localAmbientFactor para consistência com o caso NdotL <= 0
     ambientSum += attenuation * localAmbientFactor * baseColor * lightCol * intensity;
   }
 
-  // transmission (unchanged)
   float transAmt = texture(transmissionTex, fs_in.TexCoords).r * transmissionFactor;
   vec3 transLight = baseColor * transAmt * 0.5;
 
-  // Soma das luzes diretas e ambiente base
-  // Agora somamos a contribuição hemisférica AMBIENT que clareia sombras e áreas sem luz direta
   vec3 result = ambientContribution + ambientSum + directLightSum;
 
   // Se desejar ainda um pequeno piso global para evitar completamente pixels muito escuros,
   // use um floor baixo (por exemplo 0.05) — remova se não quiser:
   // result = max(result, baseColor * 0.05);
 
-  // Adiciona transmissão
   result = mix(result, result + transLight, transAmt);
 
   if (isAffectedByLight == 0) {
-    // Fallback para objetos não afetados por luzes diretas (usam apenas iluminação ambiente e auto-iluminação)
     vec3 fallback = ambientContribution + ambientSum;
-    fallback = max(fallback, baseColor * 0.7); // se quiser o comportamento antigo apenas para esse caso
+    fallback = max(fallback, baseColor * 0.7);
     fallback = mix(fallback, fallback + transLight, transAmt);
     FragColor = vec4(fallback, (alphaMode == 2 ? baseSample.a : 1.0));
   } else {

@@ -984,6 +984,7 @@ namespace FiscionX {
 		static GLuint shaderStatic;
 		static GLuint shaderSkinned;
 		static GLuint shaderUI;
+		//static GLuint shaderGeometry;
 
 		// --- POST PROCESSING ---
 		static GLuint mainFBO;
