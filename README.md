@@ -34,39 +34,73 @@ No dependencies needed! Everything is included. Just one single header.
 ## Code example for a simple window
 ```cpp
 #include "FiscionCore.h"
+#define PROJECT_VERSION "1.0.0"
+
+FiscionX::Light* dirLight;
 
 void update() {
     FiscionX::Core::ClockTick();
 
+    FiscionX::Core::AudioSystem.listenerPos = { FiscionX::Core::Camera.position.x, FiscionX::Core::Camera.position.y, FiscionX::Core::Camera.position.z };
+    FiscionX::Core::AudioSystem.forward = { -FiscionX::Core::Camera.front.x, FiscionX::Core::Camera.front.y , -FiscionX::Core::Camera.front.z };
+    FiscionX::Core::AudioSystem.up = { -FiscionX::Core::Camera.up.x, FiscionX::Core::Camera.up.y, -FiscionX::Core::Camera.up.z };
+
+    // CAMERA
     float camVel = FiscionX::Core::Camera.speed * FiscionX::Core::deltaTime;
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_W) == true) FiscionX::Core::Camera.position += FiscionX::Core::Camera.front * camVel;
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_S) == true) FiscionX::Core::Camera.position -= FiscionX::Core::Camera.front * camVel;
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_A) == true) FiscionX::Core::Camera.position -= FiscionX::Core::Camera.right * camVel;
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_D) == true) FiscionX::Core::Camera.position += FiscionX::Core::Camera.right * camVel;
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_W)) FiscionX::Core::Camera.position += FiscionX::Core::Camera.front * camVel;
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_S)) FiscionX::Core::Camera.position -= FiscionX::Core::Camera.front * camVel;
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_A)) FiscionX::Core::Camera.position -= FiscionX::Core::Camera.right * camVel;
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_D)) FiscionX::Core::Camera.position += FiscionX::Core::Camera.right * camVel;
 }
 
 void draw() {
+    // DRAW NORMAL
     FiscionX::Mat4 view = FiscionX::Core::Camera.GetView();
     FiscionX::Mat4 projection = FiscionX::Mat4(0).perspective(
-      glm::radians(FiscionX::Core::Camera.fov),
-      (float)FiscionX::Core::SCREEN_WIDTH / FiscionX::Core::SCREEN_HEIGHT,
-      FiscionX::Core::NEAR_PLANE,
-      FiscionX::Core::FAR_PLANE
+        glm::radians(FiscionX::Core::Camera.fov),
+        (float)FiscionX::Core::SCREEN_WIDTH / FiscionX::Core::SCREEN_HEIGHT,
+        FiscionX::Core::NEAR_PLANE,
+        FiscionX::Core::FAR_PLANE
     );
     FiscionX::Mat4 viewProj = projection * view;
 
     FiscionX::Core::RenderAllShadowPasses(view, projection, viewProj);
-    FiscionX::Core::Draw::ClearBackground(0.1f, 0.1f, 0.1f, 1.0f);
+
+    FiscionX::Core::Draw::ClearBackground(0.2f, 0.2f, 1.0f, 1.0f);
+
+    // DRAW NORMAL
     FiscionX::Core::SortModels();
 
-    //Your draw function
+    FiscionX::Core::Draw::PostProcessing(viewProj, dirLight); // Sun is beign drawn in front of every object.
 
     FiscionX::Core::Draw::SwapBuffers();
 }
 
 int main() {
-    FiscionX::Core::Set3DSettings(8128, 1024, 512, {20.0f, 70.0f, 200.0f}, 0.01f, 3000.0f, true); // Disable compressTexturesAutomatically when debugging. Slows down the starting
+    FiscionX::Core::Set3DSettings(5120, 1024, 512, { 15.0f, 70.0f, 150.0f }, 0.01f, 3000.0f, false);
+    FiscionX::Core::SetCacheSettings(true, true);
     FiscionX::Core::NewWindow(1280, 720, "FiscionX");
+    //FiscionX::Core::SetWindowFullscreen(true, 0);
+    FiscionX::Core::SetWindowIcon("assets/icons/fiscionx_logo_big_512.png");
+    FiscionX::Core::SetCursorMode(FISCIONX_CURSOR_DISABLED);
+    FiscionX::Physics::CreatePhysicsWorld(FiscionX::Vector3(0, -9.81f, 0), 10);
+
+    FiscionX::Core::AMBIENT_LIGHT_INTENSITY = 2.0f;
+
+    dirLight = new FiscionX::Light();
+    dirLight->type = FiscionX::LIGHT_DIRECTIONAL;
+    dirLight->yaw = 0;
+    dirLight->pitch = -138;
+    dirLight->color = FiscionX::Vector3(1.0f, 1.0f, 1.0f);
+    dirLight->intensity = 4.0f;
+    dirLight->maxDistance = 0.0f;
+    dirLight->cutOff = 0.0f;
+    dirLight->outerCutOff = 0.0f;
+    dirLight->constant = 1.0f;
+    dirLight->linear = 0.0f;
+    dirLight->quadratic = 0.0f;
+    dirLight->hasGlow = false;
+    dirLight->enableShadows = true;
 
     FiscionX::Core::CreateAllShadowMaps();
 
@@ -75,6 +109,7 @@ int main() {
         draw();
     }
     FiscionX::Core::Terminate();
+    system("pause");
     return 0;
 }
 ```
