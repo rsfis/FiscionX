@@ -1296,104 +1296,152 @@ out vec4 FragColor;
 in vec2 TexCoords;
 
 uniform sampler2D screenTexture;
+uniform sampler2D depthTexture;
+
 uniform vec2 lightPosOnScreen;
 uniform float sunVisibility;
 uniform float aspect;
 uniform float time;
 
-uniform float sunDiskSize = 0.012;
-uniform float sunHaloSize = 0.08;
-uniform vec3 sunColor = vec3(1.0, 0.95, 0.8);
+uniform float sunDiskSize;
+uniform float sunHaloSize;
+uniform vec3 sunColor;
 
-uniform float rayDensity = 0.98;
-uniform float rayWeight = 0.15;
-uniform float rayDecay = 0.97;
-uniform float rayExposure = 1.4;
-uniform int NUM_SAMPLES = 90;
+uniform float rayDensity;
+uniform float rayWeight;
+uniform float rayDecay;
+uniform float rayExposure;
+uniform int NUM_SAMPLES;
 
-// Função de ruído para Dithering e Poeira Atmosférica
+uniform float nearPlane;
+uniform float farPlane;
+
+// ------------------ HASH (dither / poeira) ------------------
 float hash(vec2 p) {
     p = fract(p * vec2(123.34, 456.21));
     p += dot(p, p + 45.32);
     return fract(p.x * p.y);
 }
 
+// ------------------ DEPTH LINEAR ------------------
+float LinearizeDepth(float depth)
+{
+    float z = depth * 2.0 - 1.0;
+    return (2.0 * nearPlane * farPlane) /
+           (farPlane + nearPlane - z * (farPlane - nearPlane));
+}
+
+// ------------------ GHOST FLARE ------------------
 vec3 drawGhost(vec2 uv, vec2 pos, float size, float hardness, vec3 color) {
     float d = distance(uv, pos);
     return color * pow(smoothstep(size, size * hardness, d), 2.0);
 }
 
-void main() {
+void main()
+{
+    vec3 colorCorrection = vec3(0.04, 0.04, 0.04);
     vec3 sceneColor = texture(screenTexture, TexCoords).rgb;
 
     if (sunVisibility <= 0.02) {
-        FragColor = vec4(sceneColor, 1.0);
+        FragColor = vec4(sceneColor - colorCorrection, 1.0);
         return;
     }
 
-    vec2 uv_corr = TexCoords * vec2(aspect, 1.0);
-    vec2 sunPos_corr = lightPosOnScreen * vec2(aspect, 1.0);
-    vec2 center_corr = vec2(0.5) * vec2(aspect, 1.0);
+    vec2 uv_corr      = TexCoords * vec2(aspect, 1.0);
+    vec2 sunPos_corr  = lightPosOnScreen * vec2(aspect, 1.0);
+    vec2 center_corr  = vec2(0.5) * vec2(aspect, 1.0);
 
-    // 1. SOL PROCEDURAL (Mantido conforme solicitado)
+    // ------------------------------------------------------------
+    // OCLUSÃO POR DEPTH (pixel atual)
+    // ------------------------------------------------------------
+    float sceneDepth      = texture(depthTexture, TexCoords).r;
+    float linearSceneDepth = LinearizeDepth(sceneDepth);
+
+    float sunDepth = farPlane * 0.99;
+    float occlusion = step(linearSceneDepth, sunDepth - 1.0);
+
+    // ------------------------------------------------------------
+    // SOL PROCEDURAL (oclui corretamente)
+    // ------------------------------------------------------------
     float distToSun = distance(uv_corr, sunPos_corr);
     float sunDisk = smoothstep(sunDiskSize, sunDiskSize * 0.9, distToSun);
     float sunHalo = pow(smoothstep(sunHaloSize, 0.0, distToSun), 4.0);
-    vec3 proceduralSun = sunColor * (sunDisk * 40.0 + sunHalo * 2.0) * sunVisibility;
 
-    // 2. GOD RAYS REAIS (DITHERING + VOLUMETRIC NOISE)
-    vec2 deltaTexCoord = (TexCoords - lightPosOnScreen) * (1.0 / float(NUM_SAMPLES)) * rayDensity;
-    
-    // Injetamos um jitter inicial (dithering) para eliminar o banding (degraus de cor)
+    vec3 proceduralSun =
+        sunColor * (sunDisk * 40.0 + sunHalo * 2.0)
+        * sunVisibility
+        * (1.0 - occlusion);
+
+    // ------------------------------------------------------------
+    // GOD RAYS NASCEM DO SOL (não da cena)
+    // ------------------------------------------------------------
+    vec2 deltaTexCoord =
+        (TexCoords - lightPosOnScreen) *
+        (1.0 / float(NUM_SAMPLES)) *
+        rayDensity;
+
     float jitter = hash(TexCoords + time);
     vec2 coord = TexCoords + deltaTexCoord * jitter;
-    
+
     float illuminationDecay = 1.0;
     vec3 raysColor = vec3(0.0);
 
-    for(int i = 0; i < NUM_SAMPLES; i++) {
+    for (int i = 0; i < NUM_SAMPLES; i++)
+    {
         coord -= deltaTexCoord;
-        vec3 samp = texture(screenTexture, coord).rgb;
-        
-        // Threshold para pegar apenas pontos de luz reais
-        float luma = dot(samp, vec3(0.2126, 0.7152, 0.0722));
-        float mask = pow(max(luma - 0.72, 0.0), 2.5) * 6.0;
-        
-        // Poeira Atmosférica: Pequenas variações de densidade no ar
+
+        // máscara radial baseada na distância ao sol
+        float distToSunRay = distance(coord * vec2(aspect,1.0), sunPos_corr);
+        float mask = smoothstep(0.25, 0.0, distToSunRay);
+        mask = pow(mask, 3.0);
+
         float noise = 0.85 + 0.15 * hash(coord * 0.5 + time * 0.05);
-        
-        raysColor += samp * mask * illuminationDecay * rayWeight * noise;
+
+        // oclusão por depth ao longo do ray
+        float depthSample = texture(depthTexture, coord).r;
+        float linDepthSample = LinearizeDepth(depthSample);
+        float occ = step(linDepthSample, sunDepth - 1.0);
+
+        raysColor +=
+            sunColor *
+            mask *
+            illuminationDecay *
+            rayWeight *
+            noise *
+            (1.0 - occ);
+
         illuminationDecay *= rayDecay;
     }
 
-    // 3. LENS FLARE (Mantido conforme solicitado)
+    // ------------------------------------------------------------
+    // LENS FLARE (oclui)
+    // ------------------------------------------------------------
     vec3 flareColor = vec3(0.0);
     vec2 sunToCenter = center_corr - sunPos_corr;
+
     flareColor += drawGhost(uv_corr, center_corr + sunToCenter * 0.4, 0.05, 0.0, vec3(0.05, 0.1, 0.2));
     flareColor += drawGhost(uv_corr, center_corr + sunToCenter * -0.3, 0.03, 0.5, vec3(0.2, 0.1, 0.05));
     flareColor += drawGhost(uv_corr, center_corr + sunToCenter * 1.1, 0.02, 0.7, vec3(0.1, 0.2, 0.1));
 
-    // 4. COMPOSIÇÃO HDR E ANTI-CINZA
-    // Somamos os efeitos (God Rays agora são mais orgânicos)
-    vec3 effectHDR = (proceduralSun * 0.3) + 
-                     (raysColor * rayExposure * sunVisibility) + 
-                     (flareColor * sunVisibility);
-    
-    if(length(effectHDR) < 0.001) {
-        FragColor = vec4(sceneColor, 1.0);
-        return;
-    }
+    flareColor *= (1.0 - occlusion);
 
-    // Tonemapping de exposição para efeito "Glow"
+    // ------------------------------------------------------------
+    // COMPOSIÇÃO HDR CORRETA (não altera a cena base)
+    // ------------------------------------------------------------
+    vec3 effectHDR =
+        (proceduralSun * 0.3) +
+        (raysColor * rayExposure * sunVisibility) +
+        (flareColor * sunVisibility);
+
     vec3 effectLDR = vec3(1.0) - exp(-effectHDR * 1.3);
 
-    // Composição Final (Additive Blend)
-    vec3 finalColor = sceneColor + effectLDR;
-    
-    // Punch final no contraste e saturação
-    finalColor = pow(finalColor, vec3(1.05)); // Ajuste de Gamma leve para matar o cinza
-    float gray = dot(finalColor, vec3(0.3, 0.59, 0.11));
-    finalColor = mix(vec3(gray), finalColor, 1.15);
+    // aplica punch SOMENTE no efeito
+    effectLDR = pow(effectLDR, vec3(1.05));
+    float gray = dot(effectLDR, vec3(0.3, 0.59, 0.11));
+    effectLDR = mix(vec3(gray), effectLDR, 1.15);
+
+    // cena fica intocada
+    vec3 finalColor = sceneColor + effectLDR  - colorCorrection;
 
     FragColor = vec4(clamp(finalColor, 0.0, 1.0), 1.0);
 }
