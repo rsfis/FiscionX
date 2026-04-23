@@ -3736,14 +3736,32 @@ void FiscionX::Core::NewWindow(int width, int height, const char* window_label) 
 	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, mainColorBuffer, 0);
 
 	// Renderbuffer de Depth (VITAL!)
-	glGenRenderbuffers(1, &mainDepthBuffer);
-	glBindRenderbuffer(GL_RENDERBUFFER, mainDepthBuffer);
-	glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h);
-	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, mainDepthBuffer);
+	glGenTextures(1, &mainDepthBuffer);
+	glBindTexture(GL_TEXTURE_2D, mainDepthBuffer);
 
-	if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-		std::cerr << "FiscionX ERR: FBO incompleto! Status: " << glCheckFramebufferStatus(GL_FRAMEBUFFER) << std::endl;
-	}
+	glTexImage2D(
+		GL_TEXTURE_2D,
+		0,
+		GL_DEPTH24_STENCIL8,
+		w, h,
+		0,
+		GL_DEPTH_STENCIL,
+		GL_UNSIGNED_INT_24_8,
+		nullptr
+	);
+
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+	glFramebufferTexture2D(
+		GL_FRAMEBUFFER,
+		GL_DEPTH_STENCIL_ATTACHMENT,
+		GL_TEXTURE_2D,
+		mainDepthBuffer,
+		0
+	);
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
 	// Quad para cobrir a tela no post-processing
@@ -3902,13 +3920,10 @@ void FiscionX::Core::SortModels() {
 }
 
 void FiscionX::Core::Terminate() {
-
 	// ========= MODELS =========
 	for (auto* model : AllModels) {
 		if (model) {
 			model->destroy();
-			delete model;
-			model = nullptr;
 		}
 	}
 	AllModels.clear();
@@ -4045,6 +4060,13 @@ void FiscionX::Core::Draw::PostProcessing(FiscionX::Mat4 viewProj, FiscionX::Lig
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainColorBuffer);
 	glUniform1i(glGetUniformLocation(FiscionX::Core::godRaysShader, "screenTexture"), 0);
+
+	glUniform1f(glGetUniformLocation(FiscionX::Core::godRaysShader, "nearPlane"), FiscionX::Core::NEAR_PLANE);
+	glUniform1f(glGetUniformLocation(FiscionX::Core::godRaysShader, "farPlane"), FiscionX::Core::FAR_PLANE);
+
+	glActiveTexture(GL_TEXTURE1);
+	glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainDepthBuffer);
+	glUniform1i(glGetUniformLocation(FiscionX::Core::godRaysShader, "depthTexture"), 1);
 
 	glBindVertexArray(FiscionX::Core::screenQuadVAO);
 	glDrawArrays(GL_TRIANGLES, 0, 6);

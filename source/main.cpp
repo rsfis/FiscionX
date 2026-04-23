@@ -11,6 +11,12 @@ FiscionX::Model* boxModel;
 FiscionX::Model* skinnedModel;
 FiscionX::Model* kratosStaticModel;
 
+FiscionX::Physics::Rigidbody* groundBody;
+FiscionX::Physics::Rigidbody* capsuleBody;
+FiscionX::Physics::Rigidbody* staticCarBody;
+FiscionX::Physics::Rigidbody* carChassiBody;
+FiscionX::Physics::Vehicle* vehicle;
+
 /*
 void PrintRAMUsage() {
     PROCESS_MEMORY_COUNTERS_EX pmc;
@@ -35,6 +41,48 @@ void update() {
     if (skinnedModel) {
         skinnedModel->update(FiscionX::Core::deltaTime);
     }
+
+    FiscionX::Physics::DynamicWorld->stepSimulation(FiscionX::Core::deltaTime, 10);
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_I)) {
+        vehicle->applyEngineForce(800, 0);
+        vehicle->applyEngineForce(800, 1);
+
+        dirLight->direction.y += 0.01f;
+    }
+    else {
+        vehicle->setBrake(2, 0);
+        vehicle->setBrake(2, 1);
+        vehicle->applyEngineForce(0, 0);
+        vehicle->applyEngineForce(0, 1);
+    }
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_K)) {
+        vehicle->setBrake(10, 0);
+        vehicle->setBrake(10, 1);
+        vehicle->applyEngineForce(-1000, 0);
+        vehicle->applyEngineForce(-1000, 1);
+        dirLight->direction.y -= 0.01f;
+    }
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_J)) {
+        vehicle->setSteeringValue(0.5f, 0);
+        vehicle->setSteeringValue(0.5f, 1);
+        dirLight->direction.x -= 0.01f;
+    }
+    else if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_L)) {
+        vehicle->setSteeringValue(-0.4f, 0);
+        vehicle->setSteeringValue(-0.4f, 1);
+        dirLight->direction.x += 0.01f;
+    }
+    else {
+        vehicle->setSteeringValue(0, 0);
+        vehicle->setSteeringValue(0, 1);
+    }
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_T)) {
+        carChassiBody->setTransform(FiscionX::Vector3(3, 10, -4), FiscionX::Vector3(0, 0, 0));
+    }
+
+    // CAPSULE & KRATOS
+    capsuleBody->activate();
+    //kratosStaticModel->syncTransformWithBody(capsuleBody, FiscionX::Vector3(0, -1.25f, 0), FiscionX::Vector3(0, 0, 0));
 
     // CAMERA
     float camVel = FiscionX::Core::Camera.speed * FiscionX::Core::deltaTime;
@@ -88,13 +136,14 @@ void draw() {
         skinnedModel->draw(FiscionX::Core::shaderSkinned, glm::mat4(1.0f), 0, false, view, projection);
     }
 
-    FiscionX::Core::Draw::PostProcessing(viewProj, dirLight);
+    FiscionX::Core::Draw::PostProcessing(viewProj, dirLight); // No godray; Add Bloom
+    //FiscionX::Physics::DrawDebugWorld(projection, view);
 
     FiscionX::Core::Draw::SwapBuffers();
 }
 
 int main() {
-    FiscionX::Core::Set3DSettings(5120, 1024, 512, { 15.0f, 70.0f, 150.0f }, 0.01f, 3000.0f, false);
+    FiscionX::Core::Set3DSettings(4096, 1024, 512, { 15.0f, 70.0f, 150.0f }, 0.01f, 1000.0f, false);
     FiscionX::Core::SetCacheSettings(true, true);
     FiscionX::Core::NewWindow(1280, 720, "FiscionX");
     //FiscionX::Core::SetWindowFullscreen(true, 0);
@@ -119,6 +168,7 @@ int main() {
     dirLight->hasGlow = false;
     dirLight->enableShadows = true;
 
+    /*
     spotLight = new FiscionX::Light();
     spotLight->type = FiscionX::LIGHT_POINT;
     spotLight->position = FiscionX::Vector3(0.0f, 1.0f, -4.0f);
@@ -133,10 +183,11 @@ int main() {
     spotLight->quadratic = 0.032f;
     spotLight->hasGlow = true;
     spotLight->enableShadows = true;
+    */
 
     FiscionX::Core::CreateAllShadowMaps();
 
-    // Draw halo and glow also for point lights and spot lights; Point lights are traversing walls/solid objects (Criação da textura está correta. Problema: Shader ou Computando); Soft Shadows; Sombras e Luz devem passar por malhas com transparência; Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Terrains; Water
+    // Draw halo and glow also for point lights and spot lights; Point lights are traversing walls/solid objects (Criação da textura está correta. Problema: Shader ou Computando); Sombras e Luz devem passar por malhas com transparência; Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Terrains; Water
 
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb",
@@ -165,11 +216,105 @@ int main() {
 
     skinnedModel->playAnim("Armature|Idle_01", true);
 
+
+    // Physics
+    FiscionX::Physics::Shape groundShape = FiscionX::Physics::CreateBoxShape(FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(30.0f, 0.01f, 30.0f), 0.0f);
+    groundBody = new FiscionX::Physics::Rigidbody(groundShape);
+    groundBody->setBouncingFactor(0.0f);
+    FiscionX::Physics::DynamicWorld->addRigidBody(groundBody->body);
+
+    // === Capsule ===
+    FiscionX::Physics::Shape capsuleShape = FiscionX::Physics::CreateCapsuleShape(FiscionX::Vector3(-11, 4, 0), FiscionX::Vector3(0, 0, 0), 0.5f, 1.5f, 1.0f);
+    capsuleBody = new FiscionX::Physics::Rigidbody(capsuleShape);
+    capsuleBody->setFriction(0.5f);
+    capsuleBody->setRollingFriction(0.3f);
+    capsuleBody->setDamping(0.05f);
+    capsuleBody->lockAxis(FiscionX::Vector3(1, 1, 1));
+    capsuleBody->setBouncingFactor(0.0f);
+    FiscionX::Physics::DynamicWorld->addRigidBody(capsuleBody->body);
+
+    // == Mesh Collider ==
+    FiscionX::Physics::Shape staticCarShape = FiscionX::Physics::CreateMeshShape("assets/models/car_scene.glb", FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(0.01f, 0.01f, 0.01f), 0.0f);
+    staticCarShape.gshape->updateBound();
+    staticCarBody = new FiscionX::Physics::Rigidbody(staticCarShape);
+    staticCarBody->setBouncingFactor(0.0f);
+    FiscionX::Physics::DynamicWorld->addRigidBody(staticCarBody->body);
+
+    // ==== Car ====
+    FiscionX::Physics::Shape carShape = FiscionX::Physics::CreateBoxShape(
+        FiscionX::Vector3(-10, 4, 0),
+        FiscionX::Vector3(0, 0, 0),
+        FiscionX::Vector3(0.8f, 0.5f, 1.7f),
+        900.0f
+    );
+    carChassiBody = new FiscionX::Physics::Rigidbody(carShape);
+    FiscionX::Physics::DynamicWorld->addRigidBody(carChassiBody->body);
+
+    vehicle = new FiscionX::Physics::Vehicle(carChassiBody);
+
+    FiscionX::Vector3 wheelDirectionCS0(0, -1, 0);
+    FiscionX::Vector3 wheelAxleCS(-1, 0, 0);
+
+    float suspensionRestLength = 0.6;
+    float wheelRadius = 0.3;
+
+    vehicle->addWheel(FiscionX::Vector3(1.0, 0.00f, 1.5), wheelDirectionCS0, wheelAxleCS,
+        suspensionRestLength, wheelRadius, true); // front left
+
+    vehicle->addWheel(FiscionX::Vector3(-1.0, 0.00f, 1.5), wheelDirectionCS0, wheelAxleCS,
+        suspensionRestLength, wheelRadius, true); // frontt right
+
+    vehicle->addWheel(FiscionX::Vector3(1.0, 0.00f, -1.5), wheelDirectionCS0, wheelAxleCS,
+        suspensionRestLength, wheelRadius, false); // back left
+
+    vehicle->addWheel(FiscionX::Vector3(-1.0, 0.00f, -1.5), wheelDirectionCS0, wheelAxleCS,
+        suspensionRestLength, wheelRadius, false); // back right
+
+    FiscionX::Physics::DynamicWorld->addVehicle(vehicle->vehicle);
+
+    for (int i = 0; i < vehicle->getNumWheels(); ++i) {
+        FiscionX::Physics::Vehicle::WheelInfo& wheel = vehicle->getWheelInfo(i);
+
+        wheel.info->m_suspensionStiffness = 30.0f;             // holds well the weight
+        wheel.info->m_wheelsDampingCompression = 2.0f;         // absorves impacts
+        wheel.info->m_wheelsDampingRelaxation = 3.5f;          // relaxes smoothly
+
+        wheel.info->m_maxSuspensionTravelCm = 500.0f;          // vertical spacement for the wheel to move
+        wheel.info->m_maxSuspensionForce = 20000.0f;           // max suspension force
+
+        wheel.info->m_frictionSlip = 1500.0f;                  // great traction
+        wheel.info->m_rollInfluence = 0.1f;                    // great grip on the ground
+        wheel.info->m_bIsFrontWheel = (i < 2);                 // front
+    }
+
+    // JOINTS
+    /*FiscionX::Physics::Joint j;
+    j.type = FiscionX::Physics::JointType::CONETWIST;
+    j.bodyA = carChassiBody->body;
+    j.bodyB = capsuleBody->body;
+
+    j.frameA.setOrigin(btVector3(0.0, 0.5, 0));
+    j.frameB.setOrigin(btVector3(0, -0.75, 0));
+
+    j.collideConnected = false;
+
+    j.swing1 = SIMD_PI * 0.7f;
+    j.swing2 = SIMD_PI * 0.7f;
+    j.twist = SIMD_PI * 0.5f;
+
+    FiscionX::Physics::CreateJoint(j);
+    */
+
+
+    
+
     while (!glfwWindowShouldClose(FiscionX::Core::Window)) {
         update();
         draw();
     }
     FiscionX::Core::Terminate();
-    system("pause");
+
+    MessageBoxA(NULL, "O motor FiscionX parou com sucesso.", "FiscionX Debug", MB_OK | MB_ICONINFORMATION);
+
     return 0;
 }

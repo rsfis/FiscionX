@@ -18,6 +18,7 @@
 #include <queue>
 #include <mutex>
 #include <thread>
+#include <Windows.h>
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include "dependencies/glad/glad.h"
