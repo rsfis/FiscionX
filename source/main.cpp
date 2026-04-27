@@ -305,9 +305,6 @@ int main() {
     FiscionX::Physics::CreateJoint(j);
     */
 
-
-    
-
     while (!glfwWindowShouldClose(FiscionX::Core::Window)) {
         update();
         draw();
