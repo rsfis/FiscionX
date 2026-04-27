@@ -310,8 +310,5 @@ int main() {
         draw();
     }
     FiscionX::Core::Terminate();
-
-    MessageBoxA(NULL, "O motor FiscionX parou com sucesso.", "FiscionX Debug", MB_OK | MB_ICONINFORMATION);
-
     return 0;
 }
