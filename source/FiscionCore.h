@@ -1004,6 +1004,8 @@ namespace FiscionX {
 		static float godRaysExposure;
 		static int godRaysNumOfSamples;
 
+		static Vector3 colorCorrection;
+
 		//static unsigned int SHADOW_WIDTH;
 		//static unsigned int SHADOW_HEIGHT;
 		//static unsigned int SHADOW_CUBE_SIZE;
@@ -1015,8 +1017,8 @@ namespace FiscionX {
 		static float        NEAR_PLANE;
 		static float         FAR_PLANE;
 		static float         AMBIENT_LIGHT_INTENSITY;
-		static glm::vec3     AMBIENT_LIGHT_SKYCOLOR;
-		static glm::vec3     AMBIENT_LIGHT_GROUNDCOLOR;
+		static FiscionX::Vector3 AMBIENT_LIGHT_SKYCOLOR;
+		static FiscionX::Vector3 AMBIENT_LIGHT_GROUNDCOLOR;
 		static float SHADOW_VIEW_RADIUS;
 		static GLuint depthMapFBO;
 		static GLuint depthMap;

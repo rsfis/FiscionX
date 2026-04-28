@@ -5,7 +5,7 @@
 // last error number: 17
 
 // GLOBALS
-GLFWwindow * FiscionX::Core::Window;
+GLFWwindow* FiscionX::Core::Window;
 int FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT;
 
 GLuint FiscionX::Core::depthShaderStatic;
@@ -24,12 +24,13 @@ GLuint FiscionX::Core::screenQuadVBO;
 GLuint FiscionX::Core::godRaysShader;
 float FiscionX::Core::sunDiskSize = 0.030;
 float FiscionX::Core::sunHaloSize = 0.3;
-FiscionX::Vector3 FiscionX::Core::sunColor = FiscionX::Vector3(1.0, 0.95, 0.8);
+FiscionX::Vector3 FiscionX::Core::sunColor(1.0, 0.95, 0.8);
 float FiscionX::Core::godRaysDensity = 0.98;
 float FiscionX::Core::godRaysWeight = 0.15;
 float FiscionX::Core::godRaysDecay = 0.97;
 float FiscionX::Core::godRaysExposure = 1.4;
 int FiscionX::Core::godRaysNumOfSamples = 10;
+FiscionX::Vector3 FiscionX::Core::colorCorrection(0.07f, 0.07f, 0.08f);
 
 int FiscionX::Core::DIR_SHADOW_SIZE = 1024;
 int FiscionX::Core::SPOT_SHADOW_SIZE = 1024;
@@ -38,8 +39,8 @@ float        FiscionX::Core::NEAR_PLANE;
 float         FiscionX::Core::FAR_PLANE;
 float         FiscionX::Core::SHADOW_VIEW_RADIUS;
 float         FiscionX::Core::AMBIENT_LIGHT_INTENSITY = 0.0f;
-glm::vec3     FiscionX::Core::AMBIENT_LIGHT_SKYCOLOR = { 0.3f, 0.3f, 0.35f };
-glm::vec3     FiscionX::Core::AMBIENT_LIGHT_GROUNDCOLOR = { 0.05f, 0.05f, 0.07f };
+FiscionX::Vector3     FiscionX::Core::AMBIENT_LIGHT_SKYCOLOR = { 0.3f, 0.3f, 0.35f };
+FiscionX::Vector3     FiscionX::Core::AMBIENT_LIGHT_GROUNDCOLOR = { 0.05f, 0.05f, 0.07f };
 GLuint FiscionX::Core::depthMapFBO;
 GLuint FiscionX::Core::depthMap;
 std::vector<float> FiscionX::Core::shadowCascadeLevels = { 20.0f, 70.0f, 200.0f };
@@ -2077,68 +2078,68 @@ void FiscionX::Model::init(const std::string& path) {
 
 void FiscionX::Model::destroy() {
 
-		// ========= MESHES =========
-		for (auto& mesh : meshes) {
+	// ========= MESHES =========
+	for (auto& mesh : meshes) {
 
-			if (mesh.vao) {
-				glDeleteVertexArrays(1, &mesh.vao);
-				mesh.vao = 0;
-			}
-
-			if (mesh.vbo) {
-				glDeleteBuffers(1, &mesh.vbo);
-				mesh.vbo = 0;
-			}
-
-			if (mesh.ebo) {
-				glDeleteBuffers(1, &mesh.ebo);
-				mesh.ebo = 0;
-			}
+		if (mesh.vao) {
+			glDeleteVertexArrays(1, &mesh.vao);
+			mesh.vao = 0;
 		}
 
-		// ========= TEXTURAS =========
-		for (auto& mesh : meshes) {
-			if (mesh.baseColorTex) {
-				glDeleteTextures(1, &mesh.baseColorTex);
-				mesh.baseColorTex = 0;
-			}
-
-			if (mesh.normalMapTex) {
-				glDeleteTextures(1, &mesh.normalMapTex);
-				mesh.normalMapTex = 0;
-			}
-
-			if (mesh.transmissionTex) {
-				glDeleteTextures(1, &mesh.transmissionTex);
-				mesh.transmissionTex = 0;
-			}
-
-			if (mesh.glossinessTex) {
-				glDeleteTextures(1, &mesh.glossinessTex);
-				mesh.glossinessTex = 0;
-			}
-
-			if (mesh.specularF0Tex) {
-				glDeleteTextures(1, &mesh.specularF0Tex);
-				mesh.specularF0Tex = 0;
-			}
-
-			if (mesh.metallicTex) {
-				glDeleteTextures(1, &mesh.metallicTex);
-				mesh.metallicTex = 0;
-			}
+		if (mesh.vbo) {
+			glDeleteBuffers(1, &mesh.vbo);
+			mesh.vbo = 0;
 		}
 
-		// ========= LIMPEZA CPU & GPU =========
-		meshes.clear();
-		nodes.clear();
-		skins.clear();
-		animations.clear();
+		if (mesh.ebo) {
+			glDeleteBuffers(1, &mesh.ebo);
+			mesh.ebo = 0;
+		}
+	}
 
-		FiscionX::Core::AllModels.erase(
-			std::remove(FiscionX::Core::AllModels.begin(), FiscionX::Core::AllModels.end(), this),
-			FiscionX::Core::AllModels.end()
-		);
+	// ========= TEXTURAS =========
+	for (auto& mesh : meshes) {
+		if (mesh.baseColorTex) {
+			glDeleteTextures(1, &mesh.baseColorTex);
+			mesh.baseColorTex = 0;
+		}
+
+		if (mesh.normalMapTex) {
+			glDeleteTextures(1, &mesh.normalMapTex);
+			mesh.normalMapTex = 0;
+		}
+
+		if (mesh.transmissionTex) {
+			glDeleteTextures(1, &mesh.transmissionTex);
+			mesh.transmissionTex = 0;
+		}
+
+		if (mesh.glossinessTex) {
+			glDeleteTextures(1, &mesh.glossinessTex);
+			mesh.glossinessTex = 0;
+		}
+
+		if (mesh.specularF0Tex) {
+			glDeleteTextures(1, &mesh.specularF0Tex);
+			mesh.specularF0Tex = 0;
+		}
+
+		if (mesh.metallicTex) {
+			glDeleteTextures(1, &mesh.metallicTex);
+			mesh.metallicTex = 0;
+		}
+	}
+
+	// ========= LIMPEZA CPU & GPU =========
+	meshes.clear();
+	nodes.clear();
+	skins.clear();
+	animations.clear();
+
+	FiscionX::Core::AllModels.erase(
+		std::remove(FiscionX::Core::AllModels.begin(), FiscionX::Core::AllModels.end(), this),
+		FiscionX::Core::AllModels.end()
+	);
 }
 
 void FiscionX::Model::updateOcclusion(const glm::mat4& viewProj) {
@@ -3600,7 +3601,7 @@ void FiscionX::Core::RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 p
 	}
 }
 
-void FiscionX::Core::Set3DSettings(const int _DIRECTIONAL_LIGHT_SHADOW_SIZE, const int _SPOT_LIGHT_SHADOW_SIZE, const int _POINT_LIGHT_SHADOW_SIZE, 
+void FiscionX::Core::Set3DSettings(const int _DIRECTIONAL_LIGHT_SHADOW_SIZE, const int _SPOT_LIGHT_SHADOW_SIZE, const int _POINT_LIGHT_SHADOW_SIZE,
 	const std::vector<float> SHADOW_CASCADE_LEVELS, const float _NEAR_PLANE, const float _FAR_PLANE, const bool _COMPRESS_TEXTURES_AUTOMATICALLY) {
 
 	DIR_SHADOW_SIZE = _DIRECTIONAL_LIGHT_SHADOW_SIZE;
@@ -3998,11 +3999,11 @@ void RenderPrimitive(const std::vector<glm::vec2>& vertices,
 
 void FiscionX::Core::Draw::ClearBackground(float r, float g, float b, float alpha) {
 	glBindFramebuffer(GL_FRAMEBUFFER, FiscionX::Core::mainFBO);
-    glViewport(0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
+	glViewport(0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
 
 	glClearColor(r, g, b, alpha);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glEnable(GL_DEPTH_TEST);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	glEnable(GL_DEPTH_TEST);
 }
 
 void FiscionX::Core::Draw::SwapBuffers() {
@@ -4054,6 +4055,8 @@ void FiscionX::Core::Draw::PostProcessing(FiscionX::Mat4 viewProj, FiscionX::Lig
 	glUniform1f(glGetUniformLocation(FiscionX::Core::godRaysShader, "rayDecay"), FiscionX::Core::godRaysDecay);
 	glUniform1f(glGetUniformLocation(FiscionX::Core::godRaysShader, "rayExposure"), FiscionX::Core::godRaysExposure);
 	glUniform1f(glGetUniformLocation(FiscionX::Core::godRaysShader, "NUM_SAMPLES"), FiscionX::Core::godRaysNumOfSamples);
+
+	glUniform3f(glGetUniformLocation(FiscionX::Core::godRaysShader, "colorCorrection"), FiscionX::Core::colorCorrection.x, FiscionX::Core::colorCorrection.y, FiscionX::Core::colorCorrection.z);
 
 	glm::vec3 camDir = glm::vec3(FiscionX::Core::Camera.front.x, FiscionX::Core::Camera.front.y, FiscionX::Core::Camera.front.z);
 
