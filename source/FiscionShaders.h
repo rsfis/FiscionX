@@ -1063,6 +1063,8 @@ uniform float sunDiskSize;
 uniform float sunHaloSize;
 uniform vec3 sunColor;
 
+uniform vec3 colorCorrection = vec3(0.07, 0.07, 0.07);
+
 uniform float rayDensity;
 uniform float rayWeight;
 uniform float rayDecay;
@@ -1072,184 +1074,115 @@ uniform int NUM_SAMPLES;
 uniform float nearPlane;
 uniform float farPlane;
 
-// ------------------ HASH (dither / poeira) ------------------
+// ------------------ HELPER FUNCTIONS ------------------
 float hash(vec2 p) {
     p = fract(p * vec2(123.34, 456.21));
     p += dot(p, p + 45.32);
     return fract(p.x * p.y);
 }
 
-// ------------------ DEPTH LINEAR ------------------
-float LinearizeDepth(float depth)
-{
+float LinearizeDepth(float depth) {
     float z = depth * 2.0 - 1.0;
-    return (2.0 * nearPlane * farPlane) /
-           (farPlane + nearPlane - z * (farPlane - nearPlane));
+    return (2.0 * nearPlane * farPlane) / (farPlane + nearPlane - z * (farPlane - nearPlane));
 }
 
-// ------------------ GHOST FLARE ------------------
-vec3 drawGhost(vec2 uv, vec2 pos, float size, float hardness, vec3 color) {
-    float d = distance(uv, pos);
-    return color * pow(smoothstep(size, size * hardness, d), 2.0);
+float GetSunVisibility(vec2 sunPos) {
+    float visibleSamples = 0.0;
+    float worldSunDistance = farPlane * 0.98;
+    const float range = 0.012; 
+    for(float x = -1.0; x <= 1.0; x += 1.0) {
+        for(float y = -1.0; y <= 1.0; y += 1.0) {
+            vec2 offset = vec2(x, y) * range;
+            float d = texture(depthTexture, sunPos + offset).r;
+            if (LinearizeDepth(d) >= worldSunDistance) visibleSamples += 1.0;
+        }
+    }
+    return (visibleSamples / 9.0);
 }
 
-void main()
-{
-    vec3 colorCorrection = vec3(0.07, 0.07, 0.07);
+// Desenha um "fantasma" com aberração cromática opcional
+vec3 drawGhost(vec2 uv, vec2 pos, float size, float falloff, vec3 color, float chromAb) {
+    vec2 dir = normalize(pos - uv);
+    float r = smoothstep(size, size * falloff, distance(uv + dir * chromAb, pos));
+    float g = smoothstep(size, size * falloff, distance(uv, pos));
+    float b = smoothstep(size, size * falloff, distance(uv - dir * chromAb, pos));
+    return vec3(r, g, b) * color;
+}
+
+void main() {
     vec3 sceneColor = texture(screenTexture, TexCoords).rgb;
+    vec2 uv_corr = TexCoords * vec2(aspect, 1.0);
+    vec2 sunPos_corr = lightPosOnScreen * vec2(aspect, 1.0);
+    vec2 center_corr = vec2(0.5) * vec2(aspect, 1.0);
+    vec2 sunVec = center_corr - sunPos_corr;
 
-    if (sunVisibility <= 0.02) {
+    float softVisibility = GetSunVisibility(lightPosOnScreen) * sunVisibility;
+    float worldSunDistance = farPlane * 0.98;
+    float localOcclusion = step(LinearizeDepth(texture(depthTexture, TexCoords).r), worldSunDistance - 1.0);
+
+    if (softVisibility <= 0.001 && localOcclusion > 0.5) {
         FragColor = vec4(sceneColor - colorCorrection, 1.0);
         return;
     }
 
-    vec2 uv_corr      = TexCoords * vec2(aspect, 1.0);
-    vec2 sunPos_corr  = lightPosOnScreen * vec2(aspect, 1.0);
-    vec2 center_corr  = vec2(0.5) * vec2(aspect, 1.0);
-
-    // ------------------------------------------------------------
-    // OCLUSÃO POR DEPTH (pixel atual)
-    // ------------------------------------------------------------
-    float sceneDepth      = texture(depthTexture, TexCoords).r;
-    float linearSceneDepth = LinearizeDepth(sceneDepth);
-
-    float sunDepth = farPlane * 0.99;
-    float occlusion = step(linearSceneDepth, sunDepth - 1.0);
-
-    // ------------------------------------------------------------
-    // SOL PROCEDURAL (oclui corretamente)
-    // ------------------------------------------------------------
+    // 1. PROCEDURAL SUN & RAYS
     float distToSun = distance(uv_corr, sunPos_corr);
-    float sunDisk = smoothstep(sunDiskSize, sunDiskSize * 0.9, distToSun);
+    float sunDisk = smoothstep(sunDiskSize, sunDiskSize * 0.8, distToSun);
     float sunHalo = pow(smoothstep(sunHaloSize, 0.0, distToSun), 4.0);
+    vec3 proceduralSun = sunColor * (sunDisk * 45.0 + sunHalo * 3.0) * (1.0 - localOcclusion) * sunVisibility;
 
-    vec3 proceduralSun =
-        sunColor * (sunDisk * 40.0 + sunHalo * 2.0)
-        * sunVisibility
-        * (1.0 - occlusion);
-
-    // ------------------------------------------------------------
-    // GOD RAYS NASCEM DO SOL (não da cena)
-    // ------------------------------------------------------------
-    vec2 deltaTexCoord =
-        (TexCoords - lightPosOnScreen) *
-        (1.0 / float(NUM_SAMPLES)) *
-        rayDensity;
-
-    float jitter = hash(TexCoords + time);
-    vec2 coord = TexCoords + deltaTexCoord * jitter;
-
-    float illuminationDecay = 1.0;
+    vec2 deltaTexCoord = (TexCoords - lightPosOnScreen) * (1.0 / float(NUM_SAMPLES)) * rayDensity;
+    vec2 coord = TexCoords + deltaTexCoord * hash(TexCoords + time);
     vec3 raysColor = vec3(0.0);
+    float illuminationDecay = 1.0;
 
-    for (int i = 0; i < NUM_SAMPLES; i++)
-    {
+    for (int i = 0; i < NUM_SAMPLES; i++) {
         coord -= deltaTexCoord;
-
-        // máscara radial baseada na distância ao sol
-        float distToSunRay = distance(coord * vec2(aspect,1.0), sunPos_corr);
-        float mask = smoothstep(0.25, 0.0, distToSunRay);
-        mask = pow(mask, 3.0);
-
-        float noise = 0.85 + 0.15 * hash(coord * 0.5 + time * 0.05);
-
-        // oclusão por depth ao longo do ray
-        float depthSample = texture(depthTexture, coord).r;
-        float linDepthSample = LinearizeDepth(depthSample);
-        float occ = step(linDepthSample, sunDepth - 1.0);
-
-        raysColor +=
-            sunColor *
-            mask *
-            illuminationDecay *
-            rayWeight *
-            noise *
-            (1.0 - occ);
-
+        float mask = pow(smoothstep(0.25, 0.0, distance(coord * vec2(aspect, 1.0), sunPos_corr)), 3.0);
+        float occ = step(LinearizeDepth(texture(depthTexture, coord).r), worldSunDistance - 1.0);
+        raysColor += sunColor * mask * illuminationDecay * rayWeight * (1.0 - occ);
         illuminationDecay *= rayDecay;
     }
 
-    // ------------------------------------------------------------
-    // LENS FLARE (EXTENDED MULTI-ELEMENT)
-    // ------------------------------------------------------------
-    vec3 flareColor = vec3(0.0);
-    vec2 sunVec = center_corr - sunPos_corr;
-    distToSun = length(uv_corr - sunPos_corr);
+    // 2. LENS FLARE EVOLUÍDO
+    vec3 flareFinal = vec3(0.0);
 
-    vec3 finalFlare = vec3(0.0);
+    // Grande Glow Suave de Lente
+    flareFinal += vec3(0.1, 0.15, 0.2) * exp(-distToSun * 1.5) * 0.2;
 
-    // 1. MAIN GLOWS (Camadas de brilho na fonte)
-    float glow1 = exp(-distToSun * 20.0);
-    float glow2 = exp(-distToSun * 4.0) * 0.2; // Glow amplo e suave
-    finalFlare += (glow1 + glow2) * vec3(1.0, 0.9, 0.8);
+    // Fantasmas em linha (Distribuídos ao longo do sunVec)
+    // Coordenadas baseadas no centro para inverter os reflexos
+    flareFinal += drawGhost(uv_corr, center_corr + sunVec * 0.4,  0.06, 0.0, vec3(0.15, 0.12, 0.1), 0.005);
+    flareFinal += drawGhost(uv_corr, center_corr + sunVec * 0.7,  0.03, 0.3, vec3(0.1, 0.2, 0.1), 0.008);
+    flareFinal += drawGhost(uv_corr, center_corr + sunVec * -0.3, 0.02, 0.1, vec3(0.2, 0.1, 0.1), 0.01);
+    flareFinal += drawGhost(uv_corr, center_corr + sunVec * -0.6, 0.09, 0.8, vec3(0.05, 0.05, 0.1), 0.0);
+    flareFinal += drawGhost(uv_corr, center_corr + sunVec * 1.2,  0.15, 0.9, vec3(0.02, 0.02, 0.05), 0.0);
 
-    // 2. PRIMARY GHOSTS (A linha principal de reflexos)
-    // Ghost A: Pequeno, nítido e quente
-    vec2 pA = center_corr + sunVec * 0.45;
-    finalFlare += smoothstep(0.03, 0.0, distance(uv_corr, pA)) * vec3(0.2, 0.1, 0.02);
+    // Anéis (Ring Elements)
+    float ring1 = distance(uv_corr, center_corr + sunVec * 0.6);
+    flareFinal += smoothstep(0.01, 0.0, abs(ring1 - 0.25)) * vec3(0.1, 0.08, 0.05) * 0.4;
+    
+    float ring2 = distance(uv_corr, center_corr + sunVec * 0.2);
+    flareFinal += smoothstep(0.04, 0.0, abs(ring2 - 0.5)) * vec3(0.05, 0.05, 0.1) * 0.2;
 
-    // Ghost B: Médio, azulado e cromático
-    vec2 pB = center_corr + sunVec * -0.25;
-    float gBR = smoothstep(0.04, 0.0, distance(uv_corr + sunVec * 0.01, pB));
-    float gBG = smoothstep(0.04, 0.0, distance(uv_corr, pB));
-    float gBB = smoothstep(0.04, 0.0, distance(uv_corr - sunVec * 0.01, pB));
-    finalFlare += vec3(gBR, gBG, gBB) * vec3(0.05, 0.1, 0.2);
+    // Starburst (Pequenos raios de difração fixos)
+    //float ang = atan(uv_corr.y - sunPos_corr.y, uv_corr.x - sunPos_corr.x);
+    //float star = pow(sin(ang * 6.0 + 1.5), 10.0) * 0.5 + pow(sin(ang * 10.0), 10.0) * 0.3;
+    //flareFinal += star * sunColor * exp(-distToSun * 10.0) * 2.0;
 
-    // Ghost C: O "Orb" de fundo (muito grande e muito fraco)
-    vec2 pC = center_corr + sunVec * 1.2;
-    finalFlare += smoothstep(0.3, 0.0, distance(uv_corr, pC)) * vec3(0.02, 0.02, 0.03);
+    // 3. FINALIZAÇÃO
+    // Vinheta na borda para o flare não "cortar" bruscamente nas beiradas da tela
+    float edgeFade = smoothstep(1.2, 0.5, length(TexCoords - 0.5));
+    flareFinal *= edgeFade;
 
-    // 3. SECONDARY ELEMENTS (Aumentando a densidade)
-    // Ghost D: Pequeno "Diamond" no lado oposto
-    vec2 pD = center_corr + sunVec * -0.6;
-    finalFlare += smoothstep(0.015, 0.0, distance(uv_corr, pD)) * vec3(0.1, 0.15, 0.1);
+    vec3 finalEffect = (proceduralSun * 0.3) + 
+                       (raysColor * rayExposure * softVisibility) + 
+                       (flareFinal * softVisibility);
 
-    // Ghost E: Reflexo alongado perto da borda
-    vec2 pE = center_corr + sunVec * 0.8;
-    finalFlare += smoothstep(0.08, 0.0, distance(uv_corr, pE)) * vec3(0.05, 0.03, 0.05);
+    // Tonemapping
+    vec3 effectLDR = vec3(1.0) - exp(-finalEffect * 1.2);
+    vec3 color = sceneColor + effectLDR;
 
-    // Ghost F: Micro-ghost bem perto da luz
-    vec2 pF = center_corr + sunVec * 0.1;
-    finalFlare += smoothstep(0.01, 0.0, distance(uv_corr, pF)) * vec3(0.3, 0.3, 0.2);
-
-    // 4. HALOS ADICIONAIS
-    // Halo interno (pequeno e focado)
-    float ring1 = distance(uv_corr, center_corr + sunVec * 0.2);
-    finalFlare += smoothstep(0.01, 0.0, abs(ring1 - 0.1)) * vec3(0.05, 0.07, 0.1) * 0.5;
-
-    // Halo externo (o que você já tinha, mas refinado)
-    float ring2 = distance(uv_corr, center_corr + sunVec * 0.5);
-    finalFlare += smoothstep(0.03, 0.0, abs(ring2 - 0.28)) * vec3(0.1, 0.05, 0.05) * 0.3;
-
-    // 5. CAUSTIC SCATTER (Ruído simulando poeira e micro-reflexos)
-    float noise = fract(sin(dot(uv_corr, vec2(12.9898, 78.233))) * 43758.5453);
-    float scatter = pow(max(0.0, 1.0 - distToSun), 10.0) * noise * 0.05;
-    finalFlare += scatter * vec3(1.0, 0.9, 0.8);
-
-    // 6. FINALIZAÇÃO
-    float edgeFade = smoothstep(1.0, 0.4, length(uv_corr - 0.5));
-    finalFlare *= edgeFade;
-
-    flareColor = finalFlare * (1.0 - occlusion);
-
-    // ------------------------------------------------------------
-    // COMPOSIÇÃO HDR CORRETA (não altera a cena base)
-    // ------------------------------------------------------------
-    vec3 effectHDR =
-        (proceduralSun * 0.3) +
-        (raysColor * rayExposure * sunVisibility) +
-        (flareColor * sunVisibility);
-
-    vec3 effectLDR = vec3(1.0) - exp(-effectHDR * 1.3);
-
-    // aplica punch SOMENTE no efeito
-    effectLDR = pow(effectLDR, vec3(1.05));
-    float gray = dot(effectLDR, vec3(0.3, 0.59, 0.11));
-    effectLDR = mix(vec3(gray), effectLDR, 1.15);
-
-    // cena fica intocada
-    vec3 finalColor = sceneColor + effectLDR  - colorCorrection;
-
-    FragColor = vec4(clamp(finalColor, 0.0, 1.0), 1.0);
+    FragColor = vec4(clamp(color, 0.0, 1.0) - colorCorrection, 1.0);
 }
 )";
