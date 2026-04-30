@@ -17,6 +17,8 @@ FiscionX::Physics::Rigidbody* staticCarBody;
 FiscionX::Physics::Rigidbody* carChassiBody;
 FiscionX::Physics::Vehicle* vehicle;
 
+FiscionX::UI::Image* img;
+
 /*
 void PrintRAMUsage() {
     PROCESS_MEMORY_COUNTERS_EX pmc;
@@ -135,6 +137,7 @@ void draw() {
     if (skinnedModel) {
         skinnedModel->draw(FiscionX::Core::shaderSkinned, glm::mat4(1.0f), 0, false, view, projection);
     }
+    img->draw(FiscionX::Vector2(300, 200));
 
     FiscionX::Core::Draw::PostProcessing(viewProj, dirLight); // No godray; Add Bloom
     //FiscionX::Physics::DrawDebugWorld(projection, view);
@@ -215,6 +218,9 @@ int main() {
     );
 
     skinnedModel->playAnim("Armature|Idle_01", true);
+
+    img = new FiscionX::UI::Image("assets/images/didi.png");
+    img->scale = FiscionX::Vector2(0.4f, 0.4f);
 
     // Physics
     FiscionX::Physics::Shape groundShape = FiscionX::Physics::CreateBoxShape(FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(30.0f, 0.01f, 30.0f), 0.0f);

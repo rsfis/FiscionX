@@ -348,7 +348,7 @@ FiscionX::UI::Image::Image(const char* path) {
 	h_ = h;
 	aspect_ratio = (float)w / (float)h;
 
-	scale = 1;
+	scale = glm::vec2(1.0f);
 
 	glGenTextures(1, &texture);
 	glBindTexture(GL_TEXTURE_2D, texture);
