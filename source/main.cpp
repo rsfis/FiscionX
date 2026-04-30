@@ -143,7 +143,7 @@ void draw() {
 }
 
 int main() {
-    FiscionX::Core::Set3DSettings(4096, 1024, 512, { 15.0f, 70.0f, 150.0f }, 0.01f, 1000.0f, false);
+    FiscionX::Core::Set3DSettings(3048, 1024, 512, { 15.0f, 70.0f, 150.0f }, 0.01f, 1000.0f, false);
     FiscionX::Core::SetCacheSettings(true, true);
     FiscionX::Core::NewWindow(1280, 720, "FiscionX");
     //FiscionX::Core::SetWindowFullscreen(true, 0);
@@ -170,10 +170,10 @@ int main() {
 
     /*
     spotLight = new FiscionX::Light();
-    spotLight->type = FiscionX::LIGHT_POINT;
+    spotLight->type = FiscionX::LIGHT_SPOT;
     spotLight->position = FiscionX::Vector3(0.0f, 1.0f, -4.0f);
     spotLight->direction = FiscionX::Vector3(0.0f, 0.0f, 0.0f);
-    spotLight->color = FiscionX::Vector3(1.0f, 0, 0);
+    spotLight->color = FiscionX::Vector3(1.0f, 0.0f, 0.0f);
     spotLight->intensity = 15.0f;
     spotLight->maxDistance = 30.0f;
     spotLight->cutOff = glm::cos(glm::radians(25.0f));
