@@ -1,5 +1,6 @@
 ﻿#include "FiscionCore.h"
 #include "FiscionShaders.h"
+#include <array>
 #define ENGINE_VERSION "0.7.0"
 
 // last error number: 17
@@ -333,7 +334,7 @@ void FiscionX::Sound::play() {
 // =================== UI ====================
 // ================= IMAGES ==================
 
-FiscionX::UI::Image::Image(const char* path, FiscionX::Vector2 scl) {
+FiscionX::UI::Image::Image(const char* path) {
 	int w, h, channels;
 	stbi_set_flip_vertically_on_load(true);
 	unsigned char* data = stbi_load(path, &w, &h, &channels, STBI_rgb_alpha);
@@ -348,7 +349,7 @@ FiscionX::UI::Image::Image(const char* path, FiscionX::Vector2 scl) {
 	h_ = h;
 	aspect_ratio = (float)w / (float)h;
 
-	scale = scl;
+	scale = glm::vec2(w, h);
 
 	glGenTextures(1, &texture);
 	glBindTexture(GL_TEXTURE_2D, texture);
@@ -1035,6 +1036,9 @@ void FiscionX::Model::playAnim(const std::string& name, bool repeat, const std::
 
 void FiscionX::Model::update(float deltaTime) {
 	for (size_t i = 0; i < occlusionQueries.size(); ++i) {
+		GLuint available = 0;
+		glGetQueryObjectuiv(occlusionQueries[i], GL_QUERY_RESULT_AVAILABLE, &available);
+		if (!available) continue;
 		GLuint result;
 		glGetQueryObjectuiv(occlusionQueries[i], GL_QUERY_RESULT, &result);
 		isVisible[i] = result != 0;
@@ -2146,25 +2150,35 @@ void FiscionX::Model::updateOcclusion(const glm::mat4& viewProj) {
 	glm::mat4 baseMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(position.x, position.y, position.z))
 		* glm::eulerAngleXYZ(rotation.y, rotation.x, rotation.z)
 		* glm::scale(glm::mat4(1.0f), glm::vec3(scale.x, scale.y, scale.z));
+	if (physicsSyncTransformMatrix != glm::mat4(1.0f)) {
+		baseMatrix = glm::scale(physicsSyncTransformMatrix, glm::vec3(scale.x, scale.y, scale.z));
+	}
 
 	for (size_t i = 0; i < meshes.size(); ++i) {
 		const auto& mesh = meshes[i];
 		glm::mat4 modelMatrix = baseMatrix * (isSkinned ? glm::mat4(1.0f) : mesh.transform);
-		glm::mat4 mvp = viewProj * modelMatrix;
 
 		glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
 		glDepthMask(GL_FALSE);
 		glDisable(GL_BLEND);
 
+		GLuint occProg = isSkinned ? FiscionX::Core::depthShaderSkinned : FiscionX::Core::depthShaderStatic;
+		glUseProgram(occProg);
+		glUniformMatrix4fv(glGetUniformLocation(occProg, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(viewProj));
+		glUniformMatrix4fv(glGetUniformLocation(occProg, "model"), 1, GL_FALSE, glm::value_ptr(modelMatrix));
+		if (isSkinned) {
+			glBindBufferBase(GL_UNIFORM_BUFFER, 0, uboSkin);
+		}
+
 		glBeginQuery(GL_ANY_SAMPLES_PASSED, occlusionQueries[i]);
 		glBindVertexArray(mesh.vao);
-		glUseProgram(0);
 		glDrawElements(GL_TRIANGLES, mesh.indexCount, mesh.indexType, 0);
 		glEndQuery(GL_ANY_SAMPLES_PASSED);
 
 		glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 		glDepthMask(GL_TRUE);
 	}
+	glUseProgram(0);
 }
 
 void FiscionX::Model::drawSubMesh(
@@ -2386,6 +2400,15 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 		glUniform3fv(glGetUniformLocation(shader, ("lightGlowColor[" + idx + "]").c_str()), 1, glm::value_ptr(glm::vec3(L.glowColor.x, L.glowColor.y, L.glowColor.z)));
 		glUniform1f(glGetUniformLocation(shader, ("lightGlowRadius[" + idx + "]").c_str()), L.glowRadius);
 
+		glm::mat4 lsForVertex(1.0f);
+		if (L.type == FiscionX::LIGHT_SPOT) {
+			lsForVertex = sm.lightSpaceMatrix;
+		}
+		else if (L.type == FiscionX::LIGHT_DIRECTIONAL && !sm.cascadeLightSpaceMatrices.empty()) {
+			lsForVertex = sm.cascadeLightSpaceMatrices[0];
+		}
+		glUniformMatrix4fv(glGetUniformLocation(shader, ("lightSpaceMatrices[" + idx + "]").c_str()), 1, GL_FALSE, glm::value_ptr(lsForVertex));
+
 		if (L.type == 1) { // LIGHT_POINT
 			glActiveTexture(GL_TEXTURE20 + i);
 			glBindTexture(GL_TEXTURE_CUBE_MAP, sm.depthMap);
@@ -2395,7 +2418,6 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 			glActiveTexture(GL_TEXTURE10 + i);
 			glBindTexture(GL_TEXTURE_2D, sm.depthMap);
 			glUniform1i(glGetUniformLocation(shader, ("shadowMaps[" + idx + "]").c_str()), 10 + i);
-			glUniformMatrix4fv(glGetUniformLocation(shader, ("lightSpaceMatrices[" + idx + "]").c_str()), 1, GL_FALSE, glm::value_ptr(sm.lightSpaceMatrix));
 		}
 		// DIRECTIONAL ja foi tratado lá em cima com Array Texture
 	}
@@ -2404,11 +2426,11 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 		glm::translate(glm::mat4(1.0f), glm::vec3(position.x, position.y, position.z))
 		* glm::eulerAngleXYZ(rotation.y, rotation.x, rotation.z)
 		* glm::scale(glm::mat4(1.0f), glm::vec3(scale.x, scale.y, scale.z));
-
-	updateOcclusion(view * projection);
 	if (physicsSyncTransformMatrix != glm::mat4(1.0f)) {
 		baseMatrix = glm::scale(physicsSyncTransformMatrix, glm::vec3(scale.x, scale.y, scale.z));
 	}
+
+	updateOcclusion(glm::mat4(projection * view));
 
 	std::vector<std::pair<float, const SubMesh*>> transparentMeshes;
 
@@ -3193,31 +3215,39 @@ void FiscionX::Core::CreateShadowMap(ShadowMap& sm, int LIGHT_TYPE) {
 		constexpr float borderColor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
 		glTexParameterfv(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_BORDER_COLOR, borderColor);
 	}
-	else {
+	else if (LIGHT_TYPE == LIGHT_SPOT) {
 		glBindTexture(GL_TEXTURE_2D, sm.depthMap);
-		if (LIGHT_TYPE == LIGHT_SPOT) {
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24,
-				SPOT_SHADOW_SIZE, SPOT_SHADOW_SIZE, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, NULL);
-		}
-		else if (LIGHT_TYPE == LIGHT_POINT) {
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24,
-				POINT_SHADOW_SIZE, POINT_SHADOW_SIZE, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, NULL);
-		}
-
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24,
+			SPOT_SHADOW_SIZE, SPOT_SHADOW_SIZE, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, NULL);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-		float borderColor[] = { 1.0, 1.0, 1.0, 1.0 };
+		float borderColor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
 		glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
+	}
+	else if (LIGHT_TYPE == LIGHT_POINT) {
+		glBindTexture(GL_TEXTURE_CUBE_MAP, sm.depthMap);
+		for (int face = 0; face < 6; ++face) {
+			glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, 0, GL_DEPTH_COMPONENT32F,
+				POINT_SHADOW_SIZE, POINT_SHADOW_SIZE, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+		}
+		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
 	}
 
 	glBindFramebuffer(GL_FRAMEBUFFER, sm.fbo);
 	if (LIGHT_TYPE == LIGHT_DIRECTIONAL) {
 		glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, sm.depthMap, 0);
 	}
-	else {
+	else if (LIGHT_TYPE == LIGHT_SPOT) {
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, sm.depthMap, 0);
+	}
+	else if (LIGHT_TYPE == LIGHT_POINT) {
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_CUBE_MAP_POSITIVE_X, sm.depthMap, 0);
 	}
 
 	glDrawBuffer(GL_NONE);
@@ -3374,6 +3404,80 @@ glm::mat4 FiscionX::Core::getLightSpaceMatrix(FiscionX::Light& L, const float ne
 	return lightProjection * lightView;
 }
 
+void FiscionX::Core::RenderPointLightShadowCubemap(size_t lightIndex, FiscionX::Mat4 view, FiscionX::Mat4 projection) {
+	if (lightIndex >= AllLights.size() || lightIndex >= AllShadowMaps.size()) return;
+	Light& L = *AllLights[lightIndex];
+	ShadowMap& sm = AllShadowMaps[lightIndex];
+	if (L.type != LIGHT_POINT) return;
+
+	const glm::vec3 pos(L.position.x, L.position.y, L.position.z);
+	std::vector<glm::vec3> wp(AllModels.size());
+	for (size_t mi = 0; mi < AllModels.size(); ++mi) {
+		wp[mi] = glm::vec3(AllModels[mi]->position.x, AllModels[mi]->position.y, AllModels[mi]->position.z);
+	}
+
+	std::vector<size_t> staticIdx, skinnedIdx;
+	staticIdx.reserve(AllModels.size());
+	skinnedIdx.reserve(AllModels.size());
+	const float range = L.maxDistance + 1.0f;
+	for (size_t mi = 0; mi < AllModels.size(); ++mi) {
+		if (!AllModels[mi]->castsShadows) continue;
+		if (glm::length(wp[mi] - pos) > range) continue;
+		if (AllModels[mi]->isSkinned) skinnedIdx.push_back(mi);
+		else staticIdx.push_back(mi);
+	}
+	if (staticIdx.empty() && skinnedIdx.empty()) return;
+
+	const float zFar = glm::max(L.maxDistance, 1.0f);
+	const float zNear = glm::clamp(L.pointShadowNear, 0.01f, zFar * 0.5f);
+	const glm::mat4 proj = glm::perspective(glm::radians(90.0f), 1.0f, zNear, zFar);
+
+	const std::array<glm::mat4, 6> faceVP = {
+		proj * glm::lookAt(pos, pos + glm::vec3(1, 0, 0), glm::vec3(0, -1, 0)),
+		proj * glm::lookAt(pos, pos + glm::vec3(-1, 0, 0), glm::vec3(0, -1, 0)),
+		proj * glm::lookAt(pos, pos + glm::vec3(0, 1, 0), glm::vec3(0, 0, 1)),
+		proj * glm::lookAt(pos, pos + glm::vec3(0, -1, 0), glm::vec3(0, 0, -1)),
+		proj * glm::lookAt(pos, pos + glm::vec3(0, 0, 1), glm::vec3(0, -1, 0)),
+		proj * glm::lookAt(pos, pos + glm::vec3(0, 0, -1), glm::vec3(0, -1, 0)),
+	};
+
+	glViewport(0, 0, POINT_SHADOW_SIZE, POINT_SHADOW_SIZE);
+	glBindFramebuffer(GL_FRAMEBUFFER, sm.fbo);
+	glDrawBuffer(GL_NONE);
+	glReadBuffer(GL_NONE);
+	glEnable(GL_DEPTH_TEST);
+	glDepthFunc(GL_LESS);
+	glDepthMask(GL_TRUE);
+
+	for (int face = 0; face < 6; ++face) {
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, sm.depthMap, 0);
+		glClear(GL_DEPTH_BUFFER_BIT);
+
+		if (!staticIdx.empty()) {
+			glUseProgram(depthShaderCubeStatic);
+			glUniform1f(glGetUniformLocation(depthShaderCubeStatic, "farPlane"), zFar);
+			glUniform3fv(glGetUniformLocation(depthShaderCubeStatic, "lightPos"), 1, glm::value_ptr(pos));
+			glUniformMatrix4fv(glGetUniformLocation(depthShaderCubeStatic, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(faceVP[face]));
+			for (size_t idx : staticIdx) {
+				if (!AllModels[idx]->castsShadows) continue;
+				AllModels[idx]->draw(depthShaderCubeStatic, glm::mat4(1.0f), 0, true, view, projection);
+			}
+		}
+		if (!skinnedIdx.empty()) {
+			glUseProgram(depthShaderCubeSkinned);
+			glUniform1f(glGetUniformLocation(depthShaderCubeSkinned, "farPlane"), zFar);
+			glUniform3fv(glGetUniformLocation(depthShaderCubeSkinned, "lightPos"), 1, glm::value_ptr(pos));
+			glUniformMatrix4fv(glGetUniformLocation(depthShaderCubeSkinned, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(faceVP[face]));
+			for (size_t idx : skinnedIdx) {
+				if (!AllModels[idx]->castsShadows) continue;
+				AllModels[idx]->draw(depthShaderCubeSkinned, glm::mat4(1.0f), 0, true, view, projection);
+			}
+		}
+	}
+
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
 void FiscionX::Core::RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 projection, FiscionX::Mat4 viewProj) {
 	// update skin UBOs once
 	for (auto& model : AllModels) {
@@ -3388,13 +3492,9 @@ void FiscionX::Core::RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 p
 
 	float now = static_cast<float>(glfwGetTime());
 
-	// Cache model world positions
-	std::vector<glm::vec3> modelWorldPositions;
-	modelWorldPositions.reserve(AllModels.size());
-	for (auto& m : AllModels) {
-		if (!m->castsShadows) continue;
-		glm::vec3 worldPos = glm::vec3(m->position.x, m->position.y, m->position.z);
-		modelWorldPositions.push_back(worldPos);
+	std::vector<glm::vec3> modelWorldPositions(AllModels.size());
+	for (size_t mi = 0; mi < AllModels.size(); ++mi) {
+		modelWorldPositions[mi] = glm::vec3(AllModels[mi]->position.x, AllModels[mi]->position.y, AllModels[mi]->position.z);
 	}
 
 	// Track camera motion so directional shadows update when camera moves
@@ -3473,77 +3573,10 @@ void FiscionX::Core::RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 p
 			glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		}
 		// ==========================================
-		// POINT LIGHT (CUBEMAP)
+		// POINT LIGHT — cubemap (ver RenderPointLightShadowCubemap)
 		// ==========================================
 		else if (L.type == LIGHT_POINT) {
-			// --- OPTIMIZED: prefilter models in range once ---
-			glm::vec3 pos = glm::vec3(L.position.x, L.position.y, L.position.z);
-			std::vector<size_t> staticIndices;
-			std::vector<size_t> skinnedIndices;
-			staticIndices.reserve(AllModels.size());
-			skinnedIndices.reserve(AllModels.size());
-
-			for (size_t mi = 0; mi < AllModels.size(); ++mi) {
-				if (!AllModels[mi]->castsShadows) continue;
-				float dist = glm::length(modelWorldPositions[mi] - pos);
-				if (dist <= (L.maxDistance + 1.0f)) {
-					if (AllModels[mi]->isSkinned) skinnedIndices.push_back(mi);
-					else staticIndices.push_back(mi);
-				}
-			}
-
-			// If nothing is in range, skip entire cubemap generation
-			if (staticIndices.empty() && skinnedIndices.empty()) {
-				continue;
-			}
-
-			float zFar = L.maxDistance;
-			glm::mat4 proj = glm::perspective(glm::radians(90.0f), 1.0f, NEAR_PLANE, zFar);
-
-			std::array<glm::mat4, 6> shadowMatrices = {
-				proj * glm::lookAt(pos, pos + glm::vec3(1, 0, 0), glm::vec3(0,-1, 0)),
-				proj * glm::lookAt(pos, pos + glm::vec3(-1, 0, 0), glm::vec3(0,-1, 0)),
-				proj * glm::lookAt(pos, pos + glm::vec3(0, 1, 0), glm::vec3(0, 0, 1)),
-				proj * glm::lookAt(pos, pos + glm::vec3(0,-1, 0), glm::vec3(0, 0,-1)),
-				proj * glm::lookAt(pos, pos + glm::vec3(0, 0, 1), glm::vec3(0,-1, 0)),
-				proj * glm::lookAt(pos, pos + glm::vec3(0, 0,-1), glm::vec3(0,-1, 0)),
-			};
-
-			glViewport(0, 0, POINT_SHADOW_SIZE, POINT_SHADOW_SIZE);
-			glBindFramebuffer(GL_FRAMEBUFFER, sm.fbo);
-
-			for (int face = 0; face < 6; ++face) {
-				glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, sm.depthMap, 0);
-				glClear(GL_DEPTH_BUFFER_BIT);
-
-				// STATIC - depth-only (only loop the filtered staticIndices)
-				if (!staticIndices.empty()) {
-					glUseProgram(depthShaderCubeStatic);
-					glUniform1f(glGetUniformLocation(depthShaderCubeStatic, "farPlane"), zFar);
-					glUniform3fv(glGetUniformLocation(depthShaderCubeStatic, "lightPos"), 1, glm::value_ptr(pos));
-					glUniformMatrix4fv(glGetUniformLocation(depthShaderCubeStatic, ("shadowMatrices[" + std::to_string(face) + "]").c_str()), 1, GL_FALSE, glm::value_ptr(shadowMatrices[face]));
-
-					for (size_t idx : staticIndices) {
-						if (!AllModels[idx]->castsShadows) continue;
-						AllModels[idx]->draw(depthShaderCubeStatic, glm::mat4(1.0f), 0, true, view, projection);
-					}
-				}
-
-				// SKINNED - depth-only (only loop the filtered skinnedIndices)
-				if (!skinnedIndices.empty()) {
-					glUseProgram(depthShaderCubeSkinned);
-					glUniform1f(glGetUniformLocation(depthShaderCubeSkinned, "farPlane"), zFar);
-					glUniform3fv(glGetUniformLocation(depthShaderCubeSkinned, "lightPos"), 1, glm::value_ptr(pos));
-					glUniformMatrix4fv(glGetUniformLocation(depthShaderCubeSkinned, ("shadowMatrices[" + std::to_string(face) + "]").c_str()), 1, GL_FALSE, glm::value_ptr(shadowMatrices[face]));
-
-					for (size_t idx : skinnedIndices) {
-						if (!AllModels[idx]->castsShadows) continue;
-						AllModels[idx]->draw(depthShaderCubeSkinned, glm::mat4(1.0f), 0, true, view, projection);
-					}
-				}
-			}
-
-			glBindFramebuffer(GL_FRAMEBUFFER, 0);
+			RenderPointLightShadowCubemap(i, view, projection);
 		}
 		// ==========================================
 		// SPOT LIGHT (LEGACY 2D SHADOW)
@@ -3599,6 +3632,15 @@ void FiscionX::Core::RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 p
 			glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		}
 	}
+
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glDrawBuffer(GL_BACK);
+	glReadBuffer(GL_BACK);
+	glViewport(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+	glDepthMask(GL_TRUE);
+	glEnable(GL_DEPTH_TEST);
+	glDepthFunc(GL_LESS);
 }
 
 void FiscionX::Core::Set3DSettings(const int _DIRECTIONAL_LIGHT_SHADOW_SIZE, const int _SPOT_LIGHT_SHADOW_SIZE, const int _POINT_LIGHT_SHADOW_SIZE,
@@ -3682,8 +3724,8 @@ void FiscionX::Core::NewWindow(int width, int height, const char* window_label) 
 
 	depthShaderStatic = LoadShader(depth2DstaticVertex, depth_fragment);
 	depthShaderSkinned = LoadShader(depth2DskinnedVertex, depth_fragment);
-	depthShaderCubeStatic = LoadShader(depthCubeStaticVertex, depth_fragment);
-	depthShaderCubeSkinned = LoadShader(depthCubeSkinnedVertex, depth_fragment);
+	depthShaderCubeStatic = LoadShader(depthCubeStaticVertex, depthCube_fragment);
+	depthShaderCubeSkinned = LoadShader(depthCubeSkinnedVertex, depthCube_fragment);
 	shaderStatic = LoadShader(vertexStatic, fragment);
 	shaderSkinned = LoadShader(vertexSkinned, fragment);
 	UI::Image::shader = LoadShader(imageVertex, imageFragment);
@@ -3999,6 +4041,7 @@ void RenderPrimitive(const std::vector<glm::vec2>& vertices,
 
 void FiscionX::Core::Draw::ClearBackground(float r, float g, float b, float alpha) {
 	glBindFramebuffer(GL_FRAMEBUFFER, FiscionX::Core::mainFBO);
+	glDrawBuffer(GL_COLOR_ATTACHMENT0);
 	glViewport(0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
 
 	glClearColor(r, g, b, alpha);
@@ -4404,8 +4447,9 @@ void FiscionX::Core::Draw::DrawEllipse(
 // =================== Shader Loader ===================
 GLuint LoadShader(const char* vertexSrc, const char* fragmentSrc) {
 	std::hash<std::string> hasher;
-	size_t vertexHash = hasher(std::string(vertexSrc));
-	size_t fragHash = hasher(std::string(fragmentSrc));
+	static const std::string SHADER_CACHE_SALT = "FISCIONX_point_shadow_system_v8";
+	size_t vertexHash = hasher(std::string(vertexSrc) + SHADER_CACHE_SALT);
+	size_t fragHash = hasher(std::string(fragmentSrc) + SHADER_CACHE_SALT);
 	std::string binaryPath = "cache/shaders/" + std::to_string(vertexHash + fragHash) + ".bin";
 
 	// ───── Tentativa de carregar shader binário ─────

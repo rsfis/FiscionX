@@ -168,7 +168,9 @@ layout(location = 5) in vec4  aWeight;
 layout(std140, binding = 0) uniform Skin { mat4 bones[100]; };
 
 uniform mat4 model;
-uniform mat4 shadowMatrices[15];
+uniform mat4 lightSpaceMatrix;
+
+out vec3 FragPosWorld;
 
 void main() {
     mat4 skinMat =
@@ -178,7 +180,8 @@ void main() {
         + aWeight.w * bones[aJoint.w];
     vec4 skinnedPos = skinMat * vec4(aPos, 1.0);
     vec4 worldPos = model * skinnedPos;
-    gl_Position = shadowMatrices[gl_InstanceID] * worldPos;
+    FragPosWorld = worldPos.xyz;
+    gl_Position = lightSpaceMatrix * worldPos;
 }
 )";
 
@@ -188,11 +191,30 @@ const char* depthCubeStaticVertex = R"(
 layout(location = 0) in vec3 aPos;
 
 uniform mat4 model;
-uniform mat4 shadowMatrices[15];
+uniform mat4 lightSpaceMatrix;
+
+out vec3 FragPosWorld;
 
 void main() {
 	vec4 worldPos = model * vec4(aPos, 1.0);
-	gl_Position = shadowMatrices[gl_InstanceID] * worldPos;
+	FragPosWorld = worldPos.xyz;
+	gl_Position = lightSpaceMatrix * worldPos;
+}
+)";
+
+// Profundidade no cubemap = distância radial / farPlane (0..1). O lighting compara com length(frag-luz).
+const char* depthCube_fragment = R"(
+#version 420 core
+
+in vec3 FragPosWorld;
+
+uniform vec3 lightPos;
+uniform float farPlane;
+
+void main() {
+	float d = length(FragPosWorld - lightPos);
+	float farP = max(farPlane, 1e-4);
+	gl_FragDepth = clamp(d / farP, 0.0, 1.0);
 }
 )";
 
@@ -408,30 +430,36 @@ float ShadowCalculation2D(vec4 fragPosLS, sampler2D shadowMap, vec3 N, vec3 L) {
     return shadow / 16.0;
 }
 
-// --- SOMBRA PARA POINT LIGHTS (CUBEMAP) ---
+// --- SOMBRA LUZ PONTUAL (cubemap): depth = distância linear / far (depthCube_fragment). ---
 float ShadowCalculationPoint(int idx, vec3 fragPos) {
     if (acceptsShadows == 0) return 0.0;
 
     vec3 fragToLight = fragPos - lightPos[idx];
-    float currentDepth = length(fragToLight);
-    float bias = 0.15; 
+    float dist = length(fragToLight);
+    float farR = max(lightMaxDistance[idx], 1.0);
+    if (dist >= farR - 1e-3) return 0.0;
+
+    vec3 dir = fragToLight / dist;
+    float currentDepth = dist;
+    float bias = max(0.025, 0.02 * currentDepth / farR);
 
     float shadow = 0.0;
-    int samples = 16;
-    
-    // Suavização baseada na distância (simula penumbra)
-    float viewDistance = length(viewPos - fragPos);
-    float diskRadiusLocal = (1.0 + (viewDistance / lightMaxDistance[idx])) * diskRadius;
+    const int SAMPLES = 8;
+    float viewDist = length(viewPos - fragPos);
+    float kernel = (1.0 + viewDist / farR) * diskRadius * 0.06;
 
-    for (int i = 0; i < samples; ++i) {
-        // Reutilizamos a lógica de grid mas com maior densidade ou offset poisson
-        vec3 samplePos = fragToLight + gridSamplingOffset[i % 8] * diskRadiusLocal;
-        float closestDepth = texture(shadowCubeMaps[idx], samplePos).r;
-        closestDepth *= lightMaxDistance[idx];
-        if (currentDepth - bias > closestDepth) shadow += 1.0;
+    for (int s = 0; s < SAMPLES; ++s) {
+        vec3 off = gridSamplingOffset[s] * kernel;
+        vec3 sd = dir + off;
+        float sl = length(sd);
+        if (sl < 1e-5) continue;
+        sd /= sl;
+
+        float dN = clamp(texture(shadowCubeMaps[idx], sd).r, 0.0, 1.0);
+        float closest = dN * farR;
+        if (currentDepth - bias > closest) shadow += 1.0;
     }
-
-    return shadow / float(samples);
+    return shadow / float(SAMPLES);
 }
 
 // Fresnel (F) - Schlick approximation

@@ -4,7 +4,8 @@
 #define PROJECT_VERSION "1.0.0"
 
 FiscionX::Light* dirLight;
-FiscionX::Light* spotLight;
+/** Luz pontual (sombras: cubemap de profundidade linear). */
+FiscionX::Light* pointLight;
 
 FiscionX::Model* staticModel;
 FiscionX::Model* boxModel;
@@ -168,26 +169,29 @@ int main() {
     dirLight->hasGlow = false;
     dirLight->enableShadows = true;
 
-    /*
-    spotLight = new FiscionX::Light();
-    spotLight->type = FiscionX::LIGHT_POINT;
-    spotLight->position = FiscionX::Vector3(0.0f, 1.0f, -4.0f);
-    spotLight->direction = FiscionX::Vector3(0.0f, 0.0f, 0.0f);
-    spotLight->color = FiscionX::Vector3(1.0f, 0, 0);
-    spotLight->intensity = 15.0f;
-    spotLight->maxDistance = 30.0f;
-    spotLight->cutOff = glm::cos(glm::radians(25.0f));
-    spotLight->outerCutOff = glm::cos(glm::radians(30.0f));
-    spotLight->constant = 1.0f;
-    spotLight->linear = 0.09f;
-    spotLight->quadratic = 0.032f;
-    spotLight->hasGlow = true;
-    spotLight->enableShadows = true;
-    */
+    
+    pointLight = new FiscionX::Light();
+    pointLight->type = FiscionX::LIGHT_POINT;
+    pointLight->position = FiscionX::Vector3(0.0f, 2.5f, -4.0f);
+    pointLight->direction = FiscionX::Vector3(0.0f, -1.0f, 0.0f);
+    pointLight->color = FiscionX::Vector3(1.0f, 0.35f, 0.2f);
+    pointLight->intensity = 18.0f;
+    pointLight->maxDistance = 35.0f;
+    pointLight->pointShadowNear = 0.08f;
+    pointLight->cutOff = 0.0f;
+    pointLight->outerCutOff = 0.0f;
+    pointLight->constant = 1.0f;
+    pointLight->linear = 0.0f;
+    pointLight->quadratic = 0.0f;
+    pointLight->hasGlow = true;
+    pointLight->glowColor = FiscionX::Vector3(1.0f, 0.4f, 0.15f);
+    pointLight->glowRadius = 2.0f;
+    pointLight->enableShadows = true;
+    
 
     FiscionX::Core::CreateAllShadowMaps();
 
-    // Draw halo and glow also for point lights and spot lights; Point lights are traversing walls/solid objects (Criação da textura está correta. Problema: Shader ou Computando); Sombras e Luz devem passar por malhas com transparência; Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Terrains; Water
+    // Anim Blending; Draw halo and glow also for point lights and spot lights; Point lights are traversing walls/solid objects (Criação da textura está correta. Problema: Shader ou Computando); Sombras e Luz devem passar por malhas com transparência; Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Terrains; Water
 
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb",
