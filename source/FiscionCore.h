@@ -736,8 +736,6 @@ namespace FiscionX {
 		float       intensity = 1.0f;
 
 		float       maxDistance = 300.0f;
-		/** Near do frustum usado ao renderizar o shadow cubemap (independe do NEAR_PLANE da cùmera). */
-		float       pointShadowNear = 0.05f;
 		float       cutOff = 0;
 		float       outerCutOff = 0;
 		float       constant = 0;
@@ -766,7 +764,7 @@ namespace FiscionX {
 
 			int getDebugMode() const override;
 
-			// Mùtodos obrigatùrios da classe base
+			// MÈtodos obrigatÛrios da classe base
 			void drawContactPoint(const btVector3&, const btVector3&, btScalar, int, const btVector3&) override;
 			void reportErrorWarning(const char* warningString) override;
 			void draw3dText(const btVector3&, const char*) override;
@@ -1093,8 +1091,6 @@ namespace FiscionX {
 
 		static void CreateShadowMap(ShadowMap& sm, int LIGHT_TYPE);
 		static void CreateAllShadowMaps();
-		/** Gera o cubemap de profundidade da luz pontual (Ìndice em AllLights / AllShadowMaps). */
-		static void RenderPointLightShadowCubemap(size_t lightIndex, FiscionX::Mat4 view, FiscionX::Mat4 projection);
 		static std::vector<glm::vec4> getFrustumCornersWorldSpace(const glm::mat4& proj, const glm::mat4& view);
 		static glm::mat4 getLightSpaceMatrix(FiscionX::Light& L, const float nearPlane, const float farPlane);
 		static glm::mat4 ComputeLightSpaceMatrix(Light& L);
