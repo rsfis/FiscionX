@@ -343,6 +343,7 @@ FiscionX::UI::Image::Image(const char* path) {
 		system("pause");
 		std::exit(-7);
 	}
+	stbi_set_flip_vertically_on_load(false);
 
 	w_ = w;
 	h_ = h;
