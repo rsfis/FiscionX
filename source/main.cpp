@@ -4,8 +4,7 @@
 #define PROJECT_VERSION "1.0.0"
 
 FiscionX::Light* dirLight;
-/** Luz pontual (sombras: cubemap de profundidade linear). */
-FiscionX::Light* pointLight;
+FiscionX::Light* spotLight;
 
 FiscionX::Model* staticModel;
 FiscionX::Model* boxModel;
@@ -169,25 +168,22 @@ int main() {
     dirLight->hasGlow = false;
     dirLight->enableShadows = true;
 
-    
-    pointLight = new FiscionX::Light();
-    pointLight->type = FiscionX::LIGHT_POINT;
-    pointLight->position = FiscionX::Vector3(0.0f, 2.5f, -4.0f);
-    pointLight->direction = FiscionX::Vector3(0.0f, -1.0f, 0.0f);
-    pointLight->color = FiscionX::Vector3(1.0f, 0.35f, 0.2f);
-    pointLight->intensity = 18.0f;
-    pointLight->maxDistance = 35.0f;
-    pointLight->pointShadowNear = 0.08f;
-    pointLight->cutOff = 0.0f;
-    pointLight->outerCutOff = 0.0f;
-    pointLight->constant = 1.0f;
-    pointLight->linear = 0.0f;
-    pointLight->quadratic = 0.0f;
-    pointLight->hasGlow = true;
-    pointLight->glowColor = FiscionX::Vector3(1.0f, 0.4f, 0.15f);
-    pointLight->glowRadius = 2.0f;
-    pointLight->enableShadows = true;
-    
+    /*
+    spotLight = new FiscionX::Light();
+    spotLight->type = FiscionX::LIGHT_POINT;
+    spotLight->position = FiscionX::Vector3(0.0f, 1.0f, -4.0f);
+    spotLight->direction = FiscionX::Vector3(0.0f, 0.0f, 0.0f);
+    spotLight->color = FiscionX::Vector3(1.0f, 0, 0);
+    spotLight->intensity = 15.0f;
+    spotLight->maxDistance = 30.0f;
+    spotLight->cutOff = glm::cos(glm::radians(25.0f));
+    spotLight->outerCutOff = glm::cos(glm::radians(30.0f));
+    spotLight->constant = 1.0f;
+    spotLight->linear = 0.09f;
+    spotLight->quadratic = 0.032f;
+    spotLight->hasGlow = true;
+    spotLight->enableShadows = true;
+    */
 
     FiscionX::Core::CreateAllShadowMaps();
 
@@ -219,7 +215,6 @@ int main() {
     );
 
     skinnedModel->playAnim("Armature|Idle_01", true);
-
 
     // Physics
     FiscionX::Physics::Shape groundShape = FiscionX::Physics::CreateBoxShape(FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(30.0f, 0.01f, 30.0f), 0.0f);
