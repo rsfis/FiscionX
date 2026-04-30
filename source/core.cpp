@@ -366,7 +366,7 @@ FiscionX::UI::Image::Image(const char* path) {
 	stbi_image_free(data);
 
 	float _w = 1.0f;
-	float _h = 1.0f / aspect_ratio;
+	float _h = 1.0f;
 
 	float quad[] = {
 		-_w, -_h, 0.0f, 0.0f,
@@ -404,7 +404,7 @@ void FiscionX::UI::Image::flip(bool flipx, bool flipy) {
 	float v1 = flipy ? 0.0f : 1.0f;
 
 	float _w = 1.0f;
-	float _h = 1.0f / aspect_ratio;
+	float _h = 1.0f;
 
 	float quad[] = {
 		-_w, -_h, u0, v0,
@@ -437,8 +437,12 @@ void FiscionX::UI::Image::draw(FiscionX::Vector2 position) {
 	glUniform1f(glGetUniformLocation(shader, "aspect_ratio"), aspect_ratio);
 	glUniform1f(glGetUniformLocation(shader, "rotation"), rotation);
 	glUniform1f(glGetUniformLocation(shader, "alpha"), alpha);
-	glUniform1f(glGetUniformLocation(shader, "width"), w_);
-	glUniform1f(glGetUniformLocation(shader, "height"), h_);
+
+	float scaleX = (float)FiscionX::Core::SCREEN_WIDTH / 2560.0f;
+	float scaleY = (float)FiscionX::Core::SCREEN_HEIGHT / 1440.0f;
+
+	glUniform1f(glGetUniformLocation(shader, "width"), w_ * scaleX);
+	glUniform1f(glGetUniformLocation(shader, "height"), h_ * scaleY);
 
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);

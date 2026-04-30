@@ -220,7 +220,7 @@ int main() {
     skinnedModel->playAnim("Armature|Idle_01", true);
 
     img = new FiscionX::UI::Image("assets/images/didi.png");
-    img->scale = FiscionX::Vector2(0.4f, 0.4f);
+    img->scale = FiscionX::Vector2(1.0f, 1.0f);
 
     // Physics
     FiscionX::Physics::Shape groundShape = FiscionX::Physics::CreateBoxShape(FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(30.0f, 0.01f, 30.0f), 0.0f);
