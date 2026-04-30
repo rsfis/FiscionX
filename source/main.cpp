@@ -170,7 +170,7 @@ int main() {
 
     /*
     spotLight = new FiscionX::Light();
-    spotLight->type = FiscionX::LIGHT_SPOT;
+    spotLight->type = FiscionX::LIGHT_POINT;
     spotLight->position = FiscionX::Vector3(0.0f, 1.0f, -4.0f);
     spotLight->direction = FiscionX::Vector3(0.0f, 0.0f, 0.0f);
     spotLight->color = FiscionX::Vector3(1.0f, 0.0f, 0.0f);
