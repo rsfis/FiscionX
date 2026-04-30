@@ -916,7 +916,7 @@ uniform float height;
 
 void main()
 {
-    vec2 centered = (aPos - 0.5) * vec2(width, height)*scale;
+    vec2 centered = (aPos - 0.5) * vec2(width, height) * scale;
 
     mat2 rot = mat2(cos(rotation), -sin(rotation),
                     sin(rotation),  cos(rotation));
