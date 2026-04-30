@@ -865,6 +865,7 @@ namespace FiscionX {
 			btRaycastVehicle::btVehicleTuning* tuning;
 			btVehicleRaycaster* raycaster;
 			btRaycastVehicle* vehicle;
+			Rigidbody* chassi;
 
 			struct WheelInfo {
 				btWheelInfo* info;
@@ -884,6 +885,8 @@ namespace FiscionX {
 			FiscionX::Vector3 getWheelWorldPosition(int wheelIndex);
 			FiscionX::Vector3 getWheelRotation(int wheelIndex);
 			float getCurrentSpeedKmh();
+			glm::vec3 getPosition();
+			glm::vec3 getForwardVec();
 		};
 
 		static struct Raycast {

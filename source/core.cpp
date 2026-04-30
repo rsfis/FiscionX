@@ -3087,6 +3087,7 @@ FiscionX::Physics::Vehicle::Vehicle(FiscionX::Physics::Rigidbody* chassiBody) {
 	raycaster = new btDefaultVehicleRaycaster(FiscionX::Physics::DynamicWorld);
 	vehicle = new btRaycastVehicle(*tuning, chassiBody->body, raycaster);
 	chassiBody->body->setActivationState(DISABLE_DEACTIVATION);
+	chassi = chassiBody;
 }
 
 void FiscionX::Physics::Vehicle::addWheel(FiscionX::Vector3 relativePosition, FiscionX::Vector3 wheelDirectionCS0, FiscionX::Vector3 wheelAxleCS,
@@ -3141,6 +3142,24 @@ FiscionX::Vector3 FiscionX::Physics::Vehicle::getWheelRotation(int index) {
 	return FiscionX::Vector3(info->info->m_worldTransform.getRotation().getX(),
 		info->info->m_worldTransform.getRotation().getY(),
 		info->info->m_worldTransform.getRotation().getZ());
+}
+
+glm::vec3 FiscionX::Physics::Vehicle::getPosition() {
+	if (!chassi || !chassi->body) return glm::vec3(0.0f);
+	btTransform t;
+	chassi->body->getMotionState()->getWorldTransform(t);
+	const btVector3 p = t.getOrigin();
+	return glm::vec3(p.getX(), p.getY(), p.getZ());
+}
+
+glm::vec3 FiscionX::Physics::Vehicle::getForwardVec() {
+	if (!chassi || !chassi->body) return glm::vec3(0.0f, 0.0f, 1.0f);
+	btTransform t;
+	chassi->body->getMotionState()->getWorldTransform(t);
+	btVector3 forward = t.getBasis() * btVector3(0.0f, 0.0f, 1.0f);
+	glm::vec3 f(forward.getX(), forward.getY(), forward.getZ());
+	if (glm::length(f) < 0.0001f) return glm::vec3(0.0f, 0.0f, 1.0f);
+	return glm::normalize(f);
 }
 
 // Raycast
