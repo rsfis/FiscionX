@@ -220,6 +220,17 @@ namespace FiscionX {
 	struct Vector2 {
 		float x, y;
 		Vector2(float _x = 0, float _y = 0) : x(_x), y(_y) {}
+		
+		Vector2(const glm::vec2& g) : x(g.x), y(g.y) {}
+
+		Vector2& operator=(const glm::vec2& g) {
+			x = g.x; y = g.y;
+			return *this;
+		}
+
+		operator glm::vec2() const {
+			return glm::vec2(x, y);
+		}
 
 		Vector2 operator+(const Vector2& other) const { return Vector2(x + other.x, y + other.y); }
 		Vector2 operator-(const Vector2& other) const { return Vector2(x - other.x, y - other.y); }
@@ -282,6 +293,17 @@ namespace FiscionX {
 	struct Vector3 {
 		float x, y, z;
 		Vector3(float _x = 0, float _y = 0, float _z = 0) : x(_x), y(_y), z(_z) {}
+
+		Vector3(const glm::vec3& g) : x(g.x), y(g.y), z(g.z) {}
+
+		Vector3& operator=(const glm::vec3& g) {
+			x = g.x; y = g.y; z = g.z;
+			return *this;
+		}
+
+		operator glm::vec3() const {
+			return glm::vec3(x, y, z);
+		}
 
 		Vector3 operator+(const Vector3& other) const { return Vector3(x + other.x, y + other.y, z + other.z); }
 		Vector3 operator-(const Vector3& other) const { return Vector3(x - other.x, y - other.y, z - other.z); }
@@ -347,6 +369,17 @@ namespace FiscionX {
 			: x(_x), y(_y), z(_z), w(_w) {
 		}
 
+		Vector4(const glm::vec4& g) : x(g.x), y(g.y), z(g.z), w(g.w) {}
+
+		Vector4& operator=(const glm::vec4& g) {
+			x = g.x; y = g.y; z = g.z; w = g.w;
+			return *this;
+		}
+
+		operator glm::vec4() const {
+			return glm::vec4(x, y, z, w);
+		}
+
 		Vector4 operator+(const Vector4& o) const { return Vector4(x + o.x, y + o.y, z + o.z, w + o.w); }
 		Vector4 operator-(const Vector4& o) const { return Vector4(x - o.x, y - o.y, z - o.z, w - o.w); }
 		Vector4 operator*(float s) const { return Vector4(x * s, y * s, z * s, w * s); }
@@ -393,6 +426,27 @@ namespace FiscionX {
 	struct Mat4 {
 		float m[4][4]; // column-major (m[col][row])
 
+		Mat4(const glm::mat4& g) {
+			for (int c = 0; c < 4; c++)
+				for (int r = 0; r < 4; r++)
+					m[c][r] = g[c][r];
+		}
+
+		Mat4& operator=(const glm::mat4& g) {
+			for (int c = 0; c < 4; c++)
+				for (int r = 0; r < 4; r++)
+					m[c][r] = g[c][r];
+			return *this;
+		}
+
+		operator glm::mat4() const {
+			glm::mat4 result;
+			for (int c = 0; c < 4; c++)
+				for (int r = 0; r < 4; r++)
+					result[c][r] = m[c][r];
+			return result;
+		}
+
 		Mat4(float diag = 1.0f) {
 			for (int col = 0; col < 4; col++)
 				for (int row = 0; row < 4; row++)
@@ -401,14 +455,6 @@ namespace FiscionX {
 
 		static Mat4 identity() {
 			return Mat4(1.0f);
-		}
-
-		operator glm::mat4() const {
-			glm::mat4 result(1.0f);
-			for (int col = 0; col < 4; col++)
-				for (int row = 0; row < 4; row++)
-					result[col][row] = m[col][row];
-			return result;
 		}
 
 		float& operator()(int row, int col) { return m[col][row]; }
@@ -475,7 +521,6 @@ namespace FiscionX {
 		static Mat4 perspective(float fovRadians, float aspect, float nearPlane, float farPlane) {
 			Mat4 result(0.0f);
 			float tanHalfFov = std::tan(fovRadians / 2.0f);
-
 			result(0, 0) = 1.0f / (aspect * tanHalfFov);
 			result(1, 1) = 1.0f / tanHalfFov;
 			result(2, 2) = -(farPlane + nearPlane) / (farPlane - nearPlane);
@@ -490,8 +535,8 @@ namespace FiscionX {
 			Vector3 u = r.cross(f);
 
 			Mat4 result(1.0f);
-			result(0, 0) = r.x; result(0, 1) = r.y; result(0, 2) = r.z;
-			result(1, 0) = u.x; result(1, 1) = u.y; result(1, 2) = u.z;
+			result(0, 0) = r.x;  result(0, 1) = r.y;  result(0, 2) = r.z;
+			result(1, 0) = u.x;  result(1, 1) = u.y;  result(1, 2) = u.z;
 			result(2, 0) = -f.x; result(2, 1) = -f.y; result(2, 2) = -f.z;
 			result(0, 3) = -r.dot(eye);
 			result(1, 3) = -u.dot(eye);
@@ -542,7 +587,7 @@ namespace FiscionX {
 			float aspect_ratio = 1.0f;
 			int w_, h_;
 
-			Image(const char* path, FiscionX::Vector2 scl);
+			Image(const char* path);
 			void flip(bool flipx, bool flipy);
 			void draw(FiscionX::Vector2 position);
 		};
@@ -691,6 +736,8 @@ namespace FiscionX {
 		float       intensity = 1.0f;
 
 		float       maxDistance = 300.0f;
+		/** Near do frustum usado ao renderizar o shadow cubemap (independe do NEAR_PLANE da cmera). */
+		float       pointShadowNear = 0.05f;
 		float       cutOff = 0;
 		float       outerCutOff = 0;
 		float       constant = 0;
@@ -719,7 +766,7 @@ namespace FiscionX {
 
 			int getDebugMode() const override;
 
-			// Métodos obrigatórios da classe base
+			// Mtodos obrigatrios da classe base
 			void drawContactPoint(const btVector3&, const btVector3&, btScalar, int, const btVector3&) override;
 			void reportErrorWarning(const char* warningString) override;
 			void draw3dText(const btVector3&, const char*) override;
@@ -1046,6 +1093,8 @@ namespace FiscionX {
 
 		static void CreateShadowMap(ShadowMap& sm, int LIGHT_TYPE);
 		static void CreateAllShadowMaps();
+		/** Gera o cubemap de profundidade da luz pontual (índice em AllLights / AllShadowMaps). */
+		static void RenderPointLightShadowCubemap(size_t lightIndex, FiscionX::Mat4 view, FiscionX::Mat4 projection);
 		static std::vector<glm::vec4> getFrustumCornersWorldSpace(const glm::mat4& proj, const glm::mat4& view);
 		static glm::mat4 getLightSpaceMatrix(FiscionX::Light& L, const float nearPlane, const float farPlane);
 		static glm::mat4 ComputeLightSpaceMatrix(Light& L);
