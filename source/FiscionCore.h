@@ -1095,6 +1095,7 @@ namespace FiscionX {
 		static GLuint depthMap;
 		static std::vector<float> shadowCascadeLevels;
 		static float REFLECTIONS_STRENGTH;
+		static float HDR_EXPOSURE;
 
 		static GLuint textShader;
 
@@ -1131,6 +1132,7 @@ namespace FiscionX {
 			const int _POINT_LIGHT_SHADOW_SIZE, const std::vector<float> SHADOW_CASCADE_LEVELS, const float _NEAR_PLANE,
 			const float _FAR_PLANE, const bool _COMPRESS_TEXTURES_AUTOMATICALLY);
 		static void ClockTick();
+		static bool LoadHDR(const char* path);
 		static void SetWindowSize(int width, int height);
 		static void SetWindowIcon(const char* path);
 		static void SetWindowFullscreen(bool fullscreen, int monitorIndex);
@@ -1138,6 +1140,7 @@ namespace FiscionX {
 		static void Terminate();
 
 		static struct Draw {
+			static void HDR(FiscionX::Mat4 view, FiscionX::Mat4 projection);
 			static void SwapBuffers();
 			static void PostProcessing(FiscionX::Mat4 viewProj, FiscionX::Light* dirLight);
 			static void ClearBackground(float r, float g, float b, float a);
