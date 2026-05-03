@@ -220,7 +220,7 @@ namespace FiscionX {
 	struct Vector2 {
 		float x, y;
 		Vector2(float _x = 0, float _y = 0) : x(_x), y(_y) {}
-		
+
 		Vector2(const glm::vec2& g) : x(g.x), y(g.y) {}
 
 		Vector2& operator=(const glm::vec2& g) {
@@ -999,6 +999,11 @@ namespace FiscionX {
 
 		std::vector<GLuint> occlusionQueries;
 		std::vector<bool> isVisible;
+
+		// Camera extracted from the GLB
+		int  cameraNodeIndex = -1;   // index of the camera node found in the glTF (-1 = none)
+		bool drivesCamera = false; // true while this model is driving Core::Camera
+		bool cameraAnimFinished = false; // true once a non-repeating anim has reached its end
 
 		float alpha = 1.0f;
 
