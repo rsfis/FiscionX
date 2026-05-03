@@ -110,7 +110,9 @@ void update() {
         }
     }
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_ESCAPE)) FiscionX::Core::Terminate();
-    //if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_Z)) PrintRAMUsage();
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_Z)) { 
+        skinnedModel->playAnim("CameraAction", false); 
+    }
 
     if (skinnedModel) {
         if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_SPACE)) skinnedModel->position.y += 0.004f;
@@ -225,7 +227,7 @@ int main() {
         FiscionX::Vector3(0.6f, 0.6f, 0.6f)
     );
 
-    skinnedModel->playAnim("CameraAction", true);
+    skinnedModel->playAnim("CameraAction", false);
 
     img = new FiscionX::UI::Image("assets/images/didi.png");
 

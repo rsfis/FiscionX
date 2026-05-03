@@ -1306,6 +1306,10 @@ FiscionX::Model::Model(const std::string& path, FiscionX::Vector3 pos, FiscionX:
 }
 
 void FiscionX::Model::playAnim(const std::string& name, bool repeat, const std::string& next) {
+	if (cameraNodeIndex >= 0) {
+		cameraAnimFinished = false;
+		drivesCamera = true;
+	}
 	currentAnim.name = name;
 	currentAnim.repeat = repeat;
 	currentAnim.nextAnim = next;
