@@ -1094,6 +1094,7 @@ namespace FiscionX {
 		static GLuint depthMapFBO;
 		static GLuint depthMap;
 		static std::vector<float> shadowCascadeLevels;
+		static float REFLECTIONS_STRENGTH;
 
 		static GLuint textShader;
 

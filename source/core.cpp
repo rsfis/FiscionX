@@ -31,6 +31,7 @@ float FiscionX::Core::godRaysDecay = 0.97;
 float FiscionX::Core::godRaysExposure = 1.4;
 int FiscionX::Core::godRaysNumOfSamples = 10;
 FiscionX::Vector3 FiscionX::Core::colorCorrection(0.07f, 0.07f, 0.08f);
+float FiscionX::Core::REFLECTIONS_STRENGTH = 0.3f;
 
 int FiscionX::Core::DIR_SHADOW_SIZE = 1024;
 int FiscionX::Core::SPOT_SHADOW_SIZE = 1024;
@@ -2425,6 +2426,7 @@ void FiscionX::Model::drawSubMesh(
 	glUniform1f(glGetUniformLocation(shader, "environmentStrength"), FiscionX::Core::AMBIENT_LIGHT_INTENSITY);
 	glUniform3f(glGetUniformLocation(shader, "environmentSkyColor"), 0.3f, 0.3f, 0.35f);
 	glUniform3f(glGetUniformLocation(shader, "environmentGroundColor"), 0.05f, 0.05f, 0.07f);
+	glUniform1f(glGetUniformLocation(shader, "reflectionsStrength"), FiscionX::Core::REFLECTIONS_STRENGTH);
 
 	// SHADOW SETTINGS
 	glUniform1i(glGetUniformLocation(shader, "isAffectedByLight"), this->isAffectedByLight ? 1 : 0);
@@ -2478,6 +2480,7 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 	glUniformMatrix4fv(glGetUniformLocation(shader, "projection"), 1, GL_FALSE, glm::value_ptr(glm::mat4(projection)));
 	glUniform3fv(glGetUniformLocation(shader, "viewPos"), 1, glm::value_ptr(glm::vec3(FiscionX::Core::Camera.position.x, FiscionX::Core::Camera.position.y, FiscionX::Core::Camera.position.z)));
 	glUniform1i(glGetUniformLocation(shader, "numLights"), numLights);
+	glUniform1f(glGetUniformLocation(shader, "reflectionsStrength"), FiscionX::Core::REFLECTIONS_STRENGTH);
 
 	// --- CSM: ENVIANDO DADOS DA DIREÇÃO (SOL) ---
 	// Procura a primeira luz direcional (nosso Sol)
