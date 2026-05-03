@@ -719,6 +719,24 @@ namespace FiscionX {
 		void play();
 	};
 
+	struct Image3D {
+		GLuint texture;
+		GLuint VAO, VBO;
+		static GLuint shader;
+
+		Vector3 position = Vector3(0.0f);
+
+		float alpha = 1.0f;
+		Vector3 rotation = FiscionX::Vector3(0.0f); // radians
+		FiscionX::Vector3 scale = FiscionX::Vector3(1.0f);
+
+		float aspect_ratio = 1.0f;
+		int w_, h_;
+
+		Image3D(const char* path);
+		void draw(glm::mat4 view, glm::mat4 projection);
+	};
+
 	struct ShadowMap {
 		GLuint fbo = 0;
 		GLuint depthMap = 0;
