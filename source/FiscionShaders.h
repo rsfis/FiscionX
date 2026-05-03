@@ -236,6 +236,7 @@ in VS_OUT {
     vec4 FragPosLightSpace[15];
 } fs_in;
 
+uniform float reflectionsStrength = 0.5;
 uniform sampler2D baseColorTex;
 uniform sampler2D normalMapTex;
 uniform sampler2D glossinessTex;
@@ -435,8 +436,8 @@ float ShadowCalculationPoint(int idx, vec3 fragPos) {
 
 // Fresnel (F) - Schlick approximation
 vec3 fresnelSchlick(float cosTheta, vec3 F0) {
-  // Usado para calcular a contribuição de reflexão (especular)
-  return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+    vec3 fresnel = F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+    return mix(F0, fresnel, reflectionsStrength); // strength=0 → sem fresnel, strength=1 → fresnel completo
 }
 
 // Normal Distribution Function (D) - Trowbridge-Reitz (GGX)
@@ -485,17 +486,13 @@ void main() {
   vec3  F0_base; // F0 base para dielétricos
 
   if (useMetalRoughness == 1) {
-    // Metal/Roughness Workflow
     vec4 metallicProps = texture(metallicTex, fs_in.TexCoords);
-    
-    // Canal Verde = Roughness
-    roughness = metallicProps.g; 
-    
-    // Canal Azul (Metallic) ignorado por solicitação
-    metallic = 0.0;
-    
-    // F0 padrão para dielétricos (não-metais)
-    F0_base = vec3(0.04); 
+
+    roughness = metallicProps.g;  // Canal G = Roughness
+    metallic  = metallicProps.b;  // Canal B = Metallic (estava sendo ignorado)
+
+    // F0 interpolado: dielétrico (0.04) → metal (albedo)
+    F0_base = mix(vec3(0.04), baseColor, metallic);
   } else {
     // Specular/Glossiness Workflow (Tratado como Dielétrico para manter consistência)
     
@@ -618,6 +615,7 @@ void main() {
     float G = GeometrySmith(N, V, L, roughness);
 
     vec3 specularBRDF = (D * G * F) / max(4.0 * NdotL * max(dot(N, V), 0.0), 0.000001);
+    specularBRDF *= reflectionsStrength; // <-- aqui
 
     vec3 kS = F;
     vec3 kD = (vec3(1.0) - kS) * (1.0 - metallic);
