@@ -82,6 +82,10 @@ void update() {
         carChassiBody->setTransform(FiscionX::Vector3(3, 10, -4), FiscionX::Vector3(0, 0, 0));
     }
 
+    FiscionX::Vector3 d = FiscionX::Math::lookAt3D(kratosStaticModel->position, FiscionX::Core::Camera.position - FiscionX::Vector3(0.0f, 1.0f, 0.0f));
+    FiscionX::Vector3 eu = FiscionX::Math::toEulerAngles(d, FiscionX::Vector2(1.0f, 1.0f));
+    kratosStaticModel->rotation = eu;
+
     // CAPSULE & KRATOS
     capsuleBody->activate();
     //kratosStaticModel->syncTransformWithBody(capsuleBody, FiscionX::Vector3(0, -1.25f, 0), FiscionX::Vector3(0, 0, 0));
@@ -146,7 +150,7 @@ void draw() {
 }
 
 int main() {
-    FiscionX::Core::Set3DSettings(3048, 1024, 512, { 15.0f, 70.0f, 150.0f }, 0.01f, 1000.0f, false);
+    FiscionX::Core::Set3DSettings(3048, 1024, 512, { 15.0f, 70.0f, 150.0f }, 0.01f, 1000.0f, true);
     FiscionX::Core::SetCacheSettings(true, true);
     FiscionX::Core::NewWindow(1280, 720, "FiscionX");
     //FiscionX::Core::SetWindowFullscreen(true, 0);
@@ -199,13 +203,13 @@ int main() {
         FiscionX::Vector3(0.01f, 0.01f, 0.01f)
     );
     kratosStaticModel = new FiscionX::Model(
-        "assets/models/kratos.glb",
+        "assets/models/kratos_.glb",
         FiscionX::Vector3(0, 0, 7.0f),
         FiscionX::Vector3(0),
         FiscionX::Vector3(0.1f, 0.1f, 0.1f)
     );
     boxModel = new FiscionX::Model(
-        "assets/models/wall.glb",
+        "assets/models/metal_water_tank.glb",
         FiscionX::Vector3(0, 0.09f, 4.2f),
         FiscionX::Vector3(2, 0, 0),
         FiscionX::Vector3(0.5f, 0.5f, 0.5f)
