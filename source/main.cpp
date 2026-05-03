@@ -209,7 +209,7 @@ int main() {
         FiscionX::Vector3(0.01f, 0.01f, 0.01f)
     );
     kratosStaticModel = new FiscionX::Model(
-        "assets/models/kratos_.glb",
+        "assets/models/kratos.glb",
         FiscionX::Vector3(0, 0, 7.0f),
         FiscionX::Vector3(0),
         FiscionX::Vector3(0.1f, 0.1f, 0.1f)
