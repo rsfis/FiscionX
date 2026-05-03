@@ -202,6 +202,46 @@ float FiscionX::Math::angleBetween(Vector3 a, Vector3 b) {
 	return std::acos(Math::clamp(a.dot(b), -1.0f, 1.0f));
 }
 
+FiscionX::Vector3 FiscionX::Math::lookAt3D(const FiscionX::Vector3& position, const FiscionX::Vector3& target) {
+	FiscionX::Vector3 forward = target - position;
+	const float eps = 1e-12f;
+	if (forward.lengthSquared() < eps)
+		return FiscionX::Vector3(0.0f, 0.0f, -1.0f);
+	return forward.normalized();
+}
+
+FiscionX::Vector3 FiscionX::Math::toEulerAngles(const FiscionX::Vector3& lookAtForward, FiscionX::Vector2 axisLock) {
+	glm::vec3 f(lookAtForward.x, lookAtForward.y, lookAtForward.z);
+
+	// Trava PITCH → projeta o forward no plano XZ (elimina Y)
+	if (axisLock.y == 0.0f)
+		f.y = 0.0f;
+
+	// Trava YAW → projeta o forward no plano YZ (elimina X)
+	if (axisLock.x == 0.0f)
+		f.x = 0.0f;
+
+	const float lenSq = glm::dot(f, f);
+	if (lenSq < 1e-24f)
+		f = glm::vec3(0.0f, 0.0f, -1.0f);
+	else
+		f *= glm::inversesqrt(lenSq);
+
+	glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
+	if (glm::abs(glm::dot(f, worldUp)) > 0.998f)
+		worldUp = glm::vec3(1.0f, 0.0f, 0.0f);
+
+	const glm::vec3 eye(0.0f);
+	const glm::mat4 view = glm::lookAt(eye, eye + f, worldUp);
+	const glm::mat4 camWorld = glm::inverse(view);
+	const glm::mat3 R = glm::mat3(camWorld);
+	const glm::mat4 M = glm::mat4(R);
+	float t1, t2, t3;
+	glm::extractEulerAngleXYZ(M, t1, t2, t3);
+
+	return FiscionX::Vector3(t2, t1, t3);
+}
+
 // =================== File System ====================
 File::File(std::string _path) {
 	path = _path;

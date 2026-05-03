@@ -572,6 +572,11 @@ namespace FiscionX {
 		static float round(float value);
 		static float log(float value);
 		static float angleBetween(Vector3 a, Vector3 b);
+		static Vector3 lookAt3D(const Vector3& position, const Vector3& target);
+		static Vector3 toEulerAngles(
+			const FiscionX::Vector3& lookAtForward,
+			FiscionX::Vector2 axisLock
+		);
 	};
 
 	struct UI {
@@ -764,7 +769,7 @@ namespace FiscionX {
 
 			int getDebugMode() const override;
 
-			// Métodos obrigatórios da classe base
+			// MÃ©todos obrigatÃ³rios da classe base
 			void drawContactPoint(const btVector3&, const btVector3&, btScalar, int, const btVector3&) override;
 			void reportErrorWarning(const char* warningString) override;
 			void draw3dText(const btVector3&, const char*) override;
