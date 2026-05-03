@@ -39,18 +39,18 @@ static GLuint g_hdrVAO = 0;
 static GLuint g_hdrVBO = 0;
 static GLuint g_hdrProgram = 0;
 
-int FiscionX::Core::DIR_SHADOW_SIZE = 1024;
+int FiscionX::Core::DIR_SHADOW_SIZE = 3048;
 int FiscionX::Core::SPOT_SHADOW_SIZE = 1024;
 int FiscionX::Core::POINT_SHADOW_SIZE = 512;
 float        FiscionX::Core::NEAR_PLANE;
 float         FiscionX::Core::FAR_PLANE;
 float         FiscionX::Core::SHADOW_VIEW_RADIUS;
 float         FiscionX::Core::AMBIENT_LIGHT_INTENSITY = 0.0f;
-FiscionX::Vector3     FiscionX::Core::AMBIENT_LIGHT_SKYCOLOR = { 0.3f, 0.3f, 0.35f };
-FiscionX::Vector3     FiscionX::Core::AMBIENT_LIGHT_GROUNDCOLOR = { 0.05f, 0.05f, 0.07f };
+FiscionX::Vector3     FiscionX::Core::AMBIENT_LIGHT_SKYCOLOR = { 0.612f, 0.761f, 0.835f };
+FiscionX::Vector3     FiscionX::Core::AMBIENT_LIGHT_GROUNDCOLOR = { 0.312f, 0.461f, 0.535f };
 GLuint FiscionX::Core::depthMapFBO;
 GLuint FiscionX::Core::depthMap;
-std::vector<float> FiscionX::Core::shadowCascadeLevels = { 20.0f, 70.0f, 200.0f };
+std::vector<float> FiscionX::Core::shadowCascadeLevels = { 15.0f, 70.0f, 150.0f };
 bool FiscionX::Core::compressTexturesAutomatically = true;
 
 GLuint FiscionX::Core::textShader;
