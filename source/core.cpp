@@ -31,7 +31,7 @@ float FiscionX::Core::godRaysDecay = 0.97;
 float FiscionX::Core::godRaysExposure = 1.4;
 int FiscionX::Core::godRaysNumOfSamples = 10;
 FiscionX::Vector3 FiscionX::Core::colorCorrection(0.07f, 0.07f, 0.08f);
-float FiscionX::Core::REFLECTIONS_STRENGTH = 0.3f;
+float FiscionX::Core::REFLECTIONS_STRENGTH = 0.2f;
 
 int FiscionX::Core::DIR_SHADOW_SIZE = 1024;
 int FiscionX::Core::SPOT_SHADOW_SIZE = 1024;
