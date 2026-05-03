@@ -1160,7 +1160,7 @@ void FiscionX::Image3D::draw(glm::mat4 view, glm::mat4 projection) {
 	model = glm::rotate(model, rotation.x, glm::vec3(1.0f, 0.0f, 0.0f));
 	model = glm::rotate(model, rotation.y, glm::vec3(0.0f, 1.0f, 0.0f));
 	model = glm::rotate(model, rotation.z, glm::vec3(0.0f, 0.0f, 1.0f));
-	model = glm::scale(model, glm::vec3(scale.x*aspect_ratio, scale.y, scale.z));
+	model = glm::scale(model, glm::vec3(scale.x * aspect_ratio, scale.y, scale.z));
 
 	glEnable(GL_DEPTH_TEST);
 	glDisable(GL_CULL_FACE);
@@ -1319,7 +1319,11 @@ void FiscionX::Model::update(float deltaTime) {
 		isVisible[i] = result != 0;
 	}
 
-	if (!isSkinned) return;
+	// If no animation is set AND this is not a skinned model, there is nothing to evaluate.
+	// But if a camera node exists and an animation was started, we still need to run
+	// the animation sampler so the camera gets driven frame-by-frame.
+	bool hasCameraAnim = (cameraNodeIndex >= 0 && !currentAnim.name.empty());
+	if (!isSkinned && !hasCameraAnim) return;
 
 	auto itAnim = animations.find(currentAnim.name);
 	if (itAnim == animations.end()) return;
@@ -1478,6 +1482,37 @@ void FiscionX::Model::update(float deltaTime) {
 
 	for (int root : gltfModel.scenes[gltfModel.defaultScene].nodes) {
 		recurseGlobal(root);
+	}
+
+	// ── Drive Core::Camera from the animated camera node ──────────────────────
+	if (cameraNodeIndex >= 0 && nodeGlobalTransforms.count(cameraNodeIndex)) {
+		// When a non-repeating animation reaches its end, apply the final frame
+		// once and then release the camera so external code can move it freely.
+		bool justFinished = (!currentAnim.repeat && t >= maxTime && maxTime > 0.0f);
+
+		if (!cameraAnimFinished) {
+			// Must match draw()'s baseMatrix exactly
+			glm::mat4 modelMat =
+				glm::translate(glm::mat4(1.0f), glm::vec3(position.x, position.y, position.z))
+				* glm::eulerAngleXYZ(rotation.y, rotation.x, rotation.z)
+				* glm::scale(glm::mat4(1.0f), glm::vec3(scale.x, scale.y, scale.z));
+
+			glm::mat4 worldMat = modelMat * nodeGlobalTransforms[cameraNodeIndex];
+
+			glm::vec3 camPos = glm::vec3(worldMat[3]);
+			Core::Camera.position = FiscionX::Vector3(camPos.x, camPos.y, camPos.z);
+
+			// glTF cameras look along their local -Z axis
+			glm::vec3 fwd = glm::normalize(-glm::vec3(worldMat[2]));
+			Core::Camera.yaw = glm::degrees(std::atan2(fwd.z, fwd.x));
+			Core::Camera.pitch = glm::degrees(std::asin(glm::clamp(fwd.y, -1.0f, 1.0f)));
+			Core::Camera.updateVectors();
+
+			if (justFinished) {
+				cameraAnimFinished = true;
+				drivesCamera = false; // release — external code can move the camera again
+			}
+		}
 	}
 
 	if (!skins.empty()) {
@@ -1707,6 +1742,68 @@ void FiscionX::Model::init(const std::string& path) {
 	for (size_t i = 0; i < gltfModel.animations.size(); ++i) {
 		const auto& a = gltfModel.animations[i];
 		animations[a.name] = a;
+	}
+
+	// ── Detect the first camera node in the glTF ──────────────────────────────
+	cameraNodeIndex = -1;
+	for (int i = 0; i < (int)nodes.size(); ++i) {
+		if (nodes[i].camera >= 0) {
+			cameraNodeIndex = i;
+			break;
+		}
+	}
+
+	// If there is a camera node but NO animations, apply its static transform
+	// to Core::Camera immediately.
+	if (cameraNodeIndex >= 0 && gltfModel.animations.empty()) {
+		const tinygltf::Node& camNode = nodes[cameraNodeIndex];
+
+		// Build the node's local-to-world matrix by walking up the parent chain
+		std::function<glm::mat4(int)> buildGlobal = [&](int idx) -> glm::mat4 {
+			const tinygltf::Node& n = nodes[idx];
+			glm::mat4 local(1.0f);
+			if (!n.matrix.empty()) {
+				local = glm::make_mat4(n.matrix.data());
+			}
+			else {
+				glm::vec3 T(0.0f), S(1.0f);
+				glm::quat R(1, 0, 0, 0);
+				if (!n.translation.empty()) T = glm::make_vec3(n.translation.data());
+				if (!n.rotation.empty())    R = glm::make_quat(n.rotation.data());
+				if (!n.scale.empty())       S = glm::make_vec3(n.scale.data());
+				local = glm::translate(glm::mat4(1.0f), T) * glm::mat4_cast(R) * glm::scale(glm::mat4(1.0f), S);
+			}
+			int parent = -1;
+			for (int p = 0; p < (int)nodes.size(); ++p) {
+				for (int c : nodes[p].children) {
+					if (c == idx) { parent = p; break; }
+				}
+				if (parent >= 0) break;
+			}
+			return (parent >= 0) ? buildGlobal(parent) * local : local;
+			};
+
+		glm::mat4 nodeWorldMat = buildGlobal(cameraNodeIndex);
+
+		// Apply the Model's own transform so position/rotation/scale are respected
+		glm::mat4 modelMat =
+			glm::translate(glm::mat4(1.0f), glm::vec3(position.x, position.y, position.z))
+			* glm::eulerAngleXYZ(rotation.y, rotation.x, rotation.z)
+			* glm::scale(glm::mat4(1.0f), glm::vec3(scale.x, scale.y, scale.z));
+
+		glm::mat4 worldMat = modelMat * nodeWorldMat;
+
+		// Position = column 3
+		glm::vec3 camPos = glm::vec3(worldMat[3]);
+		Core::Camera.position = FiscionX::Vector3(camPos.x, camPos.y, camPos.z);
+
+		// Forward in glTF cameras points along -Z in their local space
+		glm::vec3 fwd = glm::normalize(-glm::vec3(worldMat[2]));
+		Core::Camera.yaw = glm::degrees(std::atan2(fwd.z, fwd.x));
+		Core::Camera.pitch = glm::degrees(std::asin(glm::clamp(fwd.y, -1.0f, 1.0f)));
+		Core::Camera.updateVectors();
+
+		drivesCamera = true;
 	}
 
 	if (isSkinned) {

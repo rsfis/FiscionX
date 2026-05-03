@@ -198,7 +198,7 @@ int main() {
 
     FiscionX::Core::CreateAllShadowMaps();
 
-    // Camera animation extracted from glb; Contact Shadows; Anim Blending; Draw halo and glow also for point lights and spot lights; Point lights are traversing walls/solid objects (Criação da textura está correta. Problema: Shader ou Computando); Sombras e Luz devem passar por malhas com transparência; Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Terrains; Water
+    // Camera animation extracted from the first camera it sees from a glb; Contact Shadows; Anim Blending; Draw halo and glow also for point lights and spot lights; Point lights are traversing walls/solid objects (Criação da textura está correta. Problema: Shader ou Computando); Sombras e Luz devem passar por malhas com transparência; Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Terrains; Water
     
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb",
@@ -219,13 +219,13 @@ int main() {
         FiscionX::Vector3(0.5f, 0.5f, 0.5f)
     );
     skinnedModel = new FiscionX::Model(
-        "assets/models/camel.glb",
-        FiscionX::Vector3(0.4f, 0, 1.5f),
-        FiscionX::Vector3(1, 0, 0),
+        "assets/models/camera_test_anim.glb",
+        FiscionX::Vector3(0.0f, 0.0f, 0.0f),
+        FiscionX::Vector3(0, 0, 0),
         FiscionX::Vector3(1, 1, 1)
     );
 
-    skinnedModel->playAnim("Armature|Idle_01", true);
+    skinnedModel->playAnim("CameraAction", false);
 
     img = new FiscionX::UI::Image("assets/images/didi.png");
 
