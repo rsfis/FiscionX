@@ -160,7 +160,7 @@ int main() {
     FiscionX::Core::SetCursorMode(FISCIONX_CURSOR_DISABLED);
     FiscionX::Physics::CreatePhysicsWorld(FiscionX::Vector3(0, -9.81f, 0), 10);
 
-    FiscionX::Core::AMBIENT_LIGHT_INTENSITY = 2.0f;
+    FiscionX::Core::AMBIENT_LIGHT_INTENSITY = 3.5f;
 
     dirLight = new FiscionX::Light();
     dirLight->type = FiscionX::LIGHT_DIRECTIONAL;
