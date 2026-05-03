@@ -32,6 +32,12 @@ float FiscionX::Core::godRaysExposure = 1.4;
 int FiscionX::Core::godRaysNumOfSamples = 10;
 FiscionX::Vector3 FiscionX::Core::colorCorrection(0.07f, 0.07f, 0.08f);
 float FiscionX::Core::REFLECTIONS_STRENGTH = 0.2f;
+float FiscionX::Core::HDR_EXPOSURE = 1.0f;
+
+static GLuint g_hdrTex = 0;
+static GLuint g_hdrVAO = 0;
+static GLuint g_hdrVBO = 0;
+static GLuint g_hdrProgram = 0;
 
 int FiscionX::Core::DIR_SHADOW_SIZE = 1024;
 int FiscionX::Core::SPOT_SHADOW_SIZE = 1024;
@@ -87,6 +93,134 @@ float deltaTime = 0.0f, lastFrame = 0;
 
 // =================== Shader Loader ===================
 GLuint LoadShader(const char* vertexSrc, const char* fragmentSrc);
+
+bool FiscionX::Core::LoadHDR(const char* path)
+{
+	stbi_set_flip_vertically_on_load(true);
+
+	int w, h, ch;
+	float* data = stbi_loadf(path, &w, &h, &ch, 3);
+	if (!data)
+		return false;
+
+	glGenTextures(1, &g_hdrTex);
+	glBindTexture(GL_TEXTURE_2D, g_hdrTex);
+
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, data);
+
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+	stbi_image_free(data);
+
+	// cria shader
+	GLuint vs = glCreateShader(GL_VERTEX_SHADER);
+	glShaderSource(vs, 1, &hdrBgVertex, nullptr);
+	glCompileShader(vs);
+
+	GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
+	glShaderSource(fs, 1, &hdrBgFragment, nullptr);
+	glCompileShader(fs);
+
+	g_hdrProgram = glCreateProgram();
+	glAttachShader(g_hdrProgram, vs);
+	glAttachShader(g_hdrProgram, fs);
+	glLinkProgram(g_hdrProgram);
+
+	glDeleteShader(vs);
+	glDeleteShader(fs);
+
+	// quad fullscreen (-1..1)
+	float skyboxVertices[] = {
+		// positions          
+		-1.0f,  1.0f, -1.0f,
+		-1.0f, -1.0f, -1.0f,
+		 1.0f, -1.0f, -1.0f,
+		 1.0f, -1.0f, -1.0f,
+		 1.0f,  1.0f, -1.0f,
+		-1.0f,  1.0f, -1.0f,
+
+		-1.0f, -1.0f,  1.0f,
+		-1.0f, -1.0f, -1.0f,
+		-1.0f,  1.0f, -1.0f,
+		-1.0f,  1.0f, -1.0f,
+		-1.0f,  1.0f,  1.0f,
+		-1.0f, -1.0f,  1.0f,
+
+		 1.0f, -1.0f, -1.0f,
+		 1.0f, -1.0f,  1.0f,
+		 1.0f,  1.0f,  1.0f,
+		 1.0f,  1.0f,  1.0f,
+		 1.0f,  1.0f, -1.0f,
+		 1.0f, -1.0f, -1.0f,
+
+		-1.0f, -1.0f,  1.0f,
+		-1.0f,  1.0f,  1.0f,
+		 1.0f,  1.0f,  1.0f,
+		 1.0f,  1.0f,  1.0f,
+		 1.0f, -1.0f,  1.0f,
+		-1.0f, -1.0f,  1.0f,
+
+		-1.0f,  1.0f, -1.0f,
+		 1.0f,  1.0f, -1.0f,
+		 1.0f,  1.0f,  1.0f,
+		 1.0f,  1.0f,  1.0f,
+		-1.0f,  1.0f,  1.0f,
+		-1.0f,  1.0f, -1.0f,
+
+		-1.0f, -1.0f, -1.0f,
+		-1.0f, -1.0f,  1.0f,
+		 1.0f, -1.0f, -1.0f,
+		 1.0f, -1.0f, -1.0f,
+		-1.0f, -1.0f,  1.0f,
+		 1.0f, -1.0f,  1.0f
+	};
+
+	glGenVertexArrays(1, &g_hdrVAO);
+	glGenBuffers(1, &g_hdrVBO);
+
+	glBindVertexArray(g_hdrVAO);
+	glBindBuffer(GL_ARRAY_BUFFER, g_hdrVBO);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(skyboxVertices), skyboxVertices, GL_STATIC_DRAW);
+
+	glEnableVertexAttribArray(0);
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+
+	stbi_set_flip_vertically_on_load(false);
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	glBindVertexArray(0);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	return true;
+}
+
+void FiscionX::Core::Draw::HDR(FiscionX::Mat4 view, FiscionX::Mat4 projection)
+{
+	if (!g_hdrTex) return;
+
+	glDepthFunc(GL_LEQUAL);
+	glDepthMask(GL_FALSE);
+
+	glUseProgram(g_hdrProgram);
+
+	// remove posição da câmera (skybox não "anda")
+	glm::mat4 viewNoTranslate = glm::mat4(glm::mat3((glm::mat4)view));
+
+	glUniformMatrix4fv(glGetUniformLocation(g_hdrProgram, "view"), 1, GL_FALSE, glm::value_ptr(viewNoTranslate));
+	glUniformMatrix4fv(glGetUniformLocation(g_hdrProgram, "projection"), 1, GL_FALSE, glm::value_ptr((glm::mat4)projection));
+	glUniform1f(glGetUniformLocation(g_hdrProgram, "exposure"), FiscionX::Core::HDR_EXPOSURE);
+
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, g_hdrTex);
+	glUniform1i(glGetUniformLocation(g_hdrProgram, "hdrTex"), 0);
+
+	glBindVertexArray(g_hdrVAO);
+	glDrawArrays(GL_TRIANGLES, 0, 36); // <-- precisa virar cubo
+
+	glDepthMask(GL_TRUE);
+	glDepthFunc(GL_LESS);
+}
 
 // ====================== Math ========================
 float FiscionX::Math::getDistance3D(FiscionX::Vector3 pos1, FiscionX::Vector3 pos2) {

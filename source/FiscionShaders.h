@@ -989,3 +989,58 @@ void main() {
     FragColor = vec4(clamp(color, 0.0, 1.0) - colorCorrection, 1.0);
 }
 )";
+
+const char* hdrBgVertex = R"(
+#version 330 core
+layout (location = 0) in vec3 aPos;
+
+out vec3 TexCoords;
+
+uniform mat4 view;
+uniform mat4 projection;
+
+void main()
+{
+    TexCoords = aPos;
+
+    vec4 pos = projection * view * vec4(aPos, 1.0);
+    gl_Position = pos.xyww; // truque skybox
+}
+)";
+
+const char* hdrBgFragment = R"(
+#version 330 core
+out vec4 FragColor;
+
+in vec3 TexCoords;
+
+uniform sampler2D hdrTex;
+uniform float exposure;
+
+const vec2 invAtan = vec2(0.1591, 0.3183);
+
+vec2 SampleSphericalMap(vec3 v)
+{
+    vec2 uv = vec2(atan(v.z, v.x), asin(v.y));
+    uv *= invAtan;
+    uv += 0.5;
+    return uv;
+}
+
+void main()
+{
+    vec2 uv = SampleSphericalMap(normalize(TexCoords));
+    vec3 color = texture(hdrTex, uv).rgb;
+
+    // --- EXPOSURE ---
+    color *= exposure;
+
+    // --- TONEMAP (exponential, estável e barato) ---
+    vec3 mapped = vec3(1.0) - exp(-color);
+
+    // --- GAMMA CORRECTION ---
+    mapped = pow(mapped, vec3(1.0 / 2.2));
+
+    FragColor = vec4(mapped, 1.0);
+}
+)";

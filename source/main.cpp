@@ -132,6 +132,7 @@ void draw() {
     FiscionX::Core::RenderAllShadowPasses(view, projection, viewProj);
 
     FiscionX::Core::Draw::ClearBackground(0.2f, 0.2f, 1.0f, 1.0f);
+    FiscionX::Core::Draw::HDR(view, projection);
 
     // DRAW NORMAL
     FiscionX::Core::SortModels();
@@ -152,13 +153,14 @@ void draw() {
 }
 
 int main() {
-    FiscionX::Core::Set3DSettings(3048, 1024, 512, { 15.0f, 70.0f, 150.0f }, 0.01f, 1000.0f, true);
+    FiscionX::Core::Set3DSettings(3048, 1024, 512, { 15.0f, 70.0f, 150.0f }, 0.01f, 1000.0f, false);
     FiscionX::Core::SetCacheSettings(true, true);
     FiscionX::Core::NewWindow(1280, 720, "FiscionX");
     //FiscionX::Core::SetWindowFullscreen(true, 0);
     FiscionX::Core::SetWindowIcon("assets/icons/fiscionx_logo_big_512.png");
     FiscionX::Core::SetCursorMode(FISCIONX_CURSOR_DISABLED);
     FiscionX::Physics::CreatePhysicsWorld(FiscionX::Vector3(0, -9.81f, 0), 10);
+    FiscionX::Core::LoadHDR("assets/environment/env.hdr");
 
     FiscionX::Core::AMBIENT_LIGHT_INTENSITY = 3.5f;
 
