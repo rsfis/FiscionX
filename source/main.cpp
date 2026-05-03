@@ -160,7 +160,7 @@ int main() {
     FiscionX::Core::SetWindowIcon("assets/icons/fiscionx_logo_big_512.png");
     FiscionX::Core::SetCursorMode(FISCIONX_CURSOR_DISABLED);
     FiscionX::Physics::CreatePhysicsWorld(FiscionX::Vector3(0, -9.81f, 0), 10);
-    FiscionX::Core::LoadHDR("assets/environment/env.hdr");
+    FiscionX::Core::LoadHDR("assets/environment/puresky.hdr");
 
     FiscionX::Core::AMBIENT_LIGHT_INTENSITY = 3.5f;
 
@@ -198,7 +198,7 @@ int main() {
 
     FiscionX::Core::CreateAllShadowMaps();
 
-    // Anim Blending; Draw halo and glow also for point lights and spot lights; Point lights are traversing walls/solid objects (Criação da textura está correta. Problema: Shader ou Computando); Sombras e Luz devem passar por malhas com transparência; Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Terrains; Water
+    // Contact Shadows; Anim Blending; Draw halo and glow also for point lights and spot lights; Point lights are traversing walls/solid objects (Criação da textura está correta. Problema: Shader ou Computando); Sombras e Luz devem passar por malhas com transparência; Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Terrains; Water
     
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb",
