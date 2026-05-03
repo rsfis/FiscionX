@@ -953,6 +953,103 @@ void FiscionX::UI::Button::draw() {
 	}
 }
 
+// ================== IMAGE3D ===================
+FiscionX::Image3D::Image3D(const char* path) {
+	int w, h, channels;
+	stbi_set_flip_vertically_on_load(true);
+	unsigned char* data = stbi_load(path, &w, &h, &channels, STBI_rgb_alpha);
+	if (!data) {
+		std::cerr << "ERR 0x007 - Cannot create raw image texture: " << stbi_failure_reason() << std::endl;
+		glfwTerminate();
+		system("pause");
+		std::exit(-7);
+	}
+	stbi_set_flip_vertically_on_load(false);
+
+	w_ = w;
+	h_ = h;
+	aspect_ratio = (float)w / (float)h;
+
+	scale = glm::vec3(1.0f);
+
+	glGenTextures(1, &texture);
+	glBindTexture(GL_TEXTURE_2D, texture);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+	glGenerateMipmap(GL_TEXTURE_2D);
+
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	GLfloat maxAniso = 0.0f;
+	glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
+	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, maxAniso);
+
+	stbi_image_free(data);
+
+	float _w = 1.0f;
+	float _h = 1.0f;
+
+	float quad[] = {
+		-_w, -_h, 0.0f,   0.0f, 0.0f,
+		 _w, -_h, 0.0f,   1.0f, 0.0f,
+		 _w,  _h, 0.0f,   1.0f, 1.0f,
+		-_w,  _h, 0.0f,   0.0f, 1.0f
+	};
+
+	GLuint indices[] = { 0, 1, 2, 2, 3, 0 };
+
+	glGenVertexArrays(1, &VAO);
+	glGenBuffers(1, &VBO);
+	GLuint EBO;
+	glGenBuffers(1, &EBO);
+
+	glBindVertexArray(VAO);
+	glBindBuffer(GL_ARRAY_BUFFER, VBO);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(quad), quad, GL_STATIC_DRAW);
+
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
+
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+	glEnableVertexAttribArray(0);
+	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+	glEnableVertexAttribArray(1);
+
+	glBindVertexArray(0);
+}
+
+void FiscionX::Image3D::draw(glm::mat4 view, glm::mat4 projection) {
+	glm::mat4 model = glm::mat4(1.0f);
+	model = glm::translate(model, glm::vec3(position.x, position.y, position.z));
+	model = glm::rotate(model, rotation.x, glm::vec3(1.0f, 0.0f, 0.0f));
+	model = glm::rotate(model, rotation.y, glm::vec3(0.0f, 1.0f, 0.0f));
+	model = glm::rotate(model, rotation.z, glm::vec3(0.0f, 0.0f, 1.0f));
+	model = glm::scale(model, glm::vec3(scale.x*aspect_ratio, scale.y, scale.z));
+
+	glEnable(GL_DEPTH_TEST);
+	glDisable(GL_CULL_FACE);
+	glUseProgram(shader);
+	glBindVertexArray(VAO);
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, texture);
+	glUniform1i(glGetUniformLocation(shader, "tex"), 0);
+
+	glUniformMatrix4fv(glGetUniformLocation(shader, "view"), 1, GL_FALSE, glm::value_ptr(view));
+	glUniformMatrix4fv(glGetUniformLocation(shader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+	glUniformMatrix4fv(glGetUniformLocation(shader, "model"), 1, GL_FALSE, glm::value_ptr(model));
+	glUniform1f(glGetUniformLocation(shader, "alpha"), alpha);
+
+	glEnable(GL_BLEND);
+	glEnable(GL_CULL_FACE);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+	glDisable(GL_BLEND);
+	glEnable(GL_DEPTH_TEST);
+}
+
+GLuint FiscionX::Image3D::shader = 0;
+
 // =================== Camera ===================
 FiscionX::Camera::Camera() {
 	updateVectors();
@@ -3756,6 +3853,7 @@ void FiscionX::Core::NewWindow(int width, int height, const char* window_label) 
 	UI::Video::shaderVideo = LoadShader(videoVertex, videoFragment);
 	textShader = LoadShader(textVertexShader, textFragmentShader);
 	shaderUI = LoadShader(uiVertex, uiFragment);
+	Image3D::shader = LoadShader(image3DVertex, image3DFragment);
 
 	// Configure Shadow Mapping
 	glGenFramebuffers(1, &depthMapFBO);

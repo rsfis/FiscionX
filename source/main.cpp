@@ -18,6 +18,7 @@ FiscionX::Physics::Rigidbody* carChassiBody;
 FiscionX::Physics::Vehicle* vehicle;
 
 FiscionX::UI::Image* img;
+FiscionX::Image3D* img3D;
 
 /*
 void PrintRAMUsage() {
@@ -142,6 +143,7 @@ void draw() {
         skinnedModel->draw(FiscionX::Core::shaderSkinned, glm::mat4(1.0f), 0, false, view, projection);
     }
     img->draw(FiscionX::Vector2(300, 200));
+    img3D->draw(view, projection);
 
     FiscionX::Core::Draw::PostProcessing(viewProj, dirLight); // No godray; Add Bloom
     //FiscionX::Physics::DrawDebugWorld(projection, view);
@@ -209,7 +211,7 @@ int main() {
         FiscionX::Vector3(0.1f, 0.1f, 0.1f)
     );
     boxModel = new FiscionX::Model(
-        "assets/models/metal_water_tank.glb",
+        "assets/models/metal_water_tank_2.glb",
         FiscionX::Vector3(0, 0.09f, 4.2f),
         FiscionX::Vector3(2, 0, 0),
         FiscionX::Vector3(0.5f, 0.5f, 0.5f)
@@ -224,7 +226,9 @@ int main() {
     skinnedModel->playAnim("Armature|Idle_01", true);
 
     img = new FiscionX::UI::Image("assets/images/didi.png");
-    img->scale = FiscionX::Vector2(1.0f, 1.0f);
+
+    img3D = new FiscionX::Image3D("assets/images/didi.png");
+    img3D->position = FiscionX::Vector3(7.0f, 1.0f, 0.0f);
 
     // Physics
     FiscionX::Physics::Shape groundShape = FiscionX::Physics::CreateBoxShape(FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(30.0f, 0.01f, 30.0f), 0.0f);
