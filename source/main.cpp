@@ -164,7 +164,7 @@ int main() {
     FiscionX::Physics::CreatePhysicsWorld(FiscionX::Vector3(0, -9.81f, 0), 10);
     FiscionX::Core::LoadHDR("assets/environment/puresky.hdr");
 
-    FiscionX::Core::AMBIENT_LIGHT_INTENSITY = 3.5f;
+    FiscionX::Core::AMBIENT_LIGHT_INTENSITY = 3.0f;
 
     dirLight = new FiscionX::Light();
     dirLight->type = FiscionX::LIGHT_DIRECTIONAL;
@@ -183,7 +183,7 @@ int main() {
 
     /*
     spotLight = new FiscionX::Light();
-    spotLight->type = FiscionX::LIGHT_POINT;
+    spotLight->type = FiscionX::LIGHT_SPOT;
     spotLight->position = FiscionX::Vector3(0.0f, 1.0f, -4.0f);
     spotLight->direction = FiscionX::Vector3(0.0f, 0.0f, 0.0f);
     spotLight->color = FiscionX::Vector3(1.0f, 0.0f, 0.0f);
