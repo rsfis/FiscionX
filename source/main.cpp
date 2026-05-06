@@ -227,7 +227,7 @@ int main() {
         FiscionX::Vector3(0.6f, 0.6f, 0.6f)
     );
 
-    skinnedModel->playAnim("CameraAction", true);
+    skinnedModel->playAnim("CameraAction", false);
 
     img = new FiscionX::UI::Image("assets/images/didi.png");
 
