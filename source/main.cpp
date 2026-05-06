@@ -189,8 +189,8 @@ int main() {
     spotLight->color = FiscionX::Vector3(1.0f, 0.0f, 0.0f);
     spotLight->intensity = 15.0f;
     spotLight->maxDistance = 30.0f;
-    spotLight->cutOff = glm::cos(glm::radians(25.0f));
-    spotLight->outerCutOff = glm::cos(glm::radians(30.0f));
+    spotLight->cutOff = FiscionX::Math::cos(FiscionX::Math::radians(25.0f));
+    spotLight->outerCutOff = FiscionX::Math::cos(FiscionX::Math::radians(30.0f));
     spotLight->constant = 1.0f;
     spotLight->linear = 0.09f;
     spotLight->quadratic = 0.032f;
@@ -200,7 +200,7 @@ int main() {
 
     FiscionX::Core::CreateAllShadowMaps();
 
-    // Lights extracted from glb; Contact Shadows; Anim Blending; Draw halo and glow also for point lights and spot lights; Point lights are traversing walls/solid objects (Criação da textura está correta. Problema: Shader ou Computando); Sombras e Luz devem passar por malhas com transparência; Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Terrains; Water
+    // Lights extracted from glb; Contact Shadows; Anim Blending; Draw halo and glow also for point lights and spot lights; Point lights are traversing walls/solid objects (Criação da textura está errada, computar está errado, renderizar está errado); Sombras e Luz devem passar por malhas com transparência; Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Terrains; Water
     
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb",
@@ -221,13 +221,13 @@ int main() {
         FiscionX::Vector3(0.5f, 0.5f, 0.5f)
     );
     skinnedModel = new FiscionX::Model(
-        "assets/models/camera_test_anim.glb",
-        FiscionX::Vector3(0.0f, 0.0f, 0.0f),
-        FiscionX::Vector3(0, 0, 0),
+        "assets/models/camel.glb",
+        FiscionX::Vector3(0.0f, 0.0f, 2.0f),
+        FiscionX::Vector3(1, 0, 0),
         FiscionX::Vector3(0.6f, 0.6f, 0.6f)
     );
 
-    skinnedModel->playAnim("CameraAction", false);
+    skinnedModel->playAnim("Armature|WalkCycle", true);
 
     img = new FiscionX::UI::Image("assets/images/didi.png");
 

@@ -286,6 +286,8 @@ uniform int acceptsShadows;
 
 const float diskRadius = 0.1;
 
+vec4 baseSample = vec4(1.0);
+
 // --- Poisson disk reduced to 8 for 2D sampling (cheap, good quality)
 const vec2 poisson8[8] = vec2[](
     vec2(-0.326212, -0.40581),
@@ -476,7 +478,7 @@ float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
 // -----------------------------------------------------
 
 void main() {
-  vec4 baseSample = texture(baseColorTex, fs_in.TexCoords);
+  baseSample = texture(baseColorTex, fs_in.TexCoords);
   if (alphaMode == 1 && baseSample.a < alphaCutoff) discard;
   vec3 baseColor = baseSample.rgb;
 
