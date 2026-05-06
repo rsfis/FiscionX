@@ -1164,6 +1164,7 @@ void FiscionX::Image3D::draw(glm::mat4 view, glm::mat4 projection) {
 
 	glEnable(GL_DEPTH_TEST);
 	glDisable(GL_CULL_FACE);
+	glCullFace(GL_NONE);
 	glUseProgram(shader);
 	glBindVertexArray(VAO);
 	glActiveTexture(GL_TEXTURE0);
@@ -1176,10 +1177,11 @@ void FiscionX::Image3D::draw(glm::mat4 view, glm::mat4 projection) {
 	glUniform1f(glGetUniformLocation(shader, "alpha"), alpha);
 
 	glEnable(GL_BLEND);
-	glEnable(GL_CULL_FACE);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 	glDisable(GL_BLEND);
+	glDisable(GL_CULL_FACE);
+	glCullFace(GL_BACK);
 	glEnable(GL_DEPTH_TEST);
 }
 
