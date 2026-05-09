@@ -1319,16 +1319,16 @@ void FiscionX::Model::playAnim(const std::string& name, bool repeat, const std::
 }
 
 void FiscionX::Model::update(float deltaTime) {
-	// Lê resultado das occlusion queries do frame anterior (não bloqueia)
+	// ── Occlusion queries — non-blocking: só lê se o resultado já está disponível ──
 	for (size_t i = 0; i < occlusionQueries.size(); ++i) {
-		GLuint result = 0;
-		glGetQueryObjectuiv(occlusionQueries[i], GL_QUERY_RESULT_AVAILABLE, &result);
-		if (result) {
+		GLuint available = 0;
+		glGetQueryObjectuiv(occlusionQueries[i], GL_QUERY_RESULT_AVAILABLE, &available);
+		if (available) {
 			GLuint samples = 0;
 			glGetQueryObjectuiv(occlusionQueries[i], GL_QUERY_RESULT, &samples);
 			isVisible[i] = (samples != 0);
 		}
-		// Se não disponível ainda, mantém o valor anterior (sem stall)
+		// Se não disponível ainda, mantém o valor do frame anterior (zero stall)
 	}
 
 	bool hasCameraAnim = (cameraNodeIndex >= 0 && !currentAnim.name.empty());
@@ -1341,10 +1341,8 @@ void FiscionX::Model::update(float deltaTime) {
 	currentAnim.time += deltaTime;
 	float t = currentAnim.time;
 
-	// ── Loop único: calcula maxTime E interpola ao mesmo tempo ──
+	// ── Loop único: calcula maxTime E coleta interpolações de uma vez ──
 	float maxTime = 0.0f;
-
-	// Limpa apenas os maps de animação (não o nodeGlobalTransforms — será sobrescrito abaixo)
 	animTranslations.clear();
 	animRotations.clear();
 	animScales.clear();
@@ -1364,11 +1362,10 @@ void FiscionX::Model::update(float deltaTime) {
 		float lastKey = times[inputAcc.count - 1];
 		if (lastKey > maxTime) maxTime = lastKey;
 
-		// Avança t antes de interpolar (t ainda não foi ajustado)
+		// Ajusta t para amostragem (ainda não aplicamos wrap global)
 		float tSample = t;
-		if (maxTime > 0.0f && tSample > maxTime) {
+		if (maxTime > 0.0f && tSample > maxTime)
 			tSample = currentAnim.repeat ? fmodf(tSample, maxTime) : maxTime;
-		}
 
 		const tinygltf::Accessor& outputAcc = gltfModel.accessors[samp.output];
 		const tinygltf::BufferView& outputView = gltfModel.bufferViews[outputAcc.bufferView];
@@ -1378,15 +1375,14 @@ void FiscionX::Model::update(float deltaTime) {
 
 		int keyCount = static_cast<int>(inputAcc.count);
 
-		// Busca binária em vez de linear — O(log n) em vez de O(n)
-		int key = 0;
+		// Busca binária — O(log n) em vez de O(n)
 		int lo = 0, hi = keyCount - 1;
 		while (lo < hi) {
 			int mid = (lo + hi + 1) / 2;
 			if (times[mid] <= tSample) lo = mid;
 			else hi = mid - 1;
 		}
-		key = lo;
+		int key = lo;
 		int nextKey = (key + 1 < keyCount) ? key + 1 : key;
 
 		float t0 = times[key];
@@ -1410,7 +1406,7 @@ void FiscionX::Model::update(float deltaTime) {
 		}
 	}
 
-	// Ajusta t global após ter calculado maxTime no loop acima
+	// Ajusta tempo global agora que maxTime foi calculado
 	if (maxTime > 0.0f && t > maxTime) {
 		if (currentAnim.repeat) {
 			t = fmodf(t, maxTime);
@@ -1427,8 +1423,7 @@ void FiscionX::Model::update(float deltaTime) {
 
 	boneTransforms = finalBoneMatrices;
 
-	// ── Hierarquia de nós — usa índice direto em vector (sem clear do map) ──
-	// Reutiliza nodeGlobalTransforms sem realocar: apenas sobrescreve
+	// ── Hierarquia de nós — recursão sem clear() do mapa, sobrescreve direto ──
 	std::function<void(int, const glm::mat4&)> recurseGlobal = [&](int idx, const glm::mat4& parentMat) {
 		const tinygltf::Node& node = nodes[idx];
 
@@ -1439,7 +1434,6 @@ void FiscionX::Model::update(float deltaTime) {
 		else {
 			glm::vec3 T_def(0.0f), S_def(1.0f);
 			glm::quat R_def(1, 0, 0, 0);
-
 			if (!node.translation.empty()) T_def = glm::make_vec3(node.translation.data());
 			if (!node.rotation.empty())    R_def = glm::make_quat(node.rotation.data());
 			if (!node.scale.empty())       S_def = glm::make_vec3(node.scale.data());
@@ -1454,15 +1448,13 @@ void FiscionX::Model::update(float deltaTime) {
 		}
 
 		nodeGlobalTransforms[idx] = parentMat * local;
-
 		for (int c : node.children) recurseGlobal(c, nodeGlobalTransforms[idx]);
 		};
 
-	for (int root : gltfModel.scenes[gltfModel.defaultScene].nodes) {
+	for (int root : gltfModel.scenes[gltfModel.defaultScene].nodes)
 		recurseGlobal(root, glm::mat4(1.0f));
-	}
 
-	// ── Camera node ──
+	// ── Drive Core::Camera from the animated camera node ──────────────────────
 	if (cameraNodeIndex >= 0 && nodeGlobalTransforms.count(cameraNodeIndex)) {
 		bool justFinished = (!currentAnim.repeat && t >= maxTime && maxTime > 0.0f);
 		if (!cameraAnimFinished) {
@@ -1500,13 +1492,10 @@ void FiscionX::Model::update(float deltaTime) {
 		}
 
 		glBindBuffer(GL_UNIFORM_BUFFER, uboSkin);
-		// glBufferSubData em vez de glBufferData — sem realocar na GPU
-		glBufferSubData(
-			GL_UNIFORM_BUFFER,
-			0,
+		// glBufferSubData: NÃO realoca, apenas copia — muito mais rápido que glBufferData
+		glBufferSubData(GL_UNIFORM_BUFFER, 0,
 			sizeof(glm::mat4) * finalBoneMatrices.size(),
-			finalBoneMatrices.data()
-		);
+			finalBoneMatrices.data());
 		glBindBufferBase(GL_UNIFORM_BUFFER, 0, uboSkin);
 	}
 }
@@ -2520,7 +2509,7 @@ void FiscionX::Model::drawSubMesh(
 	glUseProgram(shader);
 	glBindVertexArray(mesh.vao);
 
-	// ── Reconstrói cache se shader mudou ──
+	// ── Reconstrói cache de uniform locations apenas quando o shader muda ──
 	if (uniformCache.cachedShader != shader) {
 		uniformCache.cachedShader = shader;
 		uniformCache.model = glGetUniformLocation(shader, "model");
@@ -2549,21 +2538,21 @@ void FiscionX::Model::drawSubMesh(
 
 		char buf[64];
 		for (int i = 0; i < 10; ++i) {
-			auto& L = uniformCache.lights[i];
-			snprintf(buf, sizeof(buf), "lightType[%d]", i); L.type = glGetUniformLocation(shader, buf);
-			snprintf(buf, sizeof(buf), "lightPos[%d]", i); L.pos = glGetUniformLocation(shader, buf);
-			snprintf(buf, sizeof(buf), "lightDir[%d]", i); L.dir = glGetUniformLocation(shader, buf);
-			snprintf(buf, sizeof(buf), "lightColor[%d]", i); L.color = glGetUniformLocation(shader, buf);
-			snprintf(buf, sizeof(buf), "lightIntensity[%d]", i); L.intensity = glGetUniformLocation(shader, buf);
-			snprintf(buf, sizeof(buf), "lightMaxDistance[%d]", i); L.maxDist = glGetUniformLocation(shader, buf);
-			snprintf(buf, sizeof(buf), "lightCutOff[%d]", i); L.cutOff = glGetUniformLocation(shader, buf);
-			snprintf(buf, sizeof(buf), "lightOuterCutOff[%d]", i); L.outerCutOff = glGetUniformLocation(shader, buf);
-			snprintf(buf, sizeof(buf), "lightConstant[%d]", i); L.constant = glGetUniformLocation(shader, buf);
-			snprintf(buf, sizeof(buf), "lightLinear[%d]", i); L.linear = glGetUniformLocation(shader, buf);
-			snprintf(buf, sizeof(buf), "lightQuadratic[%d]", i); L.quadratic = glGetUniformLocation(shader, buf);
-			snprintf(buf, sizeof(buf), "lightHasGlow[%d]", i); L.hasGlow = glGetUniformLocation(shader, buf);
-			snprintf(buf, sizeof(buf), "lightGlowColor[%d]", i); L.glowColor = glGetUniformLocation(shader, buf);
-			snprintf(buf, sizeof(buf), "lightGlowRadius[%d]", i); L.glowRadius = glGetUniformLocation(shader, buf);
+			auto& Lu = uniformCache.lights[i];
+			snprintf(buf, sizeof(buf), "lightType[%d]", i); Lu.type = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightPos[%d]", i); Lu.pos = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightDir[%d]", i); Lu.dir = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightColor[%d]", i); Lu.color = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightIntensity[%d]", i); Lu.intensity = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightMaxDistance[%d]", i); Lu.maxDist = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightCutOff[%d]", i); Lu.cutOff = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightOuterCutOff[%d]", i); Lu.outerCutOff = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightConstant[%d]", i); Lu.constant = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightLinear[%d]", i); Lu.linear = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightQuadratic[%d]", i); Lu.quadratic = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightHasGlow[%d]", i); Lu.hasGlow = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightGlowColor[%d]", i); Lu.glowColor = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightGlowRadius[%d]", i); Lu.glowRadius = glGetUniformLocation(shader, buf);
 		}
 	}
 
@@ -2664,8 +2653,18 @@ void FiscionX::Model::drawSubMesh(
 		glUniform1f(Lu.glowRadius, Lref.glowRadius);
 	}
 
+	// Draw
 	glDrawElements(GL_TRIANGLES, mesh.indexCount, mesh.indexType, 0);
+
 	glBindVertexArray(0);
+	glUseProgram(0);
+	glBindTexture(GL_TEXTURE_2D, 0);
+
+	glDepthMask(GL_TRUE);
+	glDisable(GL_BLEND);
+	glEnable(GL_DEPTH_TEST);
+	glEnable(GL_CULL_FACE);
+	glCullFace(GL_BACK);
 }
 
 void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLuint depthMap, bool depthPass, FiscionX::Mat4 view, FiscionX::Mat4 projection) {
