@@ -1319,15 +1319,18 @@ void FiscionX::Model::playAnim(const std::string& name, bool repeat, const std::
 }
 
 void FiscionX::Model::update(float deltaTime) {
+	// Lê resultado das occlusion queries do frame anterior (não bloqueia)
 	for (size_t i = 0; i < occlusionQueries.size(); ++i) {
-		GLuint result;
-		glGetQueryObjectuiv(occlusionQueries[i], GL_QUERY_RESULT, &result);
-		isVisible[i] = result != 0;
+		GLuint result = 0;
+		glGetQueryObjectuiv(occlusionQueries[i], GL_QUERY_RESULT_AVAILABLE, &result);
+		if (result) {
+			GLuint samples = 0;
+			glGetQueryObjectuiv(occlusionQueries[i], GL_QUERY_RESULT, &samples);
+			isVisible[i] = (samples != 0);
+		}
+		// Se não disponível ainda, mantém o valor anterior (sem stall)
 	}
 
-	// If no animation is set AND this is not a skinned model, there is nothing to evaluate.
-	// But if a camera node exists and an animation was started, we still need to run
-	// the animation sampler so the camera gets driven frame-by-frame.
 	bool hasCameraAnim = (cameraNodeIndex >= 0 && !currentAnim.name.empty());
 	if (!isSkinned && !hasCameraAnim) return;
 
@@ -1338,20 +1341,76 @@ void FiscionX::Model::update(float deltaTime) {
 	currentAnim.time += deltaTime;
 	float t = currentAnim.time;
 
+	// ── Loop único: calcula maxTime E interpola ao mesmo tempo ──
 	float maxTime = 0.0f;
+
+	// Limpa apenas os maps de animação (não o nodeGlobalTransforms — será sobrescrito abaixo)
+	animTranslations.clear();
+	animRotations.clear();
+	animScales.clear();
+
 	for (const auto& channel : anim.channels) {
 		const tinygltf::AnimationSampler& samp = anim.samplers[channel.sampler];
+		int nodeIndex = channel.target_node;
+
 		const tinygltf::Accessor& inputAcc = gltfModel.accessors[samp.input];
 		if (inputAcc.count == 0) continue;
+
 		const tinygltf::BufferView& inputView = gltfModel.bufferViews[inputAcc.bufferView];
 		const tinygltf::Buffer& inputBuffer = gltfModel.buffers[inputView.buffer];
 		const float* times = reinterpret_cast<const float*>(
-			&inputBuffer.data[inputView.byteOffset + inputAcc.byteOffset]
-			);
+			&inputBuffer.data[inputView.byteOffset + inputAcc.byteOffset]);
+
 		float lastKey = times[inputAcc.count - 1];
-		maxTime = std::fmax(maxTime, lastKey);
+		if (lastKey > maxTime) maxTime = lastKey;
+
+		// Avança t antes de interpolar (t ainda não foi ajustado)
+		float tSample = t;
+		if (maxTime > 0.0f && tSample > maxTime) {
+			tSample = currentAnim.repeat ? fmodf(tSample, maxTime) : maxTime;
+		}
+
+		const tinygltf::Accessor& outputAcc = gltfModel.accessors[samp.output];
+		const tinygltf::BufferView& outputView = gltfModel.bufferViews[outputAcc.bufferView];
+		const tinygltf::Buffer& outputBuffer = gltfModel.buffers[outputView.buffer];
+		const float* values = reinterpret_cast<const float*>(
+			&outputBuffer.data[outputView.byteOffset + outputAcc.byteOffset]);
+
+		int keyCount = static_cast<int>(inputAcc.count);
+
+		// Busca binária em vez de linear — O(log n) em vez de O(n)
+		int key = 0;
+		int lo = 0, hi = keyCount - 1;
+		while (lo < hi) {
+			int mid = (lo + hi + 1) / 2;
+			if (times[mid] <= tSample) lo = mid;
+			else hi = mid - 1;
+		}
+		key = lo;
+		int nextKey = (key + 1 < keyCount) ? key + 1 : key;
+
+		float t0 = times[key];
+		float t1 = times[nextKey];
+		float factor = (t1 - t0 > 0.0f) ? (tSample - t0) / (t1 - t0) : 0.0f;
+
+		if (channel.target_path == "translation") {
+			glm::vec3 A(values[key * 3], values[key * 3 + 1], values[key * 3 + 2]);
+			glm::vec3 B(values[nextKey * 3], values[nextKey * 3 + 1], values[nextKey * 3 + 2]);
+			animTranslations[nodeIndex] = glm::mix(A, B, factor);
+		}
+		else if (channel.target_path == "rotation") {
+			glm::quat A(values[key * 4 + 3], values[key * 4], values[key * 4 + 1], values[key * 4 + 2]);
+			glm::quat B(values[nextKey * 4 + 3], values[nextKey * 4], values[nextKey * 4 + 1], values[nextKey * 4 + 2]);
+			animRotations[nodeIndex] = glm::slerp(A, B, factor);
+		}
+		else if (channel.target_path == "scale") {
+			glm::vec3 A(values[key * 3], values[key * 3 + 1], values[key * 3 + 2]);
+			glm::vec3 B(values[nextKey * 3], values[nextKey * 3 + 1], values[nextKey * 3 + 2]);
+			animScales[nodeIndex] = glm::mix(A, B, factor);
+		}
 	}
 
+	// Ajusta t global após ter calculado maxTime no loop acima
 	if (maxTime > 0.0f && t > maxTime) {
 		if (currentAnim.repeat) {
 			t = fmodf(t, maxTime);
@@ -1366,158 +1425,62 @@ void FiscionX::Model::update(float deltaTime) {
 		}
 	}
 
-	animTranslations.clear();
-	animRotations.clear();
-	animScales.clear();
+	boneTransforms = finalBoneMatrices;
 
-	for (const auto& channel : anim.channels) {
-		const tinygltf::AnimationSampler& samp = anim.samplers[channel.sampler];
-		int nodeIndex = channel.target_node;
-
-		const tinygltf::Accessor& inputAcc = gltfModel.accessors[samp.input];
-		const tinygltf::BufferView& inputView = gltfModel.bufferViews[inputAcc.bufferView];
-		const tinygltf::Buffer& inputBuffer = gltfModel.buffers[inputView.buffer];
-		const float* times = reinterpret_cast<const float*>(
-			&inputBuffer.data[inputView.byteOffset + inputAcc.byteOffset]
-			);
-
-		const tinygltf::Accessor& outputAcc = gltfModel.accessors[samp.output];
-		const tinygltf::BufferView& outputView = gltfModel.bufferViews[outputAcc.bufferView];
-		const tinygltf::Buffer& outputBuffer = gltfModel.buffers[outputView.buffer];
-		const float* values = reinterpret_cast<const float*>(
-			&outputBuffer.data[outputView.byteOffset + outputAcc.byteOffset]
-			);
-
-		int keyCount = static_cast<int>(inputAcc.count);
-		if (keyCount == 0) continue;
-
-		int key = 0;
-		while (key + 1 < keyCount && t > times[key + 1]) key++;
-		int nextKey = (key + 1 < keyCount) ? (key + 1) : key;
-
-		float t0 = times[key];
-		float t1 = times[nextKey];
-		float factor = 0.0f;
-		if (t1 - t0 > 0.0f) factor = (t - t0) / (t1 - t0);
-
-		if (channel.target_path == "translation") {
-			glm::vec3 A(values[key * 3 + 0],
-				values[key * 3 + 1],
-				values[key * 3 + 2]);
-			glm::vec3 B(values[nextKey * 3 + 0],
-				values[nextKey * 3 + 1],
-				values[nextKey * 3 + 2]);
-			glm::vec3 tr = glm::mix(A, B, factor);
-			animTranslations[nodeIndex] = tr;
-		}
-		else if (channel.target_path == "rotation") {
-			glm::quat A(values[key * 4 + 3],
-				values[key * 4 + 0],
-				values[key * 4 + 1],
-				values[key * 4 + 2]);
-			glm::quat B(values[nextKey * 4 + 3],
-				values[nextKey * 4 + 0],
-				values[nextKey * 4 + 1],
-				values[nextKey * 4 + 2]);
-			glm::quat R = glm::slerp(A, B, factor);
-			animRotations[nodeIndex] = R;
-		}
-		else if (channel.target_path == "scale") {
-			glm::vec3 A(values[key * 3 + 0],
-				values[key * 3 + 1],
-				values[key * 3 + 2]);
-			glm::vec3 B(values[nextKey * 3 + 0],
-				values[nextKey * 3 + 1],
-				values[nextKey * 3 + 2]);
-			glm::vec3 sc = glm::mix(A, B, factor);
-			animScales[nodeIndex] = sc;
-		}
-
-		boneTransforms = finalBoneMatrices;
-	}
-
-	nodeGlobalTransforms.clear();
-	std::function<void(int)> recurseGlobal = [&](int idx) {
+	// ── Hierarquia de nós — usa índice direto em vector (sem clear do map) ──
+	// Reutiliza nodeGlobalTransforms sem realocar: apenas sobrescreve
+	std::function<void(int, const glm::mat4&)> recurseGlobal = [&](int idx, const glm::mat4& parentMat) {
 		const tinygltf::Node& node = nodes[idx];
-		int parent = nodeParents[idx];
-		glm::mat4 parentMat = (parent >= 0 && nodeGlobalTransforms.count(parent))
-			? nodeGlobalTransforms[parent]
-			: glm::mat4(1.0f);
 
-		glm::vec3 T_def(0.0f);
-		glm::quat R_def(1, 0, 0, 0);
-		glm::vec3 S_def(1.0f);
+		glm::mat4 local;
 		if (!node.matrix.empty()) {
-			glm::mat4 M = glm::make_mat4(node.matrix.data());
-			nodeGlobalTransforms[idx] = parentMat * M;
-			for (int c : node.children) recurseGlobal(c);
-			return;
+			local = glm::make_mat4(node.matrix.data());
 		}
 		else {
-			if (!node.translation.empty()) {
-				T_def = glm::make_vec3(node.translation.data());
-			}
-			if (!node.rotation.empty()) {
-				R_def = glm::make_quat(node.rotation.data());
-			}
-			if (!node.scale.empty()) {
-				S_def = glm::make_vec3(node.scale.data());
-			}
+			glm::vec3 T_def(0.0f), S_def(1.0f);
+			glm::quat R_def(1, 0, 0, 0);
+
+			if (!node.translation.empty()) T_def = glm::make_vec3(node.translation.data());
+			if (!node.rotation.empty())    R_def = glm::make_quat(node.rotation.data());
+			if (!node.scale.empty())       S_def = glm::make_vec3(node.scale.data());
+
+			const glm::vec3& T_use = (animTranslations.count(idx) > 0) ? animTranslations[idx] : T_def;
+			const glm::quat& R_use = (animRotations.count(idx) > 0) ? animRotations[idx] : R_def;
+			const glm::vec3& S_use = (animScales.count(idx) > 0) ? animScales[idx] : S_def;
+
+			local = glm::translate(glm::mat4(1.0f), T_use)
+				* glm::mat4_cast(R_use)
+				* glm::scale(glm::mat4(1.0f), S_use);
 		}
-
-		glm::vec3 T_use = (animTranslations.count(idx) > 0)
-			? animTranslations[idx]
-			: T_def;
-		glm::quat R_use = (animRotations.count(idx) > 0)
-			? animRotations[idx]
-			: R_def;
-		glm::vec3 S_use = (animScales.count(idx) > 0)
-			? animScales[idx]
-			: S_def;
-
-		glm::mat4 local = glm::translate(glm::mat4(1.0f), T_use)
-			* glm::mat4_cast(R_use)
-			* glm::scale(glm::mat4(1.0f), S_use);
 
 		nodeGlobalTransforms[idx] = parentMat * local;
 
-		for (int c : node.children) {
-			recurseGlobal(c);
-		}
+		for (int c : node.children) recurseGlobal(c, nodeGlobalTransforms[idx]);
 		};
 
 	for (int root : gltfModel.scenes[gltfModel.defaultScene].nodes) {
-		recurseGlobal(root);
+		recurseGlobal(root, glm::mat4(1.0f));
 	}
 
-	// ── Drive Core::Camera from the animated camera node ──────────────────────
+	// ── Camera node ──
 	if (cameraNodeIndex >= 0 && nodeGlobalTransforms.count(cameraNodeIndex)) {
-		// When a non-repeating animation reaches its end, apply the final frame
-		// once and then release the camera so external code can move it freely.
 		bool justFinished = (!currentAnim.repeat && t >= maxTime && maxTime > 0.0f);
-
 		if (!cameraAnimFinished) {
-			// Must match draw()'s baseMatrix exactly
 			glm::mat4 modelMat =
 				glm::translate(glm::mat4(1.0f), glm::vec3(position.x, position.y, position.z))
 				* glm::eulerAngleXYZ(rotation.y, rotation.x, rotation.z)
 				* glm::scale(glm::mat4(1.0f), glm::vec3(scale.x, scale.y, scale.z));
 
 			glm::mat4 worldMat = modelMat * nodeGlobalTransforms[cameraNodeIndex];
-
 			glm::vec3 camPos = glm::vec3(worldMat[3]);
 			Core::Camera.position = FiscionX::Vector3(camPos.x, camPos.y, camPos.z);
 
-			// glTF cameras look along their local -Z axis
 			glm::vec3 fwd = glm::normalize(-glm::vec3(worldMat[2]));
 			Core::Camera.yaw = glm::degrees(std::atan2(fwd.z, fwd.x));
 			Core::Camera.pitch = glm::degrees(std::asin(glm::clamp(fwd.y, -1.0f, 1.0f)));
 			Core::Camera.updateVectors();
 
-			if (justFinished) {
-				cameraAnimFinished = true;
-				drivesCamera = false; // release — external code can move the camera again
-			}
+			if (justFinished) { cameraAnimFinished = true; drivesCamera = false; }
 		}
 	}
 
@@ -1531,21 +1494,18 @@ void FiscionX::Model::update(float deltaTime) {
 
 		for (size_t i = 0; i < skin.joints.size(); ++i) {
 			int jointIdx = skin.joints[i];
-			glm::mat4 boneGlobal = nodeGlobalTransforms[jointIdx];
-
 			const float* matData = reinterpret_cast<const float*>(
-				&invBindBuf.data[invBindView.byteOffset + invBindAcc.byteOffset + sizeof(float) * 16 * i]
-				);
-			glm::mat4 invBind = glm::make_mat4(matData);
-			finalBoneMatrices[i] = boneGlobal * invBind;
+				&invBindBuf.data[invBindView.byteOffset + invBindAcc.byteOffset + sizeof(float) * 16 * i]);
+			finalBoneMatrices[i] = nodeGlobalTransforms[jointIdx] * glm::make_mat4(matData);
 		}
 
 		glBindBuffer(GL_UNIFORM_BUFFER, uboSkin);
-		glBufferData(
+		// glBufferSubData em vez de glBufferData — sem realocar na GPU
+		glBufferSubData(
 			GL_UNIFORM_BUFFER,
+			0,
 			sizeof(glm::mat4) * finalBoneMatrices.size(),
-			finalBoneMatrices.data(),
-			GL_DYNAMIC_DRAW
+			finalBoneMatrices.data()
 		);
 		glBindBufferBase(GL_UNIFORM_BUFFER, 0, uboSkin);
 	}
@@ -2560,152 +2520,152 @@ void FiscionX::Model::drawSubMesh(
 	glUseProgram(shader);
 	glBindVertexArray(mesh.vao);
 
+	// ── Reconstrói cache se shader mudou ──
+	if (uniformCache.cachedShader != shader) {
+		uniformCache.cachedShader = shader;
+		uniformCache.model = glGetUniformLocation(shader, "model");
+		uniformCache.lightSpaceMatrix = glGetUniformLocation(shader, "lightSpaceMatrix");
+		uniformCache.alphaMode = glGetUniformLocation(shader, "alphaMode");
+		uniformCache.alphaCutoff = glGetUniformLocation(shader, "alphaCutoff");
+		uniformCache.baseColorTex = glGetUniformLocation(shader, "baseColorTex");
+		uniformCache.normalMapTex = glGetUniformLocation(shader, "normalMapTex");
+		uniformCache.hasNormalMap = glGetUniformLocation(shader, "hasNormalMap");
+		uniformCache.shadowMap = glGetUniformLocation(shader, "shadowMap");
+		uniformCache.glossinessTex = glGetUniformLocation(shader, "glossinessTex");
+		uniformCache.hasGlossinessMap = glGetUniformLocation(shader, "hasGlossinessMap");
+		uniformCache.glossinessInAlphaOfSpecular = glGetUniformLocation(shader, "glossinessInAlphaOfSpecular");
+		uniformCache.specularF0Tex = glGetUniformLocation(shader, "specularF0Tex");
+		uniformCache.hasSpecularF0Map = glGetUniformLocation(shader, "hasSpecularF0Map");
+		uniformCache.metallicTex = glGetUniformLocation(shader, "metallicTex");
+		uniformCache.useMetalRoughness = glGetUniformLocation(shader, "useMetalRoughness");
+		uniformCache.environmentStrength = glGetUniformLocation(shader, "environmentStrength");
+		uniformCache.environmentSkyColor = glGetUniformLocation(shader, "environmentSkyColor");
+		uniformCache.environmentGroundColor = glGetUniformLocation(shader, "environmentGroundColor");
+		uniformCache.reflectionsStrength = glGetUniformLocation(shader, "reflectionsStrength");
+		uniformCache.isAffectedByLight = glGetUniformLocation(shader, "isAffectedByLight");
+		uniformCache.acceptsShadows = glGetUniformLocation(shader, "acceptsShadows");
+		uniformCache.alpha = glGetUniformLocation(shader, "alpha");
+		uniformCache.numLights = glGetUniformLocation(shader, "numLights");
+
+		char buf[64];
+		for (int i = 0; i < 10; ++i) {
+			auto& L = uniformCache.lights[i];
+			snprintf(buf, sizeof(buf), "lightType[%d]", i); L.type = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightPos[%d]", i); L.pos = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightDir[%d]", i); L.dir = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightColor[%d]", i); L.color = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightIntensity[%d]", i); L.intensity = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightMaxDistance[%d]", i); L.maxDist = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightCutOff[%d]", i); L.cutOff = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightOuterCutOff[%d]", i); L.outerCutOff = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightConstant[%d]", i); L.constant = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightLinear[%d]", i); L.linear = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightQuadratic[%d]", i); L.quadratic = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightHasGlow[%d]", i); L.hasGlow = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightGlowColor[%d]", i); L.glowColor = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightGlowRadius[%d]", i); L.glowRadius = glGetUniformLocation(shader, buf);
+		}
+	}
+
 	if (depthPass) {
 		glEnable(GL_DEPTH_TEST);
 		glDepthMask(GL_TRUE);
 		glDisable(GL_BLEND);
+		if (mesh.doubleSided) glDisable(GL_CULL_FACE);
+		else { glEnable(GL_CULL_FACE); glCullFace(GL_FRONT); }
 
-		if (mesh.doubleSided)
-			glDisable(GL_CULL_FACE);
-		else {
-			glEnable(GL_CULL_FACE);
-			glCullFace(GL_FRONT); // to shadow acne
-		}
-
-		glUniformMatrix4fv(glGetUniformLocation(shader, "model"), 1, GL_FALSE, glm::value_ptr(modelMatrix));
+		glUniformMatrix4fv(uniformCache.model, 1, GL_FALSE, glm::value_ptr(modelMatrix));
 		glDrawElements(GL_TRIANGLES, mesh.indexCount, mesh.indexType, 0);
-
 		glBindVertexArray(0);
 		glUseProgram(0);
 		return;
 	}
 
 	int mode = 0;
-	if (mesh.alphaMode == "MASK") mode = 1;
+	if (mesh.alphaMode == "MASK")  mode = 1;
 	else if (mesh.alphaMode == "BLEND") mode = 2;
 
-	if (mode == 2) {
+	if (mode == 2 || alpha < 1.0f) {
 		glEnable(GL_BLEND);
 		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 		glEnable(GL_DEPTH_TEST);
 		glDepthMask(GL_FALSE);
-		if (mesh.doubleSided)
-			glDisable(GL_CULL_FACE);
-		else {
-			glEnable(GL_CULL_FACE);
-			glCullFace(GL_BACK);
-		}
+		if (mesh.doubleSided && mode == 2) glDisable(GL_CULL_FACE);
+		else { glEnable(GL_CULL_FACE); glCullFace(GL_BACK); }
 	}
 	else {
 		glDisable(GL_BLEND);
 		glEnable(GL_DEPTH_TEST);
 		glDepthMask(GL_TRUE);
-		if (mesh.doubleSided)
-			glDisable(GL_CULL_FACE);
-		else {
-			glEnable(GL_CULL_FACE);
-			glCullFace(GL_BACK);
-		}
+		if (mesh.doubleSided) glDisable(GL_CULL_FACE);
+		else { glEnable(GL_CULL_FACE); glCullFace(GL_BACK); }
 	}
 
-	if (alpha < 1.0f) {
-		glEnable(GL_BLEND);
-		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-		glEnable(GL_DEPTH_TEST);
-		glDepthMask(GL_FALSE);
+	glUniform1i(uniformCache.alphaMode, mode);
+	glUniform1f(uniformCache.alphaCutoff, mesh.alphaCutoff);
+	glUniformMatrix4fv(uniformCache.model, 1, GL_FALSE, glm::value_ptr(modelMatrix));
+	glUniformMatrix4fv(uniformCache.lightSpaceMatrix, 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
 
-		glEnable(GL_CULL_FACE);
-		glCullFace(GL_BACK);
-	}
-
-	glUniform1i(glGetUniformLocation(shader, "alphaMode"), mode);
-	glUniform1f(glGetUniformLocation(shader, "alphaCutoff"), mesh.alphaCutoff);
-
-	glUniformMatrix4fv(glGetUniformLocation(shader, "model"), 1, GL_FALSE, glm::value_ptr(modelMatrix));
-	glUniformMatrix4fv(glGetUniformLocation(shader, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
-
-	// Base color
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, mesh.baseColorTex);
-	glUniform1i(glGetUniformLocation(shader, "baseColorTex"), 0);
+	glUniform1i(uniformCache.baseColorTex, 0);
 
-	// Normal map
 	glActiveTexture(GL_TEXTURE1);
 	glBindTexture(GL_TEXTURE_2D, mesh.normalMapTex);
-	glUniform1i(glGetUniformLocation(shader, "normalMapTex"), 1);
-	glUniform1i(glGetUniformLocation(shader, "hasNormalMap"), mesh.normalMapTex != 0);
+	glUniform1i(uniformCache.normalMapTex, 1);
+	glUniform1i(uniformCache.hasNormalMap, mesh.normalMapTex != 0 ? 1 : 0);
 
-	// Shadow map
 	glActiveTexture(GL_TEXTURE2);
 	glBindTexture(GL_TEXTURE_2D, depthMap);
-	glUniform1i(glGetUniformLocation(shader, "shadowMap"), 2);
+	glUniform1i(uniformCache.shadowMap, 2);
 
-	// Glossiness texture
 	glActiveTexture(GL_TEXTURE3);
 	glBindTexture(GL_TEXTURE_2D, mesh.glossinessTex);
-	glUniform1i(glGetUniformLocation(shader, "glossinessTex"), 3);
-	glUniform1i(glGetUniformLocation(shader, "hasGlossinessMap"), mesh.glossinessTex != 0);
-	glUniform1i(glGetUniformLocation(shader, "glossinessInAlphaOfSpecular"), mesh.glossinessInAlphaOfSpecular ? 1 : 0);
+	glUniform1i(uniformCache.glossinessTex, 3);
+	glUniform1i(uniformCache.hasGlossinessMap, mesh.glossinessTex != 0 ? 1 : 0);
+	glUniform1i(uniformCache.glossinessInAlphaOfSpecular, mesh.glossinessInAlphaOfSpecular ? 1 : 0);
 
-	// Specular F0 texture
 	glActiveTexture(GL_TEXTURE4);
 	glBindTexture(GL_TEXTURE_2D, mesh.specularF0Tex);
-	glUniform1i(glGetUniformLocation(shader, "specularF0Tex"), 4);
-	glUniform1i(glGetUniformLocation(shader, "hasSpecularF0Map"), mesh.specularF0Tex != 0);
+	glUniform1i(uniformCache.specularF0Tex, 4);
+	glUniform1i(uniformCache.hasSpecularF0Map, mesh.specularF0Tex != 0 ? 1 : 0);
 
-	// Metallic/Roughness texture
 	glActiveTexture(GL_TEXTURE5);
 	glBindTexture(GL_TEXTURE_2D, mesh.metallicTex);
-	glUniform1i(glGetUniformLocation(shader, "metallicTex"), 5);
-	glUniform1i(glGetUniformLocation(shader, "useMetalRoughness"), mesh.useMetalRoughness);
+	glUniform1i(uniformCache.metallicTex, 5);
+	glUniform1i(uniformCache.useMetalRoughness, mesh.useMetalRoughness ? 1 : 0);
 
-	// ENVIRONMENT SETTINGS
-	glUniform1f(glGetUniformLocation(shader, "environmentStrength"), FiscionX::Core::AMBIENT_LIGHT_INTENSITY);
-	glUniform3f(glGetUniformLocation(shader, "environmentSkyColor"), 0.3f, 0.3f, 0.35f);
-	glUniform3f(glGetUniformLocation(shader, "environmentGroundColor"), 0.05f, 0.05f, 0.07f);
-	glUniform1f(glGetUniformLocation(shader, "reflectionsStrength"), FiscionX::Core::REFLECTIONS_STRENGTH);
+	glUniform1f(uniformCache.environmentStrength, FiscionX::Core::AMBIENT_LIGHT_INTENSITY);
+	glUniform3f(uniformCache.environmentSkyColor, 0.3f, 0.3f, 0.35f);
+	glUniform3f(uniformCache.environmentGroundColor, 0.05f, 0.05f, 0.07f);
+	glUniform1f(uniformCache.reflectionsStrength, FiscionX::Core::REFLECTIONS_STRENGTH);
+	glUniform1i(uniformCache.isAffectedByLight, this->isAffectedByLight ? 1 : 0);
+	glUniform1i(uniformCache.acceptsShadows, this->acceptsShadows ? 1 : 0);
+	glUniform1f(uniformCache.alpha, alpha);
 
-	// SHADOW SETTINGS
-	glUniform1i(glGetUniformLocation(shader, "isAffectedByLight"), this->isAffectedByLight ? 1 : 0);
-	glUniform1i(glGetUniformLocation(shader, "acceptsShadows"), this->acceptsShadows ? 1 : 0);
-
-	// Alpha Settings
-	glUniform1f(glGetUniformLocation(shader, "alpha"), alpha);
-
-	// Lights
-	int numLights = std::fmin((int)FiscionX::Core::AllLights.size(), 10);
-	glUniform1i(glGetUniformLocation(shader, "numLights"), numLights);
+	int numLights = std::min((int)FiscionX::Core::AllLights.size(), 10);
+	glUniform1i(uniformCache.numLights, numLights);
 	for (int i = 0; i < numLights; ++i) {
-		const Light& L = *FiscionX::Core::AllLights[i];
-		std::string idx = std::to_string(i);
-		glUniform1i(glGetUniformLocation(shader, ("lightType[" + idx + "]").c_str()), L.type);
-		glUniform3fv(glGetUniformLocation(shader, ("lightPos[" + idx + "]").c_str()), 1, glm::value_ptr(glm::vec3(L.position.x, L.position.y, L.position.z)));
-		glUniform3fv(glGetUniformLocation(shader, ("lightDir[" + idx + "]").c_str()), 1, glm::value_ptr(glm::vec3(L.direction.x, L.direction.y, L.direction.z)));
-		glUniform3fv(glGetUniformLocation(shader, ("lightColor[" + idx + "]").c_str()), 1, glm::value_ptr(glm::vec3(L.color.x, L.color.y, L.color.z)));
-		glUniform1f(glGetUniformLocation(shader, ("lightIntensity[" + idx + "]").c_str()), L.intensity);
-		glUniform1f(glGetUniformLocation(shader, ("lightMaxDistance[" + idx + "]").c_str()), L.maxDistance);
-		glUniform1f(glGetUniformLocation(shader, ("lightCutOff[" + idx + "]").c_str()), L.cutOff);
-		glUniform1f(glGetUniformLocation(shader, ("lightOuterCutOff[" + idx + "]").c_str()), L.outerCutOff);
-		glUniform1f(glGetUniformLocation(shader, ("lightConstant[" + idx + "]").c_str()), L.constant);
-		glUniform1f(glGetUniformLocation(shader, ("lightLinear[" + idx + "]").c_str()), L.linear);
-		glUniform1f(glGetUniformLocation(shader, ("lightQuadratic[" + idx + "]").c_str()), L.quadratic);
-		glUniform1i(glGetUniformLocation(shader, ("lightHasGlow[" + idx + "]").c_str()), L.hasGlow);
-		glUniform3fv(glGetUniformLocation(shader, ("lightGlowColor[" + idx + "]").c_str()), 1, glm::value_ptr(glm::vec3(L.glowColor.x, L.glowColor.y, L.glowColor.z)));
-		glUniform1f(glGetUniformLocation(shader, ("lightGlowRadius[" + idx + "]").c_str()), L.glowRadius);
+		const Light& Lref = *FiscionX::Core::AllLights[i];
+		const auto& Lu = uniformCache.lights[i];
+		glUniform1i(Lu.type, Lref.type);
+		glUniform3f(Lu.pos, Lref.position.x, Lref.position.y, Lref.position.z);
+		glUniform3f(Lu.dir, Lref.direction.x, Lref.direction.y, Lref.direction.z);
+		glUniform3f(Lu.color, Lref.color.x, Lref.color.y, Lref.color.z);
+		glUniform1f(Lu.intensity, Lref.intensity);
+		glUniform1f(Lu.maxDist, Lref.maxDistance);
+		glUniform1f(Lu.cutOff, Lref.cutOff);
+		glUniform1f(Lu.outerCutOff, Lref.outerCutOff);
+		glUniform1f(Lu.constant, Lref.constant);
+		glUniform1f(Lu.linear, Lref.linear);
+		glUniform1f(Lu.quadratic, Lref.quadratic);
+		glUniform1i(Lu.hasGlow, Lref.hasGlow ? 1 : 0);
+		glUniform3f(Lu.glowColor, Lref.glowColor.x, Lref.glowColor.y, Lref.glowColor.z);
+		glUniform1f(Lu.glowRadius, Lref.glowRadius);
 	}
 
-	// Draw
 	glDrawElements(GL_TRIANGLES, mesh.indexCount, mesh.indexType, 0);
-
 	glBindVertexArray(0);
-	glUseProgram(0);
-	glBindTexture(GL_TEXTURE_2D, 0);
-
-	glDepthMask(GL_TRUE);
-	glDisable(GL_BLEND);
-	glEnable(GL_DEPTH_TEST);
-	glEnable(GL_CULL_FACE);
-	glCullFace(GL_BACK);
 }
 
 void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLuint depthMap, bool depthPass, FiscionX::Mat4 view, FiscionX::Mat4 projection) {

@@ -221,13 +221,13 @@ int main() {
         FiscionX::Vector3(0.5f, 0.5f, 0.5f)
     );
     skinnedModel = new FiscionX::Model(
-        "assets/models/camera_test_anim.glb",
-        FiscionX::Vector3(0.0f, 0.0f, 0.0f),
-        FiscionX::Vector3(0, 0, 0),
-        FiscionX::Vector3(0.6f, 0.6f, 0.6f)
+        "assets/models/camel.glb", // camel.glb / camera_test_anim.glb
+        FiscionX::Vector3(0.0f, 0.0f, -3.0f),
+        FiscionX::Vector3(1, 0, 0),
+        FiscionX::Vector3(1.0f, 1.0f, 1.0f)
     );
 
-    skinnedModel->playAnim("CameraAction", false);
+    skinnedModel->playAnim("Armature|Idle_01", false); // Armature|Idle_01 / CameraAction
 
     img = new FiscionX::UI::Image("assets/images/didi.png");
 

@@ -1014,6 +1014,30 @@ namespace FiscionX {
 		bool castsShadows = true;
 		bool acceptsShadows = true;
 
+		// Dentro de struct Model, no FiscionCore.h — adicione após "float alpha = 1.0f;"
+		struct UniformCache {
+			// Uniforms simples
+			GLint model = -1, lightSpaceMatrix = -1, alphaMode = -1, alphaCutoff = -1;
+			GLint baseColorTex = -1, normalMapTex = -1, shadowMap = -1;
+			GLint glossinessTex = -1, hasGlossinessMap = -1, glossinessInAlphaOfSpecular = -1;
+			GLint specularF0Tex = -1, hasSpecularF0Map = -1;
+			GLint metallicTex = -1, useMetalRoughness = -1;
+			GLint environmentStrength = -1, environmentSkyColor = -1, environmentGroundColor = -1;
+			GLint reflectionsStrength = -1;
+			GLint isAffectedByLight = -1, acceptsShadows = -1;
+			GLint alpha = -1, numLights = -1;
+			GLint hasNormalMap = -1;
+			// Uniforms de luz (até 10)
+			struct LightUniforms {
+				GLint type = -1, pos = -1, dir = -1, color = -1, intensity = -1;
+				GLint maxDist = -1, cutOff = -1, outerCutOff = -1;
+				GLint constant = -1, linear = -1, quadratic = -1;
+				GLint hasGlow = -1, glowColor = -1, glowRadius = -1;
+			} lights[10];
+			GLuint cachedShader = 0;
+		};
+		mutable UniformCache uniformCache;
+
 		const std::vector<glm::mat4>& getBoneTransforms() const;
 		Model(const std::string& path, Vector3 pos, Vector3 rot, Vector3 scl);
 		void playAnim(const std::string& name, bool repeat, const std::string& next = "");
