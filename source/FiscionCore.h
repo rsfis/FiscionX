@@ -1059,6 +1059,9 @@ namespace FiscionX {
 		);
 		void destroy();
 		void draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLuint depthMap, bool depthPass, FiscionX::Mat4 view, FiscionX::Mat4 projection);
+		// Configura uniforms globais do shader (luzes, câmera, bones).
+		// Usado pelo passo global de transparência em Core::DrawTransparentPass().
+		void bindShaderForTransparency(GLuint shader, FiscionX::Mat4 view, FiscionX::Mat4 projection);
 	};
 
 	struct Input {
@@ -1166,6 +1169,10 @@ namespace FiscionX {
 		static void SetWindowIcon(const char* path);
 		static void SetWindowFullscreen(bool fullscreen, int monitorIndex);
 		static void SortModels();
+		// Desenha globalmente todas as meshes BLEND de todos os modelos,
+		// ordenadas por distância (painter's algorithm).
+		// Deve ser chamado APÓS o passo opaco de todos os modelos.
+		static void DrawTransparentPass(FiscionX::Mat4 view, FiscionX::Mat4 projection);
 		static void Terminate();
 
 		static struct Draw {

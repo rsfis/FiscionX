@@ -110,8 +110,8 @@ void update() {
         }
     }
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_ESCAPE)) FiscionX::Core::Terminate();
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_Z)) { 
-        skinnedModel->playAnim("CameraAction", false); 
+    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_Z)) {
+        skinnedModel->playAnim("CameraAction", false);
     }
 
     if (skinnedModel) {
@@ -136,15 +136,19 @@ void draw() {
     FiscionX::Core::Draw::ClearBackground(0.2f, 0.2f, 1.0f, 1.0f);
     FiscionX::Core::Draw::HDR(view, projection);
 
-    // DRAW NORMAL
     FiscionX::Core::SortModels();
 
-    staticModel->draw(FiscionX::Core::shaderStatic, glm::mat4(1.0f), 0, false, view, projection);
-    boxModel->draw(FiscionX::Core::shaderStatic, glm::mat4(1.0f), 0, false, view, projection);
-    kratosStaticModel->draw(FiscionX::Core::shaderStatic, glm::mat4(1.0f), 0, false, view, projection);
-    if (skinnedModel) {
-        skinnedModel->draw(FiscionX::Core::shaderSkinned, glm::mat4(1.0f), 0, false, view, projection);
+    for (FiscionX::Model* model : FiscionX::Core::AllModels) {
+        if (model->isSkinned == false) {
+            model->draw(FiscionX::Core::shaderStatic, glm::mat4(1.0f), 0, false, view, projection);
+        }
+        if (model->isSkinned == true) {
+            model->draw(FiscionX::Core::shaderSkinned, glm::mat4(1.0f), 0, false, view, projection);
+        }
     }
+
+    FiscionX::Core::DrawTransparentPass(view, projection);
+
     img->draw(FiscionX::Vector2(300, 200));
     img3D->draw(view, projection);
 
@@ -201,7 +205,7 @@ int main() {
     FiscionX::Core::CreateAllShadowMaps();
 
     // Lights extracted from glb; Contact Shadows; Anim Blending; Draw halo and glow also for point lights and spot lights; Point lights are traversing walls/solid objects (Criação da textura está errada, computar está errado, renderizar está errado); Sombras e Luz devem passar por malhas com transparência; Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Terrains; Water
-    
+
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb",
         FiscionX::Vector3(0, 0, 0),
@@ -215,19 +219,19 @@ int main() {
         FiscionX::Vector3(0.1f, 0.1f, 0.1f)
     );
     boxModel = new FiscionX::Model(
-        "assets/models/metal_water_tank_2.glb",
+        "assets/models/factory.glb",
         FiscionX::Vector3(0, 0.09f, 4.2f),
         FiscionX::Vector3(2, 0, 0),
         FiscionX::Vector3(0.5f, 0.5f, 0.5f)
     );
     skinnedModel = new FiscionX::Model(
-        "assets/models/camel.glb", // camel.glb / camera_test_anim.glb
-        FiscionX::Vector3(0.0f, 0.0f, -3.0f),
-        FiscionX::Vector3(1, 0, 0),
-        FiscionX::Vector3(1.0f, 1.0f, 1.0f)
+        "assets/models/camera_test_anim.glb", // camel.glb / camera_test_anim.glb
+        FiscionX::Vector3(0.0f, 0.0f, 0.0f), // 0.0f, 0.0f, 3.0f / 0.0f, 0.0f, 0.0f
+        FiscionX::Vector3(0, 0, 0), // 1, 0, 0 / 0, 0, 0
+        FiscionX::Vector3(0.6f, 0.6f, 0.6f) // 1.0f, 1.0f, 1.0f / 0.6f, 0.6f, 0.6f
     );
 
-    skinnedModel->playAnim("Armature|Idle_01", false); // Armature|Idle_01 / CameraAction
+    skinnedModel->playAnim("CameraAction", false); // Armature|Idle_01 / CameraAction
 
     img = new FiscionX::UI::Image("assets/images/didi.png");
 

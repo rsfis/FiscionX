@@ -2753,45 +2753,83 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 		baseMatrix = glm::scale(physicsSyncTransformMatrix, glm::vec3(scale.x, scale.y, scale.z));
 	}
 
-	std::vector<std::pair<float, const SubMesh*>> transparentMeshes;
-
-	for (int i = 0; i < meshes.size(); i++) {
+	// Passo OPAQUE/MASK: desenha tudo exceto BLEND.
+	// Meshes BLEND são coletadas globalmente em draw() do main e desenhadas
+	// depois de todos os opacos via Core::DrawTransparentPass().
+	for (int i = 0; i < (int)meshes.size(); i++) {
 		const auto& mesh = meshes[i];
+
+		bool isBlend = (mesh.alphaMode == "BLEND");
+
+		// No depth pass inclui BLEND (para sombras); no color pass pula BLEND.
+		if (!depthPass && isBlend) continue;
+
+		if (!isBlend && !isVisible[i]) continue;
+
 		glm::mat4 modelMatrix = baseMatrix * (isSkinned ? glm::mat4(1.0f) : mesh.transform);
+		drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass);
+	}
+}
 
-		bool isTransparent = (mesh.alphaMode == "BLEND");
+// Configura uniforms globais do shader (view/proj/luzes) sem iterar meshes.
+// Chamado pelo passo global de transparência antes de drawSubMesh().
+void FiscionX::Model::bindShaderForTransparency(GLuint shader, FiscionX::Mat4 view, FiscionX::Mat4 projection) {
+	int numLights = static_cast<int>(FiscionX::Core::AllLights.size());
 
-		if (!isTransparent && !isVisible[i]) continue;
+	glUseProgram(shader);
+	glUniformMatrix4fv(glGetUniformLocation(shader, "view"), 1, GL_FALSE, glm::value_ptr(glm::mat4(view)));
+	glUniformMatrix4fv(glGetUniformLocation(shader, "projection"), 1, GL_FALSE, glm::value_ptr(glm::mat4(projection)));
+	glUniform3fv(glGetUniformLocation(shader, "viewPos"), 1, glm::value_ptr(
+		glm::vec3(FiscionX::Core::Camera.position.x, FiscionX::Core::Camera.position.y, FiscionX::Core::Camera.position.z)));
+	glUniform1i(glGetUniformLocation(shader, "numLights"), numLights);
+	glUniform1f(glGetUniformLocation(shader, "reflectionsStrength"), FiscionX::Core::REFLECTIONS_STRENGTH);
 
-		if (!depthPass && isTransparent) {
-			glm::vec3 worldPos = glm::vec3(modelMatrix * glm::vec4(0.0, 0.0, 0.0, 1.0));
-			float dist = glm::length(worldPos - glm::vec3(FiscionX::Core::Camera.position.x, FiscionX::Core::Camera.position.y, FiscionX::Core::Camera.position.z));
-			transparentMeshes.emplace_back(dist, &mesh);
-		}
-		else {
-			drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass);
-		}
+	// CSM para luz direcional
+	int dirLightIndex = -1;
+	for (int i = 0; i < numLights; ++i) {
+		if (FiscionX::Core::AllLights[i]->type == 0) { dirLightIndex = i; break; }
+	}
+	if (dirLightIndex != -1) {
+		const FiscionX::ShadowMap& sm = FiscionX::Core::AllShadowMaps[dirLightIndex];
+		glActiveTexture(GL_TEXTURE30);
+		glBindTexture(GL_TEXTURE_2D_ARRAY, sm.depthMap);
+		glUniform1i(glGetUniformLocation(shader, "shadowMapDir"), 30);
+		glUniform1i(glGetUniformLocation(shader, "cascadeCount"), (int)FiscionX::Core::shadowCascadeLevels.size());
+		for (size_t i = 0; i < FiscionX::Core::shadowCascadeLevels.size(); ++i)
+			glUniform1f(glGetUniformLocation(shader, ("cascadePlaneDistances[" + std::to_string(i) + "]").c_str()), FiscionX::Core::shadowCascadeLevels[i]);
+		for (size_t i = 0; i < sm.cascadeLightSpaceMatrices.size(); ++i)
+			glUniformMatrix4fv(glGetUniformLocation(shader, ("cascadeLightSpaceMatrices[" + std::to_string(i) + "]").c_str()), 1, GL_FALSE, glm::value_ptr(sm.cascadeLightSpaceMatrices[i]));
 	}
 
-	if (!depthPass && !transparentMeshes.empty()) {
-		std::sort(transparentMeshes.begin(), transparentMeshes.end(),
-			[](const std::pair<float, const SubMesh*>& a, const std::pair<float, const SubMesh*>& b) {
-				return a.first > b.first; // (most far first)
-			});
-
-		glEnable(GL_BLEND);
-		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-		glDepthMask(GL_FALSE);
-		glEnable(GL_CULL_FACE);
-		glCullFace(GL_BACK);
-
-		for (const auto& pair : transparentMeshes) {
-			glm::mat4 modelMatrix = baseMatrix * (isSkinned ? glm::mat4(1.0f) : pair.second->transform);
-			drawSubMesh(*pair.second, shader, modelMatrix, lightSpaceMatrix, depthMap, false);
+	for (int i = 0; i < numLights; ++i) {
+		const Light& L = *FiscionX::Core::AllLights[i];
+		const ShadowMap& sm = FiscionX::Core::AllShadowMaps[i];
+		std::string idx = std::to_string(i);
+		glUniform1i(glGetUniformLocation(shader, ("lightType[" + idx + "]").c_str()), L.type);
+		glUniform3fv(glGetUniformLocation(shader, ("lightPos[" + idx + "]").c_str()), 1, glm::value_ptr(glm::vec3(L.position.x, L.position.y, L.position.z)));
+		glUniform3fv(glGetUniformLocation(shader, ("lightDir[" + idx + "]").c_str()), 1, glm::value_ptr(glm::vec3(L.direction.x, L.direction.y, L.direction.z)));
+		glUniform3fv(glGetUniformLocation(shader, ("lightColor[" + idx + "]").c_str()), 1, glm::value_ptr(glm::vec3(L.color.x, L.color.y, L.color.z)));
+		glUniform1f(glGetUniformLocation(shader, ("lightIntensity[" + idx + "]").c_str()), L.intensity);
+		glUniform1f(glGetUniformLocation(shader, ("lightMaxDistance[" + idx + "]").c_str()), L.maxDistance);
+		glUniform1f(glGetUniformLocation(shader, ("lightCutOff[" + idx + "]").c_str()), L.cutOff);
+		glUniform1f(glGetUniformLocation(shader, ("lightOuterCutOff[" + idx + "]").c_str()), L.outerCutOff);
+		glUniform1f(glGetUniformLocation(shader, ("lightConstant[" + idx + "]").c_str()), L.constant);
+		glUniform1f(glGetUniformLocation(shader, ("lightLinear[" + idx + "]").c_str()), L.linear);
+		glUniform1f(glGetUniformLocation(shader, ("lightQuadratic[" + idx + "]").c_str()), L.quadratic);
+		glUniform1i(glGetUniformLocation(shader, ("lightHasGlow[" + idx + "]").c_str()), L.hasGlow);
+		glUniform3fv(glGetUniformLocation(shader, ("lightGlowColor[" + idx + "]").c_str()), 1, glm::value_ptr(glm::vec3(L.glowColor.x, L.glowColor.y, L.glowColor.z)));
+		glUniform1f(glGetUniformLocation(shader, ("lightGlowRadius[" + idx + "]").c_str()), L.glowRadius);
+		if (L.type == 1) {
+			glActiveTexture(GL_TEXTURE20 + i);
+			glBindTexture(GL_TEXTURE_CUBE_MAP, sm.depthMap);
+			glUniform1i(glGetUniformLocation(shader, ("shadowCubeMaps[" + idx + "]").c_str()), 20 + i);
 		}
-
-		glDepthMask(GL_TRUE);
-		glDisable(GL_BLEND);
+		else if (L.type == 2) {
+			glActiveTexture(GL_TEXTURE10 + i);
+			glBindTexture(GL_TEXTURE_2D, sm.depthMap);
+			glUniform1i(glGetUniformLocation(shader, ("shadowMaps[" + idx + "]").c_str()), 10 + i);
+			glUniformMatrix4fv(glGetUniformLocation(shader, ("lightSpaceMatrices[" + idx + "]").c_str()), 1, GL_FALSE, glm::value_ptr(sm.lightSpaceMatrix));
+		}
 	}
 }
 
@@ -4255,31 +4293,84 @@ void FiscionX::Core::SetWindowFullscreen(bool fullscreen, int monitorIndex) {
 	}
 }
 
-void FiscionX::Core::SortModels() {
-	std::sort(AllModels.begin(), AllModels.end(), [](const Model* a, const Model* b) {
-		auto hasBlend = [](const Model* model) {
-			if (model->alpha < 1.0f)
-				return true;
+void FiscionX::Core::DrawTransparentPass(FiscionX::Mat4 view, FiscionX::Mat4 projection) {
+	// Coleta TODAS as meshes BLEND de todos os modelos, com suas matrizes
+	// de model e referência ao Model dono (para uniforms de luz/bones).
+	struct BlendEntry {
+		float          dist;
+		FiscionX::Model* model;
+		const FiscionX::SubMesh* mesh;
+		glm::mat4      modelMatrix;
+	};
 
-			return std::any_of(model->meshes.begin(), model->meshes.end(),
-				[](const SubMesh& m) {
-					return m.alphaMode == "BLEND";
-				});
-			};
+	glm::vec3 camPos(Camera.position.x, Camera.position.y, Camera.position.z);
+	std::vector<BlendEntry> entries;
 
-		bool aBlend = hasBlend(a);
-		bool bBlend = hasBlend(b);
+	for (FiscionX::Model* model : AllModels) {
+		glm::mat4 base =
+			glm::translate(glm::mat4(1.0f), glm::vec3(model->position.x, model->position.y, model->position.z))
+			* glm::eulerAngleXYZ(model->rotation.y, model->rotation.x, model->rotation.z)
+			* glm::scale(glm::mat4(1.0f), glm::vec3(model->scale.x, model->scale.y, model->scale.z));
 
-		if (aBlend != bBlend)
-			return !aBlend && bBlend;
+		if (model->physicsSyncTransformMatrix != glm::mat4(1.0f))
+			base = glm::scale(model->physicsSyncTransformMatrix, glm::vec3(model->scale.x, model->scale.y, model->scale.z));
 
-		if (aBlend && bBlend) {
-			float da = glm::length2(glm::vec3(a->position.x, a->position.y, a->position.z) - glm::vec3(Camera.position.x, Camera.position.y, Camera.position.z));
-			float db = glm::length2(glm::vec3(b->position.x, b->position.y, b->position.z) - glm::vec3(Camera.position.x, Camera.position.y, Camera.position.z));
-			return da > db;
+		for (const auto& mesh : model->meshes) {
+			if (mesh.alphaMode != "BLEND") continue;
+			glm::mat4 mm = base * (model->isSkinned ? glm::mat4(1.0f) : mesh.transform);
+			glm::vec3 wp = glm::vec3(mm * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+			entries.push_back({ glm::length(wp - camPos), model, &mesh, mm });
+		}
+	}
+
+	if (entries.empty()) return;
+
+	// Ordena: mais longe da câmera primeiro (painter's algorithm)
+	std::sort(entries.begin(), entries.end(),
+		[](const BlendEntry& a, const BlendEntry& b) { return a.dist > b.dist; });
+
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	glDepthMask(GL_FALSE);
+	glEnable(GL_DEPTH_TEST);
+
+	GLuint lastShader = 0;
+	FiscionX::Model* lastModel = nullptr;
+
+	for (const auto& e : entries) {
+		GLuint sh = e.model->isSkinned ? shaderSkinned : shaderStatic;
+
+		// Reenvia uniforms globais apenas quando o model ou shader muda
+		if (sh != lastShader || e.model != lastModel) {
+			e.model->bindShaderForTransparency(sh, view, projection);
+			lastShader = sh;
+			lastModel = e.model;
 		}
 
-		return false;
+		e.model->drawSubMesh(*e.mesh, sh, e.modelMatrix, glm::mat4(1.0f), 0, false);
+	}
+
+	glDepthMask(GL_TRUE);
+	glDisable(GL_BLEND);
+}
+
+void FiscionX::Core::SortModels() {
+	// Modelos com qualquer mesh opaca vão primeiro, para que seu geometry
+	// seja escrito no depth buffer antes das transparências.
+	// Modelos mistos (opaco+blend no mesmo GLB) ficam no grupo "opaco"
+	// porque suas meshes BLEND serão coletadas e desenhadas globalmente
+	// pelo passo transparente em draw() — veja DrawTransparentPass().
+	auto hasAnyOpaque = [](const Model* model) {
+		if (model->alpha < 1.0f) return false; // model inteiro semi-transparente
+		return std::any_of(model->meshes.begin(), model->meshes.end(),
+			[](const SubMesh& m) { return m.alphaMode != "BLEND"; });
+		};
+
+	std::stable_sort(AllModels.begin(), AllModels.end(),
+		[&](const Model* a, const Model* b) {
+			bool aOpaque = hasAnyOpaque(a);
+			bool bOpaque = hasAnyOpaque(b);
+			return aOpaque && !bOpaque; // opacos antes; empate mantém ordem
 		});
 }
 
