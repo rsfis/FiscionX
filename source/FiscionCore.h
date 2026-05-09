@@ -1169,9 +1169,6 @@ namespace FiscionX {
 		static void SetWindowIcon(const char* path);
 		static void SetWindowFullscreen(bool fullscreen, int monitorIndex);
 		static void SortModels();
-		// Desenha globalmente todas as meshes BLEND de todos os modelos,
-		// ordenadas por distância (painter's algorithm).
-		// Deve ser chamado APÓS o passo opaco de todos os modelos.
 		static void DrawTransparentPass(FiscionX::Mat4 view, FiscionX::Mat4 projection);
 		static void Terminate();
 
