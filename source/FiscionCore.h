@@ -1036,6 +1036,7 @@ namespace FiscionX {
 			FiscionX::Vector3 position;
 			FiscionX::Vector3 rotation;
 			FiscionX::Vector3 scale;
+			bool visible = true;
 		};
 		std::vector<Instance> instances;
 
