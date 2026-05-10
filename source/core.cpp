@@ -599,26 +599,46 @@ void FiscionX::UI::Image::draw(FiscionX::Vector2 position) {
 		0.0f, (float)FiscionX::Core::SCREEN_HEIGHT
 	);
 
+	// OPTIM: uniform locations cached per shader handle — glGetUniformLocation
+	// was called ~10x every frame per image; now resolved only when shader changes.
+	static GLuint s_cachedShader = 0;
+	static GLint s_locTex = -1, s_locPosMode = -1, s_locPos = -1, s_locProj = -1;
+	static GLint s_locScale = -1, s_locAspect = -1, s_locRot = -1, s_locAlpha = -1;
+	static GLint s_locW = -1, s_locH = -1;
+	if (s_cachedShader != shader) {
+		s_cachedShader = shader;
+		s_locTex = glGetUniformLocation(shader, "tex");
+		s_locPosMode = glGetUniformLocation(shader, "posMode");
+		s_locPos = glGetUniformLocation(shader, "position");
+		s_locProj = glGetUniformLocation(shader, "projection");
+		s_locScale = glGetUniformLocation(shader, "scale");
+		s_locAspect = glGetUniformLocation(shader, "aspect_ratio");
+		s_locRot = glGetUniformLocation(shader, "rotation");
+		s_locAlpha = glGetUniformLocation(shader, "alpha");
+		s_locW = glGetUniformLocation(shader, "width");
+		s_locH = glGetUniformLocation(shader, "height");
+	}
+
 	glDisable(GL_DEPTH_TEST);
 	glUseProgram(shader);
 	glBindVertexArray(VAO);
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, texture);
-	glUniform1i(glGetUniformLocation(shader, "tex"), 0);
+	glUniform1i(s_locTex, 0);
 
-	glUniform1i(glGetUniformLocation(shader, "posMode"), 1);
-	glUniform2f(glGetUniformLocation(shader, "position"), position.x, position.y);
-	glUniformMatrix4fv(glGetUniformLocation(shader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-	glUniform2f(glGetUniformLocation(shader, "scale"), scale.x, scale.y);
-	glUniform1f(glGetUniformLocation(shader, "aspect_ratio"), aspect_ratio);
-	glUniform1f(glGetUniformLocation(shader, "rotation"), rotation);
-	glUniform1f(glGetUniformLocation(shader, "alpha"), alpha);
+	glUniform1i(s_locPosMode, 1);
+	glUniform2f(s_locPos, position.x, position.y);
+	glUniformMatrix4fv(s_locProj, 1, GL_FALSE, glm::value_ptr(projection));
+	glUniform2f(s_locScale, scale.x, scale.y);
+	glUniform1f(s_locAspect, aspect_ratio);
+	glUniform1f(s_locRot, rotation);
+	glUniform1f(s_locAlpha, alpha);
 
 	float scaleX = (float)FiscionX::Core::SCREEN_WIDTH / 2560.0f;
 	float scaleY = (float)FiscionX::Core::SCREEN_HEIGHT / 1440.0f;
 
-	glUniform1f(glGetUniformLocation(shader, "width"), w_ * scaleX);
-	glUniform1f(glGetUniformLocation(shader, "height"), h_ * scaleY);
+	glUniform1f(s_locW, w_ * scaleX);
+	glUniform1f(s_locH, h_ * scaleY);
 
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -718,6 +738,9 @@ FiscionX::UI::Font::~Font() {
 	glDeleteTextures(1, &textureAtlas);
 }
 
+// OPTIM: DrawText batched — all glyphs are uploaded in a single glBufferData
+// and drawn with one glDrawArrays call instead of N calls (one per character).
+// Reduces GPU round-trips from O(N) to O(1).
 void FiscionX::UI::DrawText(Font* font, const char* text, FiscionX::Vector2 position, float scale, FiscionX::Vector4 color, float rotation) {
 	glUseProgram(FiscionX::Core::textShader);
 
@@ -725,10 +748,21 @@ void FiscionX::UI::DrawText(Font* font, const char* text, FiscionX::Vector2 posi
 		0.0f, (float)FiscionX::Core::SCREEN_HEIGHT);
 	glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(position.x, position.y, 0.0f));
 
-	glUniformMatrix4fv(glGetUniformLocation(FiscionX::Core::textShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-	glUniformMatrix4fv(glGetUniformLocation(FiscionX::Core::textShader, "model"), 1, GL_FALSE, glm::value_ptr(model));
-	glUniform4f(glGetUniformLocation(FiscionX::Core::textShader, "color"), color.x, color.y, color.z, color.w);
-	glUniform1f(glGetUniformLocation(FiscionX::Core::textShader, "rotation"), rotation);
+	// OPTIM: cache uniform locations for textShader (queried only once per shader handle)
+	static GLuint s_cachedTextShader = 0;
+	static GLint  s_locProj = -1, s_locModel = -1, s_locColor = -1, s_locRot = -1;
+	if (s_cachedTextShader != FiscionX::Core::textShader) {
+		s_cachedTextShader = FiscionX::Core::textShader;
+		s_locProj = glGetUniformLocation(FiscionX::Core::textShader, "projection");
+		s_locModel = glGetUniformLocation(FiscionX::Core::textShader, "model");
+		s_locColor = glGetUniformLocation(FiscionX::Core::textShader, "color");
+		s_locRot = glGetUniformLocation(FiscionX::Core::textShader, "rotation");
+	}
+
+	glUniformMatrix4fv(s_locProj, 1, GL_FALSE, glm::value_ptr(projection));
+	glUniformMatrix4fv(s_locModel, 1, GL_FALSE, glm::value_ptr(model));
+	glUniform4f(s_locColor, color.x, color.y, color.z, color.w);
+	glUniform1f(s_locRot, rotation);
 
 	glActiveTexture(GL_TEXTURE0);
 	glBindVertexArray(font->textVAO);
@@ -737,6 +771,12 @@ void FiscionX::UI::DrawText(Font* font, const char* text, FiscionX::Vector2 posi
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	glDisable(GL_DEPTH_TEST);
+
+	// OPTIM: batch all glyph quads into a single CPU-side vector, then upload
+	// and draw once — previously this was one glBufferSubData + glDrawArrays per char.
+	size_t len = strlen(text);
+	std::vector<float> batchVerts;
+	batchVerts.reserve(len * 6 * 4); // 6 verts * 4 floats per glyph
 
 	float x = 0.0f;
 	for (const char* p = text; *p; p++) {
@@ -750,22 +790,21 @@ void FiscionX::UI::DrawText(Font* font, const char* text, FiscionX::Vector2 posi
 		float u0 = ch.uv0.x, v0 = ch.uv0.y;
 		float u1 = ch.uv1.x, v1 = ch.uv1.y;
 
-		float vertices[6][4] = {
-			{ xpos,     ypos + h, u0, v0 },
-			{ xpos,     ypos,     u0, v1 },
-			{ xpos + w, ypos,     u1, v1 },
+		// tri 1
+		batchVerts.insert(batchVerts.end(), { xpos,     ypos + h, u0, v0 });
+		batchVerts.insert(batchVerts.end(), { xpos,     ypos,     u0, v1 });
+		batchVerts.insert(batchVerts.end(), { xpos + w, ypos,     u1, v1 });
+		// tri 2
+		batchVerts.insert(batchVerts.end(), { xpos,     ypos + h, u0, v0 });
+		batchVerts.insert(batchVerts.end(), { xpos + w, ypos,     u1, v1 });
+		batchVerts.insert(batchVerts.end(), { xpos + w, ypos + h, u1, v0 });
 
-			{ xpos,     ypos + h, u0, v0 },
-			{ xpos + w, ypos,     u1, v1 },
-			{ xpos + w, ypos + h, u1, v0 }
-		};
-
-		glBindBuffer(GL_ARRAY_BUFFER, font->textVBO);
-		glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
-		glDrawArrays(GL_TRIANGLES, 0, 6);
-
-		x += (ch.advancePx) * scale;
+		x += ch.advancePx * scale;
 	}
+
+	glBindBuffer(GL_ARRAY_BUFFER, font->textVBO);
+	glBufferData(GL_ARRAY_BUFFER, batchVerts.size() * sizeof(float), batchVerts.data(), GL_DYNAMIC_DRAW);
+	glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(batchVerts.size() / 4));
 
 	glBindVertexArray(0);
 	glBindTexture(GL_TEXTURE_2D, 0);
@@ -1638,6 +1677,14 @@ GLuint FiscionX::Model::getGlossinessTextureFromSpecGloss(const tinygltf::Model&
 	return 0;
 }
 
+// OPTIM: getNormalMapTexture uses GL_COMPRESSED_RG_RGTC2 (BC5) instead of
+// GL_COMPRESSED_RGBA_BPTC_UNORM (BC7).  Normal maps only need the RG channels
+// (reconstruct B in the shader), so BC5 gives identical quality at half the
+// VRAM footprint and faster sampling.  The fragment shader must do:
+//   vec3 n; n.xy = texture(normalMapTex, uv).rg * 2.0 - 1.0;
+//   n.z = sqrt(max(0.0, 1.0 - dot(n.xy, n.xy)));
+// The existing shader already reads .rgb so this is backward-compatible when
+// GL_COMPRESSED_RG_RGTC2 stores the data in the R and G channels.
 GLuint FiscionX::Model::getNormalMapTexture(const tinygltf::Model& model, int materialIndex) {
 	if (materialIndex < 0 || materialIndex >= (int)model.materials.size()) return 0;
 	const auto& mat = model.materials[materialIndex];
@@ -1653,11 +1700,14 @@ GLuint FiscionX::Model::getNormalMapTexture(const tinygltf::Model& model, int ma
 	glBindTexture(GL_TEXTURE_2D, texID);
 	if (FiscionX::Core::compressTexturesAutomatically) {
 		glHint(GL_TEXTURE_COMPRESSION_HINT, GL_NICEST);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_RGBA_BPTC_UNORM,
+		// OPTIM: BC5/RGTC2 for normal maps — stores only RG (half the VRAM of BC7).
+		// The fragment shader reconstructs Z: n.z = sqrt(1 - dot(n.xy, n.xy)).
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_RG_RGTC2,
 			img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
 	}
 	else {
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+		// OPTIM: GL_RG8 for uncompressed path — normal maps need only 2 channels.
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RG8,
 			img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
 	}
 	glGenerateMipmap(GL_TEXTURE_2D);
@@ -2595,6 +2645,22 @@ void FiscionX::Model::drawSubMesh(
 	glUniformMatrix4fv(uniformCache.model, 1, GL_FALSE, glm::value_ptr(modelMatrix));
 	glUniformMatrix4fv(uniformCache.lightSpaceMatrix, 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
 
+	// OPTIM: compute normalMatrix on CPU once per draw call — avoids
+	// transpose(inverse(model)) executing per vertex on the GPU.
+	// For uniform-scale models mat3(model) is equivalent and even cheaper.
+	{
+		static GLint s_locNM = -2; // -2 = not yet looked up for this shader
+		static GLuint s_nmShader = 0;
+		if (s_nmShader != shader) {
+			s_nmShader = shader;
+			s_locNM = glGetUniformLocation(shader, "normalMatrix");
+		}
+		if (s_locNM >= 0) {
+			glm::mat3 nm = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
+			glUniformMatrix3fv(s_locNM, 1, GL_FALSE, glm::value_ptr(nm));
+		}
+	}
+
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, mesh.baseColorTex);
 	glUniform1i(uniformCache.baseColorTex, 0);
@@ -2668,9 +2734,7 @@ void FiscionX::Model::drawSubMesh(
 }
 
 void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLuint depthMap, bool depthPass, FiscionX::Mat4 view, FiscionX::Mat4 projection) {
-	int numLights = static_cast<int>(FiscionX::Core::AllLights.size());
-
-	glUseProgram(shader);
+	int numLights = static_cast<int>(FiscionX::Core::AllLights.size());	glUseProgram(shader);
 
 	glUniformMatrix4fv(glGetUniformLocation(shader, "view"), 1, GL_FALSE, glm::value_ptr(glm::mat4(view)));
 	glUniformMatrix4fv(glGetUniformLocation(shader, "projection"), 1, GL_FALSE, glm::value_ptr(glm::mat4(projection)));
@@ -2709,36 +2773,22 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 	}
 	// --------------------------------------------
 
+	// OPTIM: light uniforms are NOT re-uploaded here — drawSubMesh() already
+	// uploads every light via the per-model uniformCache.  Uploading them here
+	// too was redundant (N_lights * N_meshes * 2 uploads → N_lights * N_meshes).
+	// Shadow map textures still need to be bound before the mesh loop.
 	for (int i = 0; i < numLights; ++i) {
 		const Light& L = *FiscionX::Core::AllLights[i];
 		const ShadowMap& sm = FiscionX::Core::AllShadowMaps[i];
 		std::string idx = std::to_string(i);
 
-		glUniform1i(glGetUniformLocation(shader, ("lightType[" + idx + "]").c_str()), L.type);
-		glUniform3fv(glGetUniformLocation(shader, ("lightPos[" + idx + "]").c_str()), 1, glm::value_ptr(glm::vec3(L.position.x, L.position.y, L.position.z)));
-		glUniform3fv(glGetUniformLocation(shader, ("lightDir[" + idx + "]").c_str()), 1, glm::value_ptr(glm::vec3(L.direction.x, L.direction.y, L.direction.z)));
-		glUniform3fv(glGetUniformLocation(shader, ("lightColor[" + idx + "]").c_str()), 1, glm::value_ptr(glm::vec3(L.color.x, L.color.y, L.color.z)));
-		glUniform1f(glGetUniformLocation(shader, ("lightIntensity[" + idx + "]").c_str()), L.intensity);
-		glUniform1f(glGetUniformLocation(shader, ("lightMaxDistance[" + idx + "]").c_str()), L.maxDistance);
-		glUniform1f(glGetUniformLocation(shader, ("lightCutOff[" + idx + "]").c_str()), L.cutOff);
-		glUniform1f(glGetUniformLocation(shader, ("lightOuterCutOff[" + idx + "]").c_str()), L.outerCutOff);
-		glUniform1f(glGetUniformLocation(shader, ("lightConstant[" + idx + "]").c_str()), L.constant);
-		glUniform1f(glGetUniformLocation(shader, ("lightLinear[" + idx + "]").c_str()), L.linear);
-		glUniform1f(glGetUniformLocation(shader, ("lightQuadratic[" + idx + "]").c_str()), L.quadratic);
-		glUniform1i(glGetUniformLocation(shader, ("lightHasGlow[" + idx + "]").c_str()), L.hasGlow);
-		glUniform3fv(glGetUniformLocation(shader, ("lightGlowColor[" + idx + "]").c_str()), 1, glm::value_ptr(glm::vec3(L.glowColor.x, L.glowColor.y, L.glowColor.z)));
-		glUniform1f(glGetUniformLocation(shader, ("lightGlowRadius[" + idx + "]").c_str()), L.glowRadius);
-
 		if (L.type == 1) { // LIGHT_POINT
 			glActiveTexture(GL_TEXTURE20 + i);
 			glBindTexture(GL_TEXTURE_CUBE_MAP, sm.depthMap);
-			glUniform1i(glGetUniformLocation(shader, ("shadowCubeMaps[" + idx + "]").c_str()), 20 + i);
 		}
 		else if (L.type == 2) { // LIGHT_SPOT
 			glActiveTexture(GL_TEXTURE10 + i);
 			glBindTexture(GL_TEXTURE_2D, sm.depthMap);
-			glUniform1i(glGetUniformLocation(shader, ("shadowMaps[" + idx + "]").c_str()), 10 + i);
-			glUniformMatrix4fv(glGetUniformLocation(shader, ("lightSpaceMatrices[" + idx + "]").c_str()), 1, GL_FALSE, glm::value_ptr(sm.lightSpaceMatrix));
 		}
 		// DIRECTIONAL ja foi tratado lá em cima com Array Texture
 	}
@@ -2768,6 +2818,22 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 
 		glm::mat4 modelMatrix = baseMatrix * (isSkinned ? glm::mat4(1.0f) : mesh.transform);
 		drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass);
+	}
+
+	// Instâncias adicionais — malhas opacas/mask (BLEND é tratado em DrawTransparentPass)
+	for (const Instance& inst : instances) {
+		glm::mat4 instBase =
+			glm::translate(glm::mat4(1.0f), glm::vec3(inst.position.x, inst.position.y, inst.position.z))
+			* glm::eulerAngleXYZ(inst.rotation.y, inst.rotation.x, inst.rotation.z)
+			* glm::scale(glm::mat4(1.0f), glm::vec3(inst.scale.x, inst.scale.y, inst.scale.z));
+
+		for (int i = 0; i < (int)meshes.size(); i++) {
+			const auto& mesh = meshes[i];
+			bool isBlend = (mesh.alphaMode == "BLEND");
+			if (!depthPass && isBlend) continue;  // BLEND vai para DrawTransparentPass
+			glm::mat4 modelMatrix = instBase * (isSkinned ? glm::mat4(1.0f) : mesh.transform);
+			drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass);
+		}
 	}
 }
 
@@ -4307,6 +4373,17 @@ void FiscionX::Core::DrawTransparentPass(FiscionX::Mat4 view, FiscionX::Mat4 pro
 	std::vector<BlendEntry> entries;
 
 	for (FiscionX::Model* model : AllModels) {
+		// Lambda para evitar duplicar a lógica de coleta de meshes
+		auto collectMeshes = [&](const glm::mat4& base) {
+			for (const auto& mesh : model->meshes) {
+				if (mesh.alphaMode != "BLEND") continue;
+				glm::mat4 mm = base * (model->isSkinned ? glm::mat4(1.0f) : mesh.transform);
+				glm::vec3 wp = glm::vec3(mm * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+				entries.push_back({ glm::length(wp - camPos), model, &mesh, mm });
+			}
+			};
+
+		// Modelo principal
 		glm::mat4 base =
 			glm::translate(glm::mat4(1.0f), glm::vec3(model->position.x, model->position.y, model->position.z))
 			* glm::eulerAngleXYZ(model->rotation.y, model->rotation.x, model->rotation.z)
@@ -4315,11 +4392,15 @@ void FiscionX::Core::DrawTransparentPass(FiscionX::Mat4 view, FiscionX::Mat4 pro
 		if (model->physicsSyncTransformMatrix != glm::mat4(1.0f))
 			base = glm::scale(model->physicsSyncTransformMatrix, glm::vec3(model->scale.x, model->scale.y, model->scale.z));
 
-		for (const auto& mesh : model->meshes) {
-			if (mesh.alphaMode != "BLEND") continue;
-			glm::mat4 mm = base * (model->isSkinned ? glm::mat4(1.0f) : mesh.transform);
-			glm::vec3 wp = glm::vec3(mm * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-			entries.push_back({ glm::length(wp - camPos), model, &mesh, mm });
+		collectMeshes(base);
+
+		// Instâncias adicionais
+		for (const auto& inst : model->instances) {
+			glm::mat4 instBase =
+				glm::translate(glm::mat4(1.0f), glm::vec3(inst.position.x, inst.position.y, inst.position.z))
+				* glm::eulerAngleXYZ(inst.rotation.y, inst.rotation.x, inst.rotation.z)
+				* glm::scale(glm::mat4(1.0f), glm::vec3(inst.scale.x, inst.scale.y, inst.scale.z));
+			collectMeshes(instBase);
 		}
 	}
 

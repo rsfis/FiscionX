@@ -1007,6 +1007,13 @@ namespace FiscionX {
 
 		float alpha = 1.0f;
 
+		struct Instance {
+			FiscionX::Vector3 position;
+			FiscionX::Vector3 rotation;
+			FiscionX::Vector3 scale;
+		};
+		std::vector<Instance> instances;
+
 		glm::vec3 boundingCenter = glm::vec3(0.0f);
 		float boundingRadius = 1.0f;
 
@@ -1058,6 +1065,9 @@ namespace FiscionX {
 			bool depthPass
 		);
 		void destroy();
+		inline void addInstance(FiscionX::Vector3 position, FiscionX::Vector3 rotation, FiscionX::Vector3 scale) {
+			instances.push_back({ position, rotation, scale });
+		}
 		void draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLuint depthMap, bool depthPass, FiscionX::Mat4 view, FiscionX::Mat4 projection);
 		// Configura uniforms globais do shader (luzes, câmera, bones).
 		// Usado pelo passo global de transparência em Core::DrawTransparentPass().

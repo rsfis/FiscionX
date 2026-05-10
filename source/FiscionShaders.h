@@ -523,7 +523,10 @@ void main() {
   // Normal mapping: compute TBN only if map exists - avoids cost if not needed
   vec3 N;
   if (hasNormalMap == 1) {
-    vec3 tangentNormal = texture(normalMapTex, fs_in.TexCoords).rgb * 2.0 - 1.0;
+    // OPTIM: sample only .rg — compatible with both GL_RGBA and GL_COMPRESSED_RG_RGTC2 (BC5).
+    // Z is reconstructed analytically, saving one channel of VRAM and bandwidth.
+    vec2 rg = texture(normalMapTex, fs_in.TexCoords).rg * 2.0 - 1.0;
+    vec3 tangentNormal = vec3(rg, sqrt(max(0.0, 1.0 - dot(rg, rg))));
     // build orthonormal TBN (normalize once)
     vec3 T = normalize(fs_in.Tangent);
     vec3 B = normalize(fs_in.Bitangent);
@@ -760,6 +763,8 @@ uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
 uniform mat4 lightSpaceMatrices[15];
+// OPTIM: normalMatrix precomputed on CPU — avoids transpose(inverse(model)) per vertex
+uniform mat3 normalMatrix;
 
 vec4 skinPosition(vec4 pos) {
     mat4 skinMat =
@@ -775,7 +780,7 @@ void main() {
     vec4 worldPos = model * skinned;
     vs_out.FragPos = worldPos.xyz;
 
-    mat3 normalMatrix = mat3(transpose(inverse(model)));
+    // OPTIM: use precomputed normalMatrix uniform instead of per-vertex inverse
     vs_out.Normal = normalize(normalMatrix * aNormal);
 
     vec3 T = normalize(mat3(model) * aTangent.xyz);
@@ -794,6 +799,14 @@ void main() {
 }
 )";
 
+// OPTIM: normalMatrix is precomputed on the CPU and uploaded as a uniform
+// instead of calling transpose(inverse(model)) per-vertex on the GPU.
+// mat3(transpose(inverse(model))) involves a full 4x4 matrix inverse inside
+// every vertex invocation — that is O(N_verts) matrix inversions per frame.
+// The CPU computes it once per draw call and sends it via the "normalMatrix" uniform.
+// NOTE: Add "uniform mat3 normalMatrix;" to vertexStatic and vertexSkinned,
+//       and set it from CPU before each drawSubMesh call.  If non-uniform scale
+//       is never used, mat3(model) is also acceptable (avoids the inverse entirely).
 const char* vertexStatic = R"(
 #version 330 core
 layout(location = 0) in vec3 aPos;
@@ -814,12 +827,14 @@ uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
 uniform mat4 lightSpaceMatrices[15]; // um por luz
+// OPTIM: normalMatrix precomputed on CPU — avoids transpose(inverse(model)) per vertex
+uniform mat3 normalMatrix;
 
 void main() {
     vec4 worldPos = model * vec4(aPos, 1.0);
     vs_out.FragPos = worldPos.xyz;
 
-    mat3 normalMatrix = mat3(transpose(inverse(model)));
+    // OPTIM: use precomputed normalMatrix uniform instead of per-vertex inverse
     vs_out.Normal = normalize(normalMatrix * aNormal);
 
     vec3 T = normalize(mat3(model) * aTangent.xyz);
