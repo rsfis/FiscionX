@@ -146,11 +146,11 @@ void draw() {
             model->draw(FiscionX::Core::shaderSkinned, glm::mat4(1.0f), 0, false, view, projection);
         }
     }
-
     FiscionX::Core::DrawTransparentPass(view, projection);
 
-    img->draw(FiscionX::Vector2(300, 200));
     img3D->draw(view, projection);
+
+    img->draw(FiscionX::Vector2(300, 200));
 
     FiscionX::Core::Draw::PostProcessing(viewProj, dirLight); // No godray; Add Bloom
     //FiscionX::Physics::DrawDebugWorld(projection, view);
@@ -204,7 +204,7 @@ int main() {
 
     FiscionX::Core::CreateAllShadowMaps();
 
-    // Lights extracted from glb; Contact Shadows; Anim Blending; Draw halo and glow also for point lights and spot lights; Point lights are traversing walls/solid objects (Criação da textura está errada, computar está errado, renderizar está errado); Sombras e Luz devem passar por malhas com transparência; Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Terrains; Water
+    // Emission Textures; Lights extracted from glb; Contact Shadows; Anim Blending; Draw halo and glow also for point lights and spot lights; Point lights are traversing walls/solid objects (Criação da textura está errada, computar está errado, renderizar está errado); Sombras e Luz devem passar por malhas com transparência; Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Terrains; Water
 
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb",
@@ -214,24 +214,40 @@ int main() {
     );
     kratosStaticModel = new FiscionX::Model(
         "assets/models/kratos.glb",
-        FiscionX::Vector3(0, 0, 7.0f),
+        FiscionX::Vector3(0, 3, 7.0f),
         FiscionX::Vector3(0),
         FiscionX::Vector3(0.1f, 0.1f, 0.1f)
     );
     boxModel = new FiscionX::Model(
-        "assets/models/factory.glb",
+        "assets/models/metal_water_tank_2.glb",
         FiscionX::Vector3(0, 0.09f, 4.2f),
         FiscionX::Vector3(2, 0, 0),
         FiscionX::Vector3(0.5f, 0.5f, 0.5f)
     );
     skinnedModel = new FiscionX::Model(
-        "assets/models/camera_test_anim.glb", // camel.glb / camera_test_anim.glb
-        FiscionX::Vector3(0.0f, 0.0f, 0.0f), // 0.0f, 0.0f, 3.0f / 0.0f, 0.0f, 0.0f
-        FiscionX::Vector3(0, 0, 0), // 1, 0, 0 / 0, 0, 0
-        FiscionX::Vector3(0.6f, 0.6f, 0.6f) // 1.0f, 1.0f, 1.0f / 0.6f, 0.6f, 0.6f
+        "assets/models/camel.glb", // camel.glb / camera_test_anim.glb
+        FiscionX::Vector3(0.0f, 0.0f, 3.0f), // 0.0f, 0.0f, 3.0f / 0.0f, 0.0f, 0.0f
+        FiscionX::Vector3(1, 0, 0), // 1, 0, 0 / 0, 0, 0
+        FiscionX::Vector3(1.0f, 1.0f, 1.0f) // 1.0f, 1.0f, 1.0f / 0.6f, 0.6f, 0.6f
     );
 
-    skinnedModel->playAnim("CameraAction", false); // Armature|Idle_01 / CameraAction
+    skinnedModel->playAnim("Armature|Idle_01", true); // Armature|Idle_01 / CameraAction
+
+    kratosStaticModel->buildLODs({ 0.5f, 0.25f, 0.1f }); // gera 3 LODs
+    kratosStaticModel->lodDistances = { 10.0f, 40.0f, 250.0f }; // distâncias de transição
+    kratosStaticModel->enableFrustumCulling = true;
+
+    staticModel->buildLODs({ 0.5f, 0.25f, 0.1f }); // gera 3 LODs
+    staticModel->lodDistances = { 10.0f, 40.0f, 80.0f }; // distâncias de transição
+    staticModel->enableFrustumCulling = true;
+
+    skinnedModel->buildLODs({ 0.5f, 0.25f, 0.1f }); // gera 3 LODs
+    skinnedModel->lodDistances = { 10.0f, 40.0f, 80.0f }; // distâncias de transição
+    skinnedModel->enableFrustumCulling = true;
+
+    boxModel->buildLODs({ 0.5f, 0.25f, 0.1f }); // gera 3 LODs
+    boxModel->lodDistances = { 10.0f, 40.0f, 80.0f }; // distâncias de transição
+    boxModel->enableFrustumCulling = true;
 
     img = new FiscionX::UI::Image("assets/images/didi.png");
 
