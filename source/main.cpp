@@ -159,7 +159,7 @@ void draw() {
 }
 
 int main() {
-    FiscionX::Core::Set3DSettings(3048, 1024, 512, { 15.0f, 70.0f, 150.0f }, 0.01f, 1000.0f, false);
+    FiscionX::Core::Set3DSettings(3048, 1024, 512, { 15.0f, 70.0f, 150.0f }, 0.01f, 1000.0f, true);
     FiscionX::Core::SetCacheSettings(true, true);
     FiscionX::Core::NewWindow(1280, 720, "FiscionX");
     //FiscionX::Core::SetWindowFullscreen(true, 0);
