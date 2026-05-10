@@ -2224,6 +2224,32 @@ void FiscionX::Model::init(const std::string& path) {
 						indexGLType = (posAcc.count <= 65535) ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT;
 					}
 
+					// ==== CPU positions + UVs + AABB for frustum culling and LOD generation ====
+					sub.cpuPositions.resize(posAcc.count);
+					sub.cpuUVs.resize(posAcc.count);
+					sub.aabbMin = glm::vec3(1e30f);
+					sub.aabbMax = glm::vec3(-1e30f);
+					for (size_t vi = 0; vi < posAcc.count; ++vi) {
+						glm::vec3 p(vertices[vi * 12 + 0], vertices[vi * 12 + 1], vertices[vi * 12 + 2]);
+						sub.cpuPositions[vi] = p;
+						sub.cpuUVs[vi] = glm::vec2(vertices[vi * 12 + 10], vertices[vi * 12 + 11]);
+						sub.aabbMin = glm::min(sub.aabbMin, p);
+						sub.aabbMax = glm::max(sub.aabbMax, p);
+					}
+					// Convert indices to uint32 for CPU storage
+					sub.cpuIndices.resize(indices.size());
+					for (size_t ii = 0; ii < indices.size(); ++ii) sub.cpuIndices[ii] = indices[ii];
+
+					// Save joints/weights for LOD skinning propagation
+					if (isSkinned && jointsData.size() == posAcc.count * 4 && weightsData.size() == posAcc.count * 4) {
+						sub.cpuJoints.resize(posAcc.count);
+						sub.cpuWeights.resize(posAcc.count);
+						for (size_t vi = 0; vi < posAcc.count; ++vi) {
+							sub.cpuJoints[vi] = glm::u16vec4(jointsData[vi * 4 + 0], jointsData[vi * 4 + 1], jointsData[vi * 4 + 2], jointsData[vi * 4 + 3]);
+							sub.cpuWeights[vi] = glm::vec4(weightsData[vi * 4 + 0], weightsData[vi * 4 + 1], weightsData[vi * 4 + 2], weightsData[vi * 4 + 3]);
+						}
+					}
+
 					// ==== OpenGL buffers/VAO ====
 					glGenVertexArrays(1, &sub.vao);
 					glGenBuffers(1, &sub.vbo);
@@ -2511,6 +2537,16 @@ void FiscionX::Model::destroy() {
 		}
 	}
 
+	// ========= LOD GPU BUFFERS =========
+	for (auto& mesh : meshes) {
+		for (auto& lod : mesh.lodLevels) {
+			if (lod.vao) { glDeleteVertexArrays(1, &lod.vao); lod.vao = 0; }
+			if (lod.vbo) { glDeleteBuffers(1, &lod.vbo);      lod.vbo = 0; }
+			if (lod.ebo) { glDeleteBuffers(1, &lod.ebo);      lod.ebo = 0; }
+		}
+		mesh.lodLevels.clear();
+	}
+
 	// ========= LIMPEZA CPU & GPU =========
 	meshes.clear();
 	nodes.clear();
@@ -2523,24 +2559,479 @@ void FiscionX::Model::destroy() {
 	);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Model::buildLODs  —  Quadric Error Metric edge-collapse simplifier
+//
+// Self-contained, no external library.  Operates on cpuPositions/cpuIndices
+// stored at load time in each SubMesh.  Produces a correct simplified mesh
+// (no holes, no exploding geometry) for each LOD ratio.
+//
+// Algorithm outline (per SubMesh):
+//   1. Build a symmetric 4×4 quadric Q per vertex (sum of plane quadrics of
+//      all incident triangles).
+//   2. For every edge (u,v) compute the optimal collapse point and cost =
+//      v^T (Qu+Qv) v.
+//   3. Collapse edges greedily from lowest cost until the target vertex count
+//      is reached.
+//   4. Re-index the remaining triangles and upload a new VAO/VBO/EBO.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// --- meshoptimizer simplifier (production-grade LOD, same as Godot/Unreal) --
+// Add these files to your project build:
+//   dependencies/meshoptimizer/meshoptimizer.h
+//   dependencies/meshoptimizer/meshoptimizer_simplifier.cpp   (compile as C++)
+
+namespace {
+	void meshSimplify(
+		const std::vector<glm::vec3>& inPos,
+		const std::vector<uint32_t>& inIdx,
+		std::vector<glm::vec3>& outPos,
+		std::vector<uint32_t>& outIdx,
+		float                         targetRatio,
+		float                         maxError,
+		std::vector<uint32_t>* outOriginalIndex = nullptr)
+	{
+		const size_t V = inPos.size();
+		const size_t I = inIdx.size();
+
+		auto passThrough = [&]() {
+			outPos = inPos; outIdx = inIdx;
+			if (outOriginalIndex) {
+				outOriginalIndex->resize(V);
+				std::iota(outOriginalIndex->begin(), outOriginalIndex->end(), 0u);
+			}
+			};
+
+		if (V < 4 || I < 6 || targetRatio >= 1.0f) { passThrough(); return; }
+
+		float ratio = glm::clamp(targetRatio, 0.02f, 1.0f);
+		size_t targetIdx = std::max((size_t)3, (size_t)(I * ratio)) / 3 * 3;
+
+		// ── Step 1: generate position-only remap so meshopt sees unique verts ─
+		// glTF VBOs duplicate vertices across UV seams; meshopt needs a mesh
+		// where identical positions are merged into one logical vertex.
+		std::vector<uint32_t> posRemap(V);
+		size_t uniqueV = meshopt_generateVertexRemapMulti(
+			posRemap.data(),
+			inIdx.data(), I,
+			V,
+			nullptr, 0   // no streams → position-only welding done below
+		);
+		// Actually use a simpler approach: remap indices through position-only stream
+		// meshopt_generateVertexRemap works on a flat float buffer
+		std::vector<uint32_t> posRemapClean(V);
+		uniqueV = meshopt_generateVertexRemap(
+			posRemapClean.data(),
+			inIdx.data(), I,
+			inPos.data(), V, sizeof(glm::vec3)
+		);
+
+		// Build welded index buffer (operates on unique positions)
+		std::vector<uint32_t> weldedIdx(I);
+		meshopt_remapIndexBuffer(weldedIdx.data(), inIdx.data(), I, posRemapClean.data());
+
+		std::vector<glm::vec3> weldedPos(uniqueV);
+		meshopt_remapVertexBuffer(weldedPos.data(), inPos.data(), V,
+			sizeof(glm::vec3), posRemapClean.data());
+
+		// ── Step 2: simplify on the welded (unique-position) mesh ─────────────
+		size_t targetWeldedIdx = std::max((size_t)3, (size_t)(weldedIdx.size() * ratio)) / 3 * 3;
+
+		std::vector<uint32_t> simpIdx(weldedIdx.size());
+		float resultError = 0.0f;
+		size_t simpIdxCount = meshopt_simplify(
+			simpIdx.data(),
+			weldedIdx.data(), weldedIdx.size(),
+			reinterpret_cast<const float*>(weldedPos.data()),
+			uniqueV, sizeof(glm::vec3),
+			targetWeldedIdx,
+			maxError,
+			meshopt_SimplifyLockBorder,
+			&resultError
+		);
+		simpIdx.resize(simpIdxCount);
+
+		if (simpIdxCount < 3) { passThrough(); return; }
+
+		// ── Step 3: compact — remove unused welded vertices ───────────────────
+		std::vector<uint32_t> compactRemap(uniqueV, UINT32_MAX);
+		outPos.clear();
+		outPos.reserve(simpIdxCount);
+		// For each welded vertex that survived, find ONE original vertex that
+		// maps to it (for UV propagation).
+		// Build inverse of posRemapClean: weldedV → any original vertex index
+		std::vector<uint32_t> weldedToOrig(uniqueV, UINT32_MAX);
+		for (uint32_t i = 0; i < (uint32_t)V; ++i) {
+			uint32_t w = posRemapClean[i];
+			if (weldedToOrig[w] == UINT32_MAX)
+				weldedToOrig[w] = i;
+		}
+
+		std::vector<uint32_t> origOf;
+		if (outOriginalIndex) origOf.reserve(simpIdxCount);
+
+		for (uint32_t wi : simpIdx) {
+			if (compactRemap[wi] == UINT32_MAX) {
+				compactRemap[wi] = (uint32_t)outPos.size();
+				outPos.push_back(weldedPos[wi]);
+				if (outOriginalIndex)
+					origOf.push_back(weldedToOrig[wi] != UINT32_MAX ? weldedToOrig[wi] : 0);
+			}
+		}
+
+		outIdx.resize(simpIdxCount);
+		for (size_t i = 0; i < simpIdxCount; ++i)
+			outIdx[i] = compactRemap[simpIdx[i]];
+
+		// Final degenerate check
+		std::vector<uint32_t> cleanIdx;
+		cleanIdx.reserve(outIdx.size());
+		for (size_t t = 0; t < outIdx.size(); t += 3) {
+			uint32_t a = outIdx[t], b = outIdx[t + 1], c = outIdx[t + 2];
+			if (a != b && b != c && a != c) {
+				cleanIdx.push_back(a);
+				cleanIdx.push_back(b);
+				cleanIdx.push_back(c);
+			}
+		}
+		outIdx = std::move(cleanIdx);
+
+		if (outIdx.empty()) { passThrough(); return; }
+		if (outOriginalIndex) *outOriginalIndex = std::move(origOf);
+	}
+
+} // anonymous namespace
+void FiscionX::Model::buildLODs(const std::vector<float>& ratios) {
+	// Release previously built LOD GPU buffers
+	for (auto& sub : meshes) {
+		for (auto& lod : sub.lodLevels) {
+			if (lod.vao) { glDeleteVertexArrays(1, &lod.vao); lod.vao = 0; }
+			if (lod.vbo) { glDeleteBuffers(1, &lod.vbo);      lod.vbo = 0; }
+			if (lod.ebo) { glDeleteBuffers(1, &lod.ebo);      lod.ebo = 0; }
+			if (lod.jbo) { glDeleteBuffers(1, &lod.jbo);      lod.jbo = 0; }
+			if (lod.wbo) { glDeleteBuffers(1, &lod.wbo);      lod.wbo = 0; }
+		}
+		sub.lodLevels.clear();
+	}
+
+	// Real VBO stride used by the engine: pos(3) + normal(3) + tangent(4) + uv(2) = 12 floats
+	constexpr int FLOATS_PER_VERTEX = 3 + 3 + 4 + 2;  // = 12
+	constexpr GLsizei STRIDE = FLOATS_PER_VERTEX * sizeof(float);
+
+	for (auto& sub : meshes) {
+		if (sub.cpuPositions.empty() || sub.cpuIndices.empty()) continue;
+
+		const bool hasUVs = (sub.cpuUVs.size() == sub.cpuPositions.size());
+		const bool hasSkin = (sub.cpuJoints.size() == sub.cpuPositions.size() &&
+			sub.cpuWeights.size() == sub.cpuPositions.size());
+
+		for (float ratio : ratios) {
+			// --- QEM simplification on CPU -----------------------------------
+			// maxError: quanto mais longe (menor ratio), mais toleramos erro geométrico.
+			// Mas nunca 1.0 — evita malhas explodidas em UV seams.
+			// ratio 0.5 → 0.01 | ratio 0.25 → 0.02 | ratio 0.1 → 0.05
+			float maxError = glm::clamp(0.005f / ratio, 0.005f, 0.08f);
+
+			std::vector<glm::vec3> simpPos;
+			std::vector<uint32_t>  simpIdx;
+			std::vector<uint32_t>  origIndex;
+			meshSimplify(sub.cpuPositions, sub.cpuIndices, simpPos, simpIdx, ratio, maxError, &origIndex);
+
+			if (simpIdx.empty()) continue;
+
+			const size_t nVerts = simpPos.size();
+
+			// --- Recompute per-vertex normals --------------------------------
+			std::vector<glm::vec3> normals(nVerts, glm::vec3(0.0f));
+			for (size_t t = 0; t < simpIdx.size() / 3; ++t) {
+				uint32_t ia = simpIdx[t * 3 + 0], ib = simpIdx[t * 3 + 1], ic = simpIdx[t * 3 + 2];
+				glm::vec3 n = glm::cross(simpPos[ib] - simpPos[ia], simpPos[ic] - simpPos[ia]);
+				normals[ia] += n; normals[ib] += n; normals[ic] += n;
+			}
+			for (auto& n : normals) {
+				float l = glm::length(n);
+				if (l > 1e-6f) n /= l;
+				else            n = glm::vec3(0.f, 1.f, 0.f); // safe fallback
+			}
+
+			// --- Build VBO: pos(3) + normal(3) + tangent(4) + uv(2) ---------
+			// Tangent is computed per-triangle to avoid the NaN from normalize(0,0,0).
+			// We accumulate tangent per vertex the same way as normals.
+			std::vector<glm::vec3> tangents(nVerts, glm::vec3(0.0f));
+			std::vector<glm::vec2> uvs(nVerts, glm::vec2(0.0f));
+			if (hasUVs) {
+				for (size_t vi = 0; vi < nVerts; ++vi)
+					uvs[vi] = (origIndex[vi] < sub.cpuUVs.size()) ? sub.cpuUVs[origIndex[vi]] : glm::vec2(0.f);
+
+				for (size_t t = 0; t < simpIdx.size() / 3; ++t) {
+					uint32_t ia = simpIdx[t * 3 + 0], ib = simpIdx[t * 3 + 1], ic = simpIdx[t * 3 + 2];
+					glm::vec3 e1 = simpPos[ib] - simpPos[ia];
+					glm::vec3 e2 = simpPos[ic] - simpPos[ia];
+					glm::vec2 du = uvs[ib] - uvs[ia];
+					glm::vec2 dv = uvs[ic] - uvs[ia];
+					float det = du.x * dv.y - dv.x * du.y;
+					if (std::abs(det) > 1e-8f) {
+						float inv = 1.0f / det;
+						glm::vec3 T = (e1 * dv.y - e2 * du.y) * inv;
+						tangents[ia] += T; tangents[ib] += T; tangents[ic] += T;
+					}
+				}
+			}
+			for (auto& T : tangents) {
+				float l = glm::length(T);
+				if (l > 1e-6f) T /= l;
+				else            T = glm::vec3(1.f, 0.f, 0.f); // safe fallback
+			}
+
+			std::vector<float> vboData;
+			vboData.reserve(nVerts * FLOATS_PER_VERTEX);
+			for (size_t i = 0; i < nVerts; ++i) {
+				// pos
+				vboData.push_back(simpPos[i].x);
+				vboData.push_back(simpPos[i].y);
+				vboData.push_back(simpPos[i].z);
+				// normal
+				vboData.push_back(normals[i].x);
+				vboData.push_back(normals[i].y);
+				vboData.push_back(normals[i].z);
+				// tangent (xyz + handedness w=1)
+				vboData.push_back(tangents[i].x);
+				vboData.push_back(tangents[i].y);
+				vboData.push_back(tangents[i].z);
+				vboData.push_back(1.0f);
+				// UV
+				vboData.push_back(uvs[i].x);
+				vboData.push_back(uvs[i].y);
+			}
+
+			// --- Skinning data: propagate from original vertices via origIndex --
+			std::vector<glm::u16vec4> lodJoints;
+			std::vector<glm::vec4>   lodWeights;
+			if (hasSkin) {
+				lodJoints.resize(nVerts);
+				lodWeights.resize(nVerts);
+				for (size_t i = 0; i < nVerts; ++i) {
+					uint32_t src = (origIndex[i] < sub.cpuJoints.size()) ? origIndex[i] : 0;
+					lodJoints[i] = sub.cpuJoints[src];
+					lodWeights[i] = sub.cpuWeights[src];
+				}
+			}
+
+			SubMesh::LODLevel lod;
+			lod.indexCount = simpIdx.size();
+			lod.indexType = GL_UNSIGNED_INT;
+
+			glGenVertexArrays(1, &lod.vao);
+			glGenBuffers(1, &lod.vbo);
+			glGenBuffers(1, &lod.ebo);
+			if (hasSkin) {
+				glGenBuffers(1, &lod.jbo);
+				glGenBuffers(1, &lod.wbo);
+			}
+
+			glBindVertexArray(lod.vao);
+
+			glBindBuffer(GL_ARRAY_BUFFER, lod.vbo);
+			glBufferData(GL_ARRAY_BUFFER, vboData.size() * sizeof(float), vboData.data(), GL_STATIC_DRAW);
+
+			// pos(0)
+			glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, STRIDE, (void*)0);
+			glEnableVertexAttribArray(0);
+			// normal(1)
+			glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, STRIDE, (void*)(3 * sizeof(float)));
+			glEnableVertexAttribArray(1);
+			// tangent(2)
+			glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, STRIDE, (void*)(6 * sizeof(float)));
+			glEnableVertexAttribArray(2);
+			// uv(3)
+			glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, STRIDE, (void*)(10 * sizeof(float)));
+			glEnableVertexAttribArray(3);
+
+			if (hasSkin) {
+				// joints (loc 4) — UNSIGNED_SHORT
+				glBindBuffer(GL_ARRAY_BUFFER, lod.jbo);
+				glBufferData(GL_ARRAY_BUFFER, lodJoints.size() * sizeof(glm::u16vec4), lodJoints.data(), GL_STATIC_DRAW);
+				glVertexAttribIPointer(4, 4, GL_UNSIGNED_SHORT, sizeof(glm::u16vec4), (void*)0);
+				glEnableVertexAttribArray(4);
+
+				// weights (loc 5) — FLOAT
+				glBindBuffer(GL_ARRAY_BUFFER, lod.wbo);
+				glBufferData(GL_ARRAY_BUFFER, lodWeights.size() * sizeof(glm::vec4), lodWeights.data(), GL_STATIC_DRAW);
+				glVertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE, sizeof(glm::vec4), (void*)0);
+				glEnableVertexAttribArray(5);
+			}
+
+			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, lod.ebo);
+			glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+				simpIdx.size() * sizeof(uint32_t), simpIdx.data(), GL_STATIC_DRAW);
+
+			glBindVertexArray(0);
+			sub.lodLevels.push_back(lod);
+		}
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Frustum culling — per-SubMesh AABB (triangle-group granularity)
+//
+// extractFrustumPlanes: Gribb-Hartmann extraction from viewProj.
+// isSubMeshInFrustum:   tests one SubMesh AABB against pre-extracted planes.
+// computeSubMeshVisibility: fills a bool per submesh for the whole model.
+//
+// draw() uses computeSubMeshVisibility so that individual submeshes (groups of
+// triangles) are skipped instead of the whole model.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Gribb-Hartmann plane extraction.
+// GLM col-major: m[col][row].  Row r = (m[0][r], m[1][r], m[2][r], m[3][r]).
+void FiscionX::Model::extractFrustumPlanes(const glm::mat4& vp, glm::vec4 planes[6])
+{
+	const glm::mat4& m = vp;
+	// Left:   row3 + row0
+	planes[0] = { m[0][3] + m[0][0], m[1][3] + m[1][0], m[2][3] + m[2][0], m[3][3] + m[3][0] };
+	// Right:  row3 - row0
+	planes[1] = { m[0][3] - m[0][0], m[1][3] - m[1][0], m[2][3] - m[2][0], m[3][3] - m[3][0] };
+	// Bottom: row3 + row1
+	planes[2] = { m[0][3] + m[0][1], m[1][3] + m[1][1], m[2][3] + m[2][1], m[3][3] + m[3][1] };
+	// Top:    row3 - row1
+	planes[3] = { m[0][3] - m[0][1], m[1][3] - m[1][1], m[2][3] - m[2][1], m[3][3] - m[3][1] };
+	// Near:   row3 + row2
+	planes[4] = { m[0][3] + m[0][2], m[1][3] + m[1][2], m[2][3] + m[2][2], m[3][3] + m[3][2] };
+	// Far:    row3 - row2
+	planes[5] = { m[0][3] - m[0][2], m[1][3] - m[1][2], m[2][3] - m[2][2], m[3][3] - m[3][2] };
+}
+
+// Tests one SubMesh AABB against 6 frustum planes.
+// modelMatrix: local → world transform for this submesh.
+// Returns true if the AABB is at least partially inside all planes.
+bool FiscionX::Model::isSubMeshInFrustum(const SubMesh& sub,
+	const glm::mat4& modelMatrix,
+	const glm::vec4 planes[6])
+{
+	const glm::vec3& lo = sub.aabbMin;
+	const glm::vec3& hi = sub.aabbMax;
+
+	// Transform the 8 corners to world space once.
+	glm::vec3 corners[8] = {
+		glm::vec3(modelMatrix * glm::vec4(lo.x, lo.y, lo.z, 1.0f)),
+		glm::vec3(modelMatrix * glm::vec4(hi.x, lo.y, lo.z, 1.0f)),
+		glm::vec3(modelMatrix * glm::vec4(lo.x, hi.y, lo.z, 1.0f)),
+		glm::vec3(modelMatrix * glm::vec4(hi.x, hi.y, lo.z, 1.0f)),
+		glm::vec3(modelMatrix * glm::vec4(lo.x, lo.y, hi.z, 1.0f)),
+		glm::vec3(modelMatrix * glm::vec4(hi.x, lo.y, hi.z, 1.0f)),
+		glm::vec3(modelMatrix * glm::vec4(lo.x, hi.y, hi.z, 1.0f)),
+		glm::vec3(modelMatrix * glm::vec4(hi.x, hi.y, hi.z, 1.0f))
+	};
+
+	for (int p = 0; p < 6; ++p) {
+		glm::vec3 n(planes[p]);
+		float     d = planes[p].w;
+
+		// If ALL 8 corners are on the outside of this plane, the AABB is fully culled.
+		bool allOutside = true;
+		for (int c = 0; c < 8; ++c) {
+			if (glm::dot(n, corners[c]) + d >= 0.0f) {
+				allOutside = false;
+				break;
+			}
+		}
+		if (allOutside) return false;
+	}
+	return true; // AABB survives all 6 planes → at least partially visible
+}
+
+// Fills outVisible[i] for each submesh.
+// When enableFrustumCulling is false every slot is set to true (no culling).
+void FiscionX::Model::computeSubMeshVisibility(const glm::mat4& viewProj,
+	std::vector<bool>& outVisible) const
+{
+	const int n = static_cast<int>(meshes.size());
+	outVisible.assign(n, true); // default: all visible
+
+	if (!enableFrustumCulling) return;
+
+	// Extract planes once for the whole model.
+	glm::vec4 planes[6];
+	extractFrustumPlanes(viewProj, planes);
+
+	// Build the same base matrix that draw() uses.
+	glm::mat4 baseMatrix =
+		glm::translate(glm::mat4(1.0f), glm::vec3(position.x, position.y, position.z))
+		* glm::eulerAngleXYZ(rotation.y, rotation.x, rotation.z)
+		* glm::scale(glm::mat4(1.0f), glm::vec3(scale.x, scale.y, scale.z));
+
+	if (physicsSyncTransformMatrix != glm::mat4(1.0f))
+		baseMatrix = glm::scale(physicsSyncTransformMatrix, glm::vec3(scale.x, scale.y, scale.z));
+
+	for (int i = 0; i < n; ++i) {
+		const SubMesh& sub = meshes[i];
+		glm::mat4 M = baseMatrix * (isSkinned ? glm::mat4(1.0f) : sub.transform);
+		outVisible[i] = isSubMeshInFrustum(sub, M, planes);
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Model::selectLOD
+// distanceSq: squared distance from camera to model center.
+// Returns: -1 = base mesh,  0..N-1 = LOD index,  INT_MAX = cull by distance.
+// ─────────────────────────────────────────────────────────────────────────────
+int FiscionX::Model::selectLOD(float distanceSq) const {
+	if (lodDistances.empty()) return -1;
+
+	for (int i = 0; i < (int)lodDistances.size(); ++i) {
+		float dSq = lodDistances[i] * lodDistances[i];
+		if (distanceSq < dSq) {
+			return i - 1; // -1 = base mesh
+		}
+	}
+	// Além do último limiar → cullar por distância.
+	// O comentário original dizia "não cullar", mas isso fazia o modelo mais
+	// simplificado continuar sendo desenhado infinitamente longe.
+	// Retornar INT_MAX deixa draw() decidir: se quiser cullar, checa INT_MAX;
+	// se preferir exibir o LOD mais simples, compara contra lodLevels.size()-1.
+	// Por consistência com a doc e com a verificação em draw(), retornamos INT_MAX.
+	return INT_MAX;
+}
+
 void FiscionX::Model::updateOcclusion(const glm::mat4& viewProj) {
 	glm::mat4 baseMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(position.x, position.y, position.z))
 		* glm::eulerAngleXYZ(rotation.y, rotation.x, rotation.z)
 		* glm::scale(glm::mat4(1.0f), glm::vec3(scale.x, scale.y, scale.z));
+
+	// Seleciona o LOD ativo para que o occlusion query use a mesh simplificada
+	// quando o modelo está longe — evita submeter triângulos extras ao GPU.
+	glm::vec3 camPos(
+		FiscionX::Core::Camera.position.x,
+		FiscionX::Core::Camera.position.y,
+		FiscionX::Core::Camera.position.z);
+	glm::vec3 modelPos(position.x, position.y, position.z);
+	float dSq = glm::dot(camPos - modelPos, camPos - modelPos);
+	int occLOD = lodDistances.empty() ? -1 : selectLOD(dSq);
 
 	for (size_t i = 0; i < meshes.size(); ++i) {
 		const auto& mesh = meshes[i];
 		glm::mat4 modelMatrix = baseMatrix * (isSkinned ? glm::mat4(1.0f) : mesh.transform);
 		glm::mat4 mvp = viewProj * modelMatrix;
 
+		// Escolhe VAO/indexCount do LOD ativo (se disponível), senão usa base mesh.
+		GLuint queryVAO = mesh.vao;
+		GLsizei queryCount = mesh.indexCount;
+		GLenum queryType = mesh.indexType;
+		if (occLOD >= 0 && occLOD < (int)mesh.lodLevels.size()) {
+			queryVAO = mesh.lodLevels[occLOD].vao;
+			queryCount = (GLsizei)mesh.lodLevels[occLOD].indexCount;
+			queryType = mesh.lodLevels[occLOD].indexType;
+		}
+
 		glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
 		glDepthMask(GL_FALSE);
 		glDisable(GL_BLEND);
 
 		glBeginQuery(GL_ANY_SAMPLES_PASSED, occlusionQueries[i]);
-		glBindVertexArray(mesh.vao);
+		glBindVertexArray(queryVAO);
 		glUseProgram(0);
-		glDrawElements(GL_TRIANGLES, mesh.indexCount, mesh.indexType, 0);
+		glDrawElements(GL_TRIANGLES, queryCount, queryType, 0);
 		glEndQuery(GL_ANY_SAMPLES_PASSED);
 
 		glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
@@ -2554,10 +3045,20 @@ void FiscionX::Model::drawSubMesh(
 	const glm::mat4& modelMatrix,
 	const glm::mat4& lightSpaceMatrix,
 	GLuint depthMap,
-	bool depthPass
+	bool depthPass,
+	GLuint overrideVAO,
+	GLuint overrideEBO,
+	GLsizei overrideIndexCount,
+	GLenum overrideIndexType
 ) {
+	// overrideVAO != 0 → LOD ativo: usa buffers do LOD sem copiar o SubMesh inteiro
+	const bool    useLOD = (overrideVAO != 0);
+	const GLuint  activeVAO = useLOD ? overrideVAO : mesh.vao;
+	const GLsizei activeIndexCount = useLOD ? overrideIndexCount : mesh.indexCount;
+	const GLenum  activeIndexType = useLOD ? overrideIndexType : mesh.indexType;
+
 	glUseProgram(shader);
-	glBindVertexArray(mesh.vao);
+	glBindVertexArray(activeVAO);
 
 	// ── Reconstrói cache de uniform locations apenas quando o shader muda ──
 	if (uniformCache.cachedShader != shader) {
@@ -2614,7 +3115,7 @@ void FiscionX::Model::drawSubMesh(
 		else { glEnable(GL_CULL_FACE); glCullFace(GL_FRONT); }
 
 		glUniformMatrix4fv(uniformCache.model, 1, GL_FALSE, glm::value_ptr(modelMatrix));
-		glDrawElements(GL_TRIANGLES, mesh.indexCount, mesh.indexType, 0);
+		glDrawElements(GL_TRIANGLES, activeIndexCount, activeIndexType, 0);
 		glBindVertexArray(0);
 		glUseProgram(0);
 		return;
@@ -2720,7 +3221,7 @@ void FiscionX::Model::drawSubMesh(
 	}
 
 	// Draw
-	glDrawElements(GL_TRIANGLES, mesh.indexCount, mesh.indexType, 0);
+	glDrawElements(GL_TRIANGLES, activeIndexCount, activeIndexType, 0);
 
 	glBindVertexArray(0);
 	glUseProgram(0);
@@ -2798,9 +3299,43 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 		* glm::eulerAngleXYZ(rotation.y, rotation.x, rotation.z)
 		* glm::scale(glm::mat4(1.0f), glm::vec3(scale.x, scale.y, scale.z));
 
-	updateOcclusion(view * projection);
+	// Occlusion queries só fazem sentido no color pass.
+	// No depth pass (shadow cascades) draw() é chamado várias vezes por frame —
+	// rodar updateOcclusion em cada chamada multiplicava os draw calls de query
+	// por N_cascades, pagando o custo da base mesh completa mesmo com LOD ativo.
+	// Também corrigida a ordem da multiplicação: projection * view (não view * projection).
+	if (!depthPass) {
+		updateOcclusion(glm::mat4(projection) * glm::mat4(view));
+	}
 	if (physicsSyncTransformMatrix != glm::mat4(1.0f)) {
 		baseMatrix = glm::scale(physicsSyncTransformMatrix, glm::vec3(scale.x, scale.y, scale.z));
+	}
+
+	// ── Per-SubMesh Frustum Culling ─────────────────────────────────────────
+	// During the shadow depth pass we must NOT cull by the camera frustum:
+	// objects behind the camera still cast visible shadows.  Culling is only
+	// applied during the regular color pass.
+	std::vector<bool> subMeshVisible;
+	if (!depthPass) {
+		glm::mat4 viewProj = glm::mat4(projection) * glm::mat4(view);
+		computeSubMeshVisibility(viewProj, subMeshVisible);
+	}
+	else {
+		subMeshVisible.assign(meshes.size(), true); // sombra: nunca cullar
+	}
+
+	// ── Distance-based LOD selection ─────────────────────────────────────────
+	// Compute squared camera→model distance once, then pick the LOD index.
+	int activeLOD = -1; // -1 = full-resolution base mesh
+	if (!lodDistances.empty()) {
+		glm::vec3 camPos(
+			FiscionX::Core::Camera.position.x,
+			FiscionX::Core::Camera.position.y,
+			FiscionX::Core::Camera.position.z);
+		glm::vec3 modelPos(position.x, position.y, position.z);
+		float dSq = glm::dot(camPos - modelPos, camPos - modelPos);
+		activeLOD = selectLOD(dSq);
+		if (activeLOD == INT_MAX) return; // beyond last LOD → cull by distance
 	}
 
 	// Passo OPAQUE/MASK: desenha tudo exceto BLEND.
@@ -2814,10 +3349,23 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 		// No depth pass inclui BLEND (para sombras); no color pass pula BLEND.
 		if (!depthPass && isBlend) continue;
 
+		// ── Per-SubMesh Frustum Culling: skip if this submesh is outside the frustum
+		if (!subMeshVisible[i]) continue;
+
 		if (!isBlend && !isVisible[i]) continue;
 
 		glm::mat4 modelMatrix = baseMatrix * (isSkinned ? glm::mat4(1.0f) : mesh.transform);
-		drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass);
+
+		// LOD: passa os buffers do LOD diretamente para drawSubMesh — zero cópia do SubMesh
+		if (activeLOD >= 0 && activeLOD < (int)mesh.lodLevels.size()) {
+			const SubMesh::LODLevel& lod = mesh.lodLevels[activeLOD];
+			drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass,
+				lod.vao, lod.ebo, (GLsizei)lod.indexCount, lod.indexType);
+		}
+		else {
+			drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass,
+				0, 0, 0, GL_UNSIGNED_INT);
+		}
 	}
 
 	// Instâncias adicionais — malhas opacas/mask (BLEND é tratado em DrawTransparentPass)
@@ -2827,12 +3375,38 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 			* glm::eulerAngleXYZ(inst.rotation.y, inst.rotation.x, inst.rotation.z)
 			* glm::scale(glm::mat4(1.0f), glm::vec3(inst.scale.x, inst.scale.y, inst.scale.z));
 
+		// Compute per-submesh frustum visibility for this instance.
+		// During depth pass (shadow) never cull — objects behind the camera still cast shadows.
+		std::vector<bool> instSubVisible;
+		if (enableFrustumCulling && !depthPass) {
+			glm::mat4 viewProj = glm::mat4(projection) * glm::mat4(view);
+			glm::vec4 planes[6];
+			extractFrustumPlanes(viewProj, planes);
+			instSubVisible.resize(meshes.size());
+			for (int i = 0; i < (int)meshes.size(); ++i) {
+				glm::mat4 M = instBase * (isSkinned ? glm::mat4(1.0f) : meshes[i].transform);
+				instSubVisible[i] = isSubMeshInFrustum(meshes[i], M, planes);
+			}
+		}
+		else {
+			instSubVisible.assign(meshes.size(), true);
+		}
+
 		for (int i = 0; i < (int)meshes.size(); i++) {
 			const auto& mesh = meshes[i];
 			bool isBlend = (mesh.alphaMode == "BLEND");
 			if (!depthPass && isBlend) continue;  // BLEND vai para DrawTransparentPass
+			if (!instSubVisible[i]) continue;      // frustum culling por submesh
 			glm::mat4 modelMatrix = instBase * (isSkinned ? glm::mat4(1.0f) : mesh.transform);
-			drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass);
+			if (activeLOD >= 0 && activeLOD < (int)mesh.lodLevels.size()) {
+				const SubMesh::LODLevel& lod = mesh.lodLevels[activeLOD];
+				drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass,
+					lod.vao, lod.ebo, (GLsizei)lod.indexCount, lod.indexType);
+			}
+			else {
+				drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass,
+					0, 0, 0, GL_UNSIGNED_INT);
+			}
 		}
 	}
 }

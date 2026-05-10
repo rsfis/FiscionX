@@ -13,10 +13,13 @@
 #include <algorithm>
 #include <cmath>
 #include <math.h>
+#include <climits>
+#include <set>
 #include <unordered_map>
 #include <random>
 #include <queue>
 #include <mutex>
+#include <numeric>
 #include <thread>
 #include <Windows.h>
 
@@ -48,6 +51,8 @@
 #include "dependencies/bullet/BulletCollision/Gimpact/btGImpactCollisionAlgorithm.h"
 #include "dependencies/bullet/BulletCollision/Gimpact/btGImpactShape.h"
 #include "dependencies/bullet/BulletDynamics/Vehicle/btRaycastVehicle.h"
+
+#include "meshoptimizer.h"
 
 #define     PI 3.14159265358979323846f
 #define 	FISCIONX_KEY_SPACE   32
@@ -939,6 +944,26 @@ namespace FiscionX {
 		GLenum indexType = GL_UNSIGNED_INT;
 		glm::mat4 transform = glm::mat4(1.0f);
 
+		// Per-submesh axis-aligned bounding box (local space, computed at load time)
+		glm::vec3 aabbMin = glm::vec3(1e30f);
+		glm::vec3 aabbMax = glm::vec3(-1e30f);
+
+		// CPU-side copies of pos+indices+uvs+skinning kept for LOD generation (cleared after buildLODs)
+		std::vector<glm::vec3>          cpuPositions;  // one per vertex
+		std::vector<uint32_t>           cpuIndices;    // triangle list
+		std::vector<glm::vec2>          cpuUVs;        // one per vertex (matches cpuPositions)
+		std::vector<glm::u16vec4>       cpuJoints;     // one per vertex (0 if not skinned)
+		std::vector<glm::vec4>          cpuWeights;    // one per vertex (0 if not skinned)
+
+		// LOD variants for this submesh (indices match Model::lodDistances)
+		struct LODLevel {
+			GLuint vao = 0, vbo = 0, ebo = 0;
+			GLuint jbo = 0, wbo = 0;          // skinning buffers (0 if not skinned)
+			size_t indexCount = 0;
+			GLenum indexType = GL_UNSIGNED_INT;
+		};
+		std::vector<LODLevel> lodLevels;
+
 		GLuint baseColorTex = 0;
 		GLuint normalMapTex = 0;
 		GLuint transmissionTex = 0;
@@ -1021,6 +1046,25 @@ namespace FiscionX {
 		bool castsShadows = true;
 		bool acceptsShadows = true;
 
+		// ── Frustum Culling ──────────────────────────────────────────────────
+		// When true, the model is skipped entirely if its bounding sphere lies
+		// outside all 6 frustum planes (extracted from viewProj each frame).
+		bool enableFrustumCulling = false;
+
+		// ── Automatic LODs ───────────────────────────────────────────────────
+		// ratios:    polygon-reduction factors passed to buildLODs()
+		//            e.g. { 0.5f, 0.25f, 0.1f } → 50 %, 25 %, 10 % of original
+		// distances: camera distances (world units) at which each LOD kicks in
+		//            e.g. { 30.f, 70.f, 250.f } → LOD0 from 30, LOD1 from 70, …
+		//            Beyond lodDistances.back() the model is culled by distance.
+		std::vector<float> lodDistances;    // must match number of built LODs
+
+		// Generates simplified GPU meshes for every SubMesh and stores them in
+		// SubMesh::lodLevels. Call once after loading; safe to call again to
+		// rebuild (old LOD buffers are released first).
+		// ratios: reduction factor per LOD level (0 < ratio <= 1).
+		void buildLODs(const std::vector<float>& ratios);
+
 		// Dentro de struct Model, no FiscionCore.h — adicione após "float alpha = 1.0f;"
 		struct UniformCache {
 			// Uniforms simples
@@ -1056,13 +1100,37 @@ namespace FiscionX {
 		void init(const std::string& path);
 		void updateOcclusion(const glm::mat4& viewProj);
 		void syncTransformWithBody(Physics::Rigidbody* body, Vector3 positionOffset, Vector3 rotationOffset);
+
+		// Extracts the 6 Gribb-Hartmann frustum planes from a viewProj matrix.
+		static void extractFrustumPlanes(const glm::mat4& viewProj, glm::vec4 planes[6]);
+
+		// Returns true if a single SubMesh AABB (in local space) is at least
+		// partially inside the frustum defined by the 6 pre-extracted planes.
+		// modelMatrix transforms the AABB from local to world space.
+		static bool isSubMeshInFrustum(const SubMesh& sub,
+			const glm::mat4& modelMatrix,
+			const glm::vec4 planes[6]);
+
+		// Fills outVisible[i] with true/false per submesh.
+		// When enableFrustumCulling is false every entry is set to true.
+		void computeSubMeshVisibility(const glm::mat4& viewProj,
+			std::vector<bool>& outVisible) const;
+
+		// Selects the appropriate LOD index for a given camera distance.
+		// Returns -1 for the base mesh, 0..N-1 for LOD levels, or INT_MAX if
+		// the model is beyond the last LOD distance (should be culled).
+		int selectLOD(float distanceSq) const;
 		void drawSubMesh(
 			const SubMesh& mesh,
 			GLuint shader,
 			const glm::mat4& modelMatrix,
 			const glm::mat4& lightSpaceMatrix,
 			GLuint depthMap,
-			bool depthPass
+			bool depthPass,
+			GLuint overrideVAO = 0,
+			GLuint overrideEBO = 0,
+			GLsizei overrideIndexCount = 0,
+			GLenum overrideIndexType = GL_UNSIGNED_INT
 		);
 		void destroy();
 		inline void addInstance(FiscionX::Vector3 position, FiscionX::Vector3 rotation, FiscionX::Vector3 scale) {
