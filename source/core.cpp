@@ -3370,42 +3370,44 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 
 	// Instâncias adicionais — malhas opacas/mask (BLEND é tratado em DrawTransparentPass)
 	for (const Instance& inst : instances) {
-		glm::mat4 instBase =
-			glm::translate(glm::mat4(1.0f), glm::vec3(inst.position.x, inst.position.y, inst.position.z))
-			* glm::eulerAngleXYZ(inst.rotation.y, inst.rotation.x, inst.rotation.z)
-			* glm::scale(glm::mat4(1.0f), glm::vec3(inst.scale.x, inst.scale.y, inst.scale.z));
+		if (inst.visible == true) {
+			glm::mat4 instBase =
+				glm::translate(glm::mat4(1.0f), glm::vec3(inst.position.x, inst.position.y, inst.position.z))
+				* glm::eulerAngleXYZ(inst.rotation.y, inst.rotation.x, inst.rotation.z)
+				* glm::scale(glm::mat4(1.0f), glm::vec3(inst.scale.x, inst.scale.y, inst.scale.z));
 
-		// Compute per-submesh frustum visibility for this instance.
-		// During depth pass (shadow) never cull — objects behind the camera still cast shadows.
-		std::vector<bool> instSubVisible;
-		if (enableFrustumCulling && !depthPass) {
-			glm::mat4 viewProj = glm::mat4(projection) * glm::mat4(view);
-			glm::vec4 planes[6];
-			extractFrustumPlanes(viewProj, planes);
-			instSubVisible.resize(meshes.size());
-			for (int i = 0; i < (int)meshes.size(); ++i) {
-				glm::mat4 M = instBase * (isSkinned ? glm::mat4(1.0f) : meshes[i].transform);
-				instSubVisible[i] = isSubMeshInFrustum(meshes[i], M, planes);
-			}
-		}
-		else {
-			instSubVisible.assign(meshes.size(), true);
-		}
-
-		for (int i = 0; i < (int)meshes.size(); i++) {
-			const auto& mesh = meshes[i];
-			bool isBlend = (mesh.alphaMode == "BLEND");
-			if (!depthPass && isBlend) continue;  // BLEND vai para DrawTransparentPass
-			if (!instSubVisible[i]) continue;      // frustum culling por submesh
-			glm::mat4 modelMatrix = instBase * (isSkinned ? glm::mat4(1.0f) : mesh.transform);
-			if (activeLOD >= 0 && activeLOD < (int)mesh.lodLevels.size()) {
-				const SubMesh::LODLevel& lod = mesh.lodLevels[activeLOD];
-				drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass,
-					lod.vao, lod.ebo, (GLsizei)lod.indexCount, lod.indexType);
+			// Compute per-submesh frustum visibility for this instance.
+			// During depth pass (shadow) never cull — objects behind the camera still cast shadows.
+			std::vector<bool> instSubVisible;
+			if (enableFrustumCulling && !depthPass) {
+				glm::mat4 viewProj = glm::mat4(projection) * glm::mat4(view);
+				glm::vec4 planes[6];
+				extractFrustumPlanes(viewProj, planes);
+				instSubVisible.resize(meshes.size());
+				for (int i = 0; i < (int)meshes.size(); ++i) {
+					glm::mat4 M = instBase * (isSkinned ? glm::mat4(1.0f) : meshes[i].transform);
+					instSubVisible[i] = isSubMeshInFrustum(meshes[i], M, planes);
+				}
 			}
 			else {
-				drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass,
-					0, 0, 0, GL_UNSIGNED_INT);
+				instSubVisible.assign(meshes.size(), true);
+			}
+
+			for (int i = 0; i < (int)meshes.size(); i++) {
+				const auto& mesh = meshes[i];
+				bool isBlend = (mesh.alphaMode == "BLEND");
+				if (!depthPass && isBlend) continue;  // BLEND vai para DrawTransparentPass
+				if (!instSubVisible[i]) continue;      // frustum culling por submesh
+				glm::mat4 modelMatrix = instBase * (isSkinned ? glm::mat4(1.0f) : mesh.transform);
+				if (activeLOD >= 0 && activeLOD < (int)mesh.lodLevels.size()) {
+					const SubMesh::LODLevel& lod = mesh.lodLevels[activeLOD];
+					drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass,
+						lod.vao, lod.ebo, (GLsizei)lod.indexCount, lod.indexType);
+				}
+				else {
+					drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass,
+						0, 0, 0, GL_UNSIGNED_INT);
+				}
 			}
 		}
 	}
@@ -4970,11 +4972,13 @@ void FiscionX::Core::DrawTransparentPass(FiscionX::Mat4 view, FiscionX::Mat4 pro
 
 		// Instâncias adicionais
 		for (const auto& inst : model->instances) {
-			glm::mat4 instBase =
-				glm::translate(glm::mat4(1.0f), glm::vec3(inst.position.x, inst.position.y, inst.position.z))
-				* glm::eulerAngleXYZ(inst.rotation.y, inst.rotation.x, inst.rotation.z)
-				* glm::scale(glm::mat4(1.0f), glm::vec3(inst.scale.x, inst.scale.y, inst.scale.z));
-			collectMeshes(instBase);
+			if (inst.visible == true) {
+				glm::mat4 instBase =
+					glm::translate(glm::mat4(1.0f), glm::vec3(inst.position.x, inst.position.y, inst.position.z))
+					* glm::eulerAngleXYZ(inst.rotation.y, inst.rotation.x, inst.rotation.z)
+					* glm::scale(glm::mat4(1.0f), glm::vec3(inst.scale.x, inst.scale.y, inst.scale.z));
+				collectMeshes(instBase);
+			}
 		}
 	}
 
