@@ -205,14 +205,12 @@ void main() {}
 const char* fragment = R"(
 #version 330 core
 
-// tipos de luz
 const int LIGHT_DIRECTIONAL = 0;
 const int LIGHT_POINT = 1;
 const int LIGHT_SPOT = 2;
 
 const float PI = 3.14159265359;
 
-// PCF otimizado: 8 amostras - bom custo/benefício
 const int PCF_SAMPLES = 8;
 const vec3 gridSamplingOffset[PCF_SAMPLES] = vec3[](
     vec3( 0.1,  0.1,  0.0),
@@ -245,17 +243,22 @@ uniform int hasGlossinessMap;
 uniform int hasSpecularF0Map;
 uniform int useMetalRoughness;
 uniform sampler2D metallicTex;
+uniform float metallicFactor;
+uniform float roughnessFactor;
 uniform sampler2D shadowMaps[15];
 uniform samplerCube shadowCubeMaps[15];
 uniform sampler2D transmissionTex;
 
-// --- [CSM] UNIFORMS PARA LUZ DIRECIONAL ---
-uniform sampler2DArray shadowMapDir; // Texture Array do Sol
-uniform float cascadePlaneDistances[16]; // Distâncias de corte
+uniform sampler2DArray shadowMapDir;
+uniform float cascadePlaneDistances[16];
 uniform int cascadeCount; 
-uniform mat4 cascadeLightSpaceMatrices[16]; // Matrizes de cada cascata
-uniform mat4 view; // View Matrix para calcular profundidade linear
-// ------------------------------------------
+uniform mat4 cascadeLightSpaceMatrices[16];
+uniform mat4 view;
+
+uniform samplerCube irradianceMap;
+uniform samplerCube prefilterMap;
+uniform sampler2D   brdfLUT;
+uniform int         hasIBL;
 
 uniform float transmissionFactor;
 uniform int hasNormalMap;
@@ -283,12 +286,12 @@ uniform vec3 environmentGroundColor;
 
 uniform int isAffectedByLight;
 uniform int acceptsShadows;
+uniform float hdrExposure = 1.0;
 
 const float diskRadius = 0.1;
 
 vec4 baseSample = vec4(1.0);
 
-// --- Poisson disk reduced to 8 for 2D sampling (cheap, good quality)
 const vec2 poisson8[8] = vec2[](
     vec2(-0.326212, -0.40581),
     vec2(-0.840144,  0.07358),
@@ -300,14 +303,12 @@ const vec2 poisson8[8] = vec2[](
     vec2( 0.185461, -0.893124)
 );
 
-// --- [CSM] FUNÇÃO DE CALCULO DE SOMBRA EM CASCATA CORRIGIDA ---
 float random(vec3 seed, int i) {
     vec4 seed4 = vec4(seed, i);
     float dot_product = dot(seed4, vec4(12.9898, 78.233, 45.164, 94.673));
     return fract(sin(dot_product) * 43758.5453);
 }
 
-// --- Poisson disk de 16 amostras para suavidade máxima ---
 const vec2 poisson16[16] = vec2[](
     vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725),
     vec2(-0.094184101, -0.92938870), vec2(0.34495938, 0.29387760),
@@ -319,16 +320,13 @@ const vec2 poisson16[16] = vec2[](
     vec2(0.19984126, 0.78641367), vec2(0.14383161, -0.14100790)
 );
 
-// Função de ruído para rotacionar o disco de amostragem por pixel
 float interleavedGradientNoise(vec2 n) {
     return fract(3.378 * fract(dot(n, vec2(0.754877666, 0.56984029))));
 }
 
-// --- [CSM] FUNÇÃO DE CÁLCULO DE SOMBRA EM CASCATA ---
 float ShadowCalculationCSM(vec3 fragPosWorld, vec3 N, vec3 L) {
     if (acceptsShadows == 0) return 0.0;
 
-    // 1. Seleciona a cascata baseada na profundidade da view
     vec4 fragPosViewSpace = view * vec4(fragPosWorld, 1.0);
     float depthValue = abs(fragPosViewSpace.z);
 
@@ -341,7 +339,6 @@ float ShadowCalculationCSM(vec3 fragPosWorld, vec3 N, vec3 L) {
     }
     if (layer == -1) layer = max(0, cascadeCount - 1);
 
-    // 2. Transforma para Light Space da cascata
     vec4 fragPosLS = cascadeLightSpaceMatrices[layer] * vec4(fragPosWorld, 1.0);
     vec3 projCoords = fragPosLS.xyz / fragPosLS.w;
     projCoords = projCoords * 0.5 + 0.5;
@@ -349,23 +346,19 @@ float ShadowCalculationCSM(vec3 fragPosWorld, vec3 N, vec3 L) {
     float currentDepth = projCoords.z;
     if (currentDepth > 1.0) return 0.0;
 
-    // 3. Bias adaptativo por cascata e inclinação
     float bias = max(0.0007 * (1.0 - dot(N, L)), 0.00007);
     if (layer == cascadeCount - 1) bias *= 0.5; 
     else bias *= 1.0 / (float(layer) + 1.0); 
 
-    // 4. Configuração do PCF Rotacionado
     float shadow = 0.0;
     vec2 texelSize = 1.0 / vec2(textureSize(shadowMapDir, 0));
     
-    // Gera rotação aleatória baseada na posição da tela
     float noise = interleavedGradientNoise(gl_FragCoord.xy);
     float angle = noise * 2.0 * PI;
     float s = sin(angle);
     float c = cos(angle);
     mat2 rotation = mat2(c, -s, s, c);
 
-    // Spread: 1.0 é nítido, 2.0+ é bem borrado (Soft Shadow)
     float spread = 1.5; 
 
     for(int i = 0; i < 16; ++i) {
@@ -377,7 +370,6 @@ float ShadowCalculationCSM(vec3 fragPosWorld, vec3 N, vec3 L) {
     return shadow / 16.0;
 }
 
-// --- SOMBRA PARA SPOT LIGHTS (2D) ---
 float ShadowCalculation2D(vec4 fragPosLS, sampler2D shadowMap, vec3 N, vec3 L) {
     if (acceptsShadows == 0) return 0.0;
 
@@ -391,7 +383,6 @@ float ShadowCalculation2D(vec4 fragPosLS, sampler2D shadowMap, vec3 N, vec3 L) {
     vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
     float bias = max(0.003 * (1.0 - dot(N, L)), 0.001);
 
-    // Rotação para Spot Lights
     float noise = interleavedGradientNoise(gl_FragCoord.xy);
     float angle = noise * 2.0 * PI;
     float s = sin(angle);
@@ -410,7 +401,6 @@ float ShadowCalculation2D(vec4 fragPosLS, sampler2D shadowMap, vec3 N, vec3 L) {
     return shadow / 16.0;
 }
 
-// --- SOMBRA PARA POINT LIGHTS (CUBEMAP) ---
 float ShadowCalculationPoint(int idx, vec3 fragPos) {
     if (acceptsShadows == 0) return 0.0;
 
@@ -421,12 +411,10 @@ float ShadowCalculationPoint(int idx, vec3 fragPos) {
     float shadow = 0.0;
     int samples = 16;
     
-    // Suavização baseada na distância (simula penumbra)
     float viewDistance = length(viewPos - fragPos);
     float diskRadiusLocal = (1.0 + (viewDistance / lightMaxDistance[idx])) * diskRadius;
 
     for (int i = 0; i < samples; ++i) {
-        // Reutilizamos a lógica de grid mas com maior densidade ou offset poisson
         vec3 samplePos = fragToLight + gridSamplingOffset[i % 8] * diskRadiusLocal;
         float closestDepth = texture(shadowCubeMaps[idx], samplePos).r;
         closestDepth *= lightMaxDistance[idx];
@@ -436,13 +424,15 @@ float ShadowCalculationPoint(int idx, vec3 fragPos) {
     return shadow / float(samples);
 }
 
-// Fresnel (F) - Schlick approximation
 vec3 fresnelSchlick(float cosTheta, vec3 F0) {
     vec3 fresnel = F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
-    return mix(F0, fresnel, reflectionsStrength); // strength=0 → sem fresnel, strength=1 → fresnel completo
+    return mix(F0, fresnel, reflectionsStrength);
 }
 
-// Normal Distribution Function (D) - Trowbridge-Reitz (GGX)
+vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness) {
+    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
 float DistributionGGX(vec3 N, vec3 H, float roughness) {
     float a = roughness*roughness;
     float a2 = a*a;
@@ -453,12 +443,10 @@ float DistributionGGX(vec3 N, vec3 H, float roughness) {
     float denom = (NdotH2 * (a2 - 1.0) + 1.0);
     denom = PI * denom * denom;
 
-    return nom / max(denom, 0.0000001); // Evita divisão por zero
+    return nom / max(denom, 0.0000001);
 }
 
-// Geometry (G) - Schlick-GGX approximation (termos G1 e G2)
 float GeometrySchlickGGX(float NdotV, float roughness) {
-    // k otimizado para luzes directas/pontuais/spots
     float r = (roughness + 1.0);
     float k = (r*r) / 8.0; 
     float nom = NdotV;
@@ -466,7 +454,6 @@ float GeometrySchlickGGX(float NdotV, float roughness) {
     return nom / max(denom, 0.0000001);
 }
 
-// Geometry (G) - Smith's method (combina G1(N,L) * G1(N,V))
 float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
     float NdotV = max(dot(N, V), 0.0);
     float NdotL = max(dot(N, L), 0.0);
@@ -475,59 +462,55 @@ float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
     return ggx1 * ggx2;
 }
 
-// -----------------------------------------------------
-
 void main() {
   baseSample = texture(baseColorTex, fs_in.TexCoords);
   if (alphaMode == 1 && baseSample.a < alphaCutoff) discard;
   vec3 baseColor = baseSample.rgb;
+  // NÃO aplicar pow(2.2) aqui: as texturas de cor são carregadas com GL_SRGB8_ALPHA8 /
+  // GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM, então o OpenGL já converte sRGB→linear
+  // automaticamente na leitura. Aplicar de novo causaria double-degamma (ficaria laranja).
 
-  // 1. Determinação das Propriedades do Material
   float metallic;
   float roughness;
-  vec3  F0_base; // F0 base para dielétricos
+  vec3  F0_base;
 
   if (useMetalRoughness == 1) {
     vec4 metallicProps = texture(metallicTex, fs_in.TexCoords);
 
-    roughness = metallicProps.g;  // Canal G = Roughness
-    metallic  = metallicProps.b;  // Canal B = Metallic (estava sendo ignorado)
+    // glTF spec: roughness no canal G, metallic no canal B.
+    // Os fatores do material MULTIPLICAM o valor da textura (Blender exporta assim).
+    roughness = metallicProps.g * roughnessFactor;
+    metallic  = metallicProps.b * metallicFactor;
 
-    // F0 interpolado: dielétrico (0.04) → metal (albedo)
     F0_base = mix(vec3(0.04), baseColor, metallic);
-  } else {
-    // Specular/Glossiness Workflow (Tratado como Dielétrico para manter consistência)
-    
-    // Glossiness é 1 - Roughness
-    if (hasGlossinessMap == 1) {
-        float glossiness = texture(glossinessTex, fs_in.TexCoords).r;
-        roughness = 1.0 - glossiness;
-    } else {
-        // High default roughness (low reflectivity) if no map is supplied
-        roughness = 0.8;
-    }
-    
+  } else if (hasGlossinessMap == 1) {
+    // KHR_materials_pbrSpecularGlossiness:
+    // - specularGlossinessTexture: RGB = especular F0 (sRGB), A = glossiness (linear)
+    // - glossiness está no canal A da textura combinada (specularGlossiness)
+    float glossiness = texture(glossinessTex, fs_in.TexCoords).a;
+    roughness = 1.0 - glossiness;
+    // metallic não existe neste workflow — usar 0 para não suprimir kD
     metallic = 0.0;
-    
-    // F0 da textura specularF0Tex, fallback para 0.04
+
     if (hasSpecularF0Map == 1) {
+      // Os canais RGB da specularGlossinessTexture já vêm linearizados pelo GL_SRGB
       F0_base = texture(specularF0Tex, fs_in.TexCoords).rgb;
     } else {
       F0_base = vec3(0.04);
     }
+  } else {
+    // Sem textura: apenas fatores escalares do material
+    metallic  = metallicFactor;
+    roughness = roughnessFactor;
+    F0_base   = mix(vec3(0.04), baseColor, metallic);
   }
   
-  // Clamp roughness (evita artefatos e reflexos infinitamente nítidos)
   roughness = clamp(roughness, 0.01, 1.0);
   
-  // Normal mapping: compute TBN only if map exists - avoids cost if not needed
   vec3 N;
   if (hasNormalMap == 1) {
-    // OPTIM: sample only .rg — compatible with both GL_RGBA and GL_COMPRESSED_RG_RGTC2 (BC5).
-    // Z is reconstructed analytically, saving one channel of VRAM and bandwidth.
     vec2 rg = texture(normalMapTex, fs_in.TexCoords).rg * 2.0 - 1.0;
     vec3 tangentNormal = vec3(rg, sqrt(max(0.0, 1.0 - dot(rg, rg))));
-    // build orthonormal TBN (normalize once)
     vec3 T = normalize(fs_in.Tangent);
     vec3 B = normalize(fs_in.Bitangent);
     vec3 Nor = normalize(fs_in.Normal);
@@ -537,23 +520,39 @@ void main() {
     N = normalize(fs_in.Normal);
   }
 
-  // precompute view vector once
   vec3 V = normalize(viewPos - fs_in.FragPos);
 
   vec3 ambientSum = vec3(0.0);
   vec3 directLightSum = vec3(0.0);
 
-  float hemi = 0.5 * (dot(N, vec3(0, 1, 0)) + 1.0);
-  vec3 ambientHemi = mix(environmentGroundColor, environmentSkyColor, hemi);
-  vec3 ambientContribution = baseColor * ambientHemi * environmentStrength;
+  vec3 ambientContribution;
+  if (hasIBL == 1) {
+    // iblScale = 1.0 para ambos os workflows: não penalizar glossiness arbitrariamente
+    float iblScale = 1.0;
+
+    vec3 kS_amb = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0_base, roughness);
+    vec3 kD_amb = (vec3(1.0) - kS_amb) * (1.0 - metallic);
+    vec3 irradiance = texture(irradianceMap, N).rgb;
+    vec3 diffuse_ibl = irradiance * baseColor;
+
+    const float MAX_REFLECTION_LOD = 4.0;
+    vec3 R = reflect(-V, N);
+    vec3 prefilteredColor = textureLod(prefilterMap, R, roughness * MAX_REFLECTION_LOD).rgb;
+    vec2 envBRDF = texture(brdfLUT, vec2(max(dot(N, V), 0.0), roughness)).rg;
+    vec3 specular_ibl = prefilteredColor * (F0_base * envBRDF.x + envBRDF.y) * reflectionsStrength;
+
+    ambientContribution = (kD_amb * diffuse_ibl + specular_ibl) * environmentStrength;
+  } else {
+    float hemi = 0.5 * (dot(N, vec3(0, 1, 0)) + 1.0);
+    vec3 ambientHemi = mix(environmentGroundColor, environmentSkyColor, hemi);
+    ambientContribution = baseColor * ambientHemi * environmentStrength;
+  }
 
   const float localAmbientFactor = 0.05;
 
-  // Loop principal
   for (int i = 0; i < 15; ++i) { 
-    if (i >= numLights) break; // Termina se o índice ultrapassar as luzes ativas
+    if (i >= numLights) break;
     
-    // fetch light data
     int ltype = lightType[i];
     vec3 L;
     float attenuation = 1.0;
@@ -569,8 +568,6 @@ void main() {
         continue;
       }
       
-      // --- AQUI A MAGICA DO CSM ---
-      // Chama a nova função de cascata, ignorando o FragPosLightSpace antigo
       shadow = ShadowCalculationCSM(fs_in.FragPos, N, L);
     }
     else if (ltype == LIGHT_POINT) {
@@ -587,7 +584,7 @@ void main() {
       }
       shadow = ShadowCalculationPoint(i, fs_in.FragPos);
     }
-    else { // SPOT
+    else {
       vec3 toLight = lightPos[i] - fs_in.FragPos;
       float dist = length(toLight);
       if (dist > lightMaxDistance[i]) continue;
@@ -609,12 +606,9 @@ void main() {
     float NdotH = max(dot(N, H), 0.0);
     float NdotL = max(dot(N, L), 0.0);
     float VdotH = max(dot(V, H), 0.0);
-
-    // 2. PBR BRDF Terms
     
     vec3 F = fresnelSchlick(VdotH, F0_base);
     
-    // Normal Distribution Function (D)
     float D = DistributionGGX(N, H, roughness);
     
     float G = GeometrySmith(N, V, L, roughness);
@@ -628,7 +622,7 @@ void main() {
     
     vec3 directContrib = (diffuse + specularBRDF) * lightCol * NdotL * intensity;
 
-    float shadowTerm = 1.0 - shadow; // reduz a luz direta proporcional à sombra
+    float shadowTerm = 1.0 - shadow;
 
     directLightSum += attenuation * directContrib * shadowTerm;
     
@@ -640,20 +634,25 @@ void main() {
 
   vec3 result = ambientContribution + ambientSum + directLightSum;
 
-  // Se desejar ainda um pequeno piso global para evitar completamente pixels muito escuros,
-  // use um floor baixo (por exemplo 0.05) — remova se não quiser:
-  // result = max(result, baseColor * 0.05);
-
   result = mix(result, result + transLight, transAmt);
+
+  // The FBO is GL_RGB LDR. PBR produces HDR linear values — must tonemap + gamma
+  // here so the stored pixel is already correct sRGB, consistent with the skybox.
+  // ACES Filmic (Narkowicz 2015): compresses highlights without oversaturating.
+  #define ACES(c) clamp(((c)*(2.51*(c)+0.03))/((c)*(2.43*(c)+0.59)+0.14),0.0,1.0)
+  #define TO_SRGB(c) pow(max((c),vec3(0.0)),vec3(1.0/2.2))
 
   if (isAffectedByLight == 0) {
     vec3 fallback = ambientContribution + ambientSum;
     fallback = max(fallback, baseColor * 0.7);
     fallback = mix(fallback, fallback + transLight, transAmt);
-    FragColor = vec4(fallback, (alphaMode == 2 ? baseSample.a : 1.0));
+    FragColor = vec4(TO_SRGB(ACES(fallback * hdrExposure)), (alphaMode == 2 ? baseSample.a : 1.0));
   } else {
-    FragColor = vec4(result, (alphaMode == 2 ? baseSample.a : 1.0));
+    FragColor = vec4(TO_SRGB(ACES(result * hdrExposure)), (alphaMode == 2 ? baseSample.a : 1.0));
   }
+
+  #undef ACES
+  #undef TO_SRGB
 }
 )";
 
@@ -1007,6 +1006,229 @@ void main() {
 }
 )";
 
+// ============================================================
+// IBL PRE-COMPUTATION SHADERS
+// ============================================================
+
+// Shared vertex: renders a unit cube for cubemap capture passes
+const char* iblCubeVertex = R"(
+#version 330 core
+layout (location = 0) in vec3 aPos;
+out vec3 localPos;
+uniform mat4 projection;
+uniform mat4 view;
+void main() {
+    localPos = aPos;
+    gl_Position = projection * view * vec4(aPos, 1.0);
+}
+)";
+
+// --- Pass 1: Equirectangular HDR → Cubemap ---
+const char* iblEquirectToCubeFragment = R"(
+#version 330 core
+out vec4 FragColor;
+in vec3 localPos;
+uniform sampler2D equirectangularMap;
+const vec2 invAtan = vec2(0.1591, 0.3183);
+vec2 SampleSphericalMap(vec3 v) {
+    vec2 uv = vec2(atan(v.z, v.x), asin(v.y));
+    uv *= invAtan;
+    uv += 0.5;
+    return uv;
+}
+void main() {
+    vec2 uv = SampleSphericalMap(normalize(localPos));
+    vec3 color = texture(equirectangularMap, uv).rgb;
+    FragColor = vec4(color, 1.0);
+}
+)";
+
+// --- Pass 2: Irradiance Convolution (diffuse IBL) ---
+const char* iblIrradianceFragment = R"(
+#version 330 core
+out vec4 FragColor;
+in vec3 localPos;
+uniform samplerCube environmentMap;
+const float PI = 3.14159265359;
+void main() {
+    vec3 N = normalize(localPos);
+    vec3 up    = vec3(0.0, 1.0, 0.0);
+    vec3 right = normalize(cross(up, N));
+    up         = normalize(cross(N, right));
+
+    vec3 irradiance = vec3(0.0);
+    float sampleDelta = 0.025;
+    float nrSamples = 0.0;
+
+    for (float phi = 0.0; phi < 2.0 * PI; phi += sampleDelta) {
+        for (float theta = 0.0; theta < 0.5 * PI; theta += sampleDelta) {
+            // spherical to cartesian (in tangent space)
+            vec3 tangentSample = vec3(sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta));
+            // tangent to world
+            vec3 sampleVec = tangentSample.x * right + tangentSample.y * up + tangentSample.z * N;
+            irradiance += texture(environmentMap, sampleVec).rgb * cos(theta) * sin(theta);
+            nrSamples++;
+        }
+    }
+    irradiance = PI * irradiance * (1.0 / float(nrSamples));
+    FragColor = vec4(irradiance, 1.0);
+}
+)";
+
+// --- Pass 3: Prefiltered Environment Map (specular IBL, roughness mips) ---
+const char* iblPrefilterFragment = R"(
+#version 330 core
+out vec4 FragColor;
+in vec3 localPos;
+uniform samplerCube environmentMap;
+uniform float roughness;
+const float PI = 3.14159265359;
+
+float DistributionGGX_IBL(vec3 N, vec3 H, float roughness) {
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float NdotH  = max(dot(N, H), 0.0);
+    float NdotH2 = NdotH * NdotH;
+    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
+    denom = PI * denom * denom;
+    return a2 / denom;
+}
+
+float RadicalInverse_VdC(uint bits) {
+    bits = (bits << 16u) | (bits >> 16u);
+    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+    return float(bits) * 2.3283064365386963e-10;
+}
+
+vec2 Hammersley(uint i, uint N) {
+    return vec2(float(i)/float(N), RadicalInverse_VdC(i));
+}
+
+vec3 ImportanceSampleGGX(vec2 Xi, vec3 N, float roughness) {
+    float a = roughness * roughness;
+    float phi = 2.0 * PI * Xi.x;
+    float cosTheta = sqrt((1.0 - Xi.y) / (1.0 + (a*a - 1.0) * Xi.y));
+    float sinTheta = sqrt(1.0 - cosTheta * cosTheta);
+    vec3 H = vec3(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
+    vec3 up = abs(N.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
+    vec3 tangent   = normalize(cross(up, N));
+    vec3 bitangent = cross(N, tangent);
+    return normalize(tangent * H.x + bitangent * H.y + N * H.z);
+}
+
+void main() {
+    vec3 N = normalize(localPos);
+    vec3 R = N;
+    vec3 V = R;
+    const uint SAMPLE_COUNT = 1024u;
+    vec3 prefilteredColor = vec3(0.0);
+    float totalWeight = 0.0;
+    for (uint i = 0u; i < SAMPLE_COUNT; ++i) {
+        vec2 Xi = Hammersley(i, SAMPLE_COUNT);
+        vec3 H  = ImportanceSampleGGX(Xi, N, roughness);
+        vec3 L  = normalize(2.0 * dot(V, H) * H - V);
+        float NdotL = max(dot(N, L), 0.0);
+        if (NdotL > 0.0) {
+            float D   = DistributionGGX_IBL(N, H, roughness);
+            float NdotH = max(dot(N, H), 0.0);
+            float HdotV = max(dot(H, V), 0.0);
+            float pdf   = D * NdotH / (4.0 * HdotV) + 0.0001;
+            float resolution = 512.0;
+            float saTexel  = 4.0 * PI / (6.0 * resolution * resolution);
+            float saSample = 1.0 / (float(SAMPLE_COUNT) * pdf + 0.0001);
+            float mipLevel = roughness == 0.0 ? 0.0 : 0.5 * log2(saSample / saTexel);
+            prefilteredColor += textureLod(environmentMap, L, mipLevel).rgb * NdotL;
+            totalWeight      += NdotL;
+        }
+    }
+    prefilteredColor = prefilteredColor / totalWeight;
+    FragColor = vec4(prefilteredColor, 1.0);
+}
+)";
+
+// --- Pass 4: BRDF Integration LUT ---
+const char* iblBrdfLUTVertex = R"(
+#version 330 core
+layout (location = 0) in vec2 aPos;
+layout (location = 1) in vec2 aTexCoords;
+out vec2 TexCoords;
+void main() {
+    TexCoords = aTexCoords;
+    gl_Position = vec4(aPos, 0.0, 1.0);
+}
+)";
+
+const char* iblBrdfLUTFragment = R"(
+#version 330 core
+out vec2 FragColor;
+in vec2 TexCoords;
+const float PI = 3.14159265359;
+
+float RadicalInverse_VdC(uint bits) {
+    bits = (bits << 16u) | (bits >> 16u);
+    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+    return float(bits) * 2.3283064365386963e-10;
+}
+vec2 Hammersley(uint i, uint N) {
+    return vec2(float(i)/float(N), RadicalInverse_VdC(i));
+}
+vec3 ImportanceSampleGGX(vec2 Xi, vec3 N, float roughness) {
+    float a = roughness * roughness;
+    float phi = 2.0 * PI * Xi.x;
+    float cosTheta = sqrt((1.0 - Xi.y) / (1.0 + (a*a - 1.0) * Xi.y));
+    float sinTheta = sqrt(1.0 - cosTheta*cosTheta);
+    vec3 H = vec3(cos(phi)*sinTheta, sin(phi)*sinTheta, cosTheta);
+    vec3 up = abs(N.z) < 0.999 ? vec3(0,0,1) : vec3(1,0,0);
+    vec3 tangent   = normalize(cross(up, N));
+    vec3 bitangent = cross(N, tangent);
+    return normalize(tangent * H.x + bitangent * H.y + N * H.z);
+}
+float GeometrySchlickGGX_IBL(float NdotV, float roughness) {
+    float a = roughness;
+    float k = (a * a) / 2.0;
+    return NdotV / (NdotV * (1.0 - k) + k);
+}
+float GeometrySmith_IBL(vec3 N, vec3 V, vec3 L, float roughness) {
+    float NdotV = max(dot(N, V), 0.0);
+    float NdotL = max(dot(N, L), 0.0);
+    return GeometrySchlickGGX_IBL(NdotV, roughness) * GeometrySchlickGGX_IBL(NdotL, roughness);
+}
+vec2 IntegrateBRDF(float NdotV, float roughness) {
+    vec3 V = vec3(sqrt(1.0 - NdotV*NdotV), 0.0, NdotV);
+    float A = 0.0, B = 0.0;
+    vec3 N = vec3(0,0,1);
+    const uint SAMPLE_COUNT = 1024u;
+    for (uint i = 0u; i < SAMPLE_COUNT; ++i) {
+        vec2 Xi = Hammersley(i, SAMPLE_COUNT);
+        vec3 H  = ImportanceSampleGGX(Xi, N, roughness);
+        vec3 L  = normalize(2.0 * dot(V, H) * H - V);
+        float NdotL = max(L.z, 0.0);
+        float NdotH = max(H.z, 0.0);
+        float VdotH = max(dot(V, H), 0.0);
+        if (NdotL > 0.0) {
+            float G     = GeometrySmith_IBL(N, V, L, roughness);
+            float G_Vis = (G * VdotH) / (NdotH * NdotV);
+            float Fc    = pow(1.0 - VdotH, 5.0);
+            A += (1.0 - Fc) * G_Vis;
+            B += Fc * G_Vis;
+        }
+    }
+    return vec2(A, B) / float(SAMPLE_COUNT);
+}
+void main() {
+    FragColor = IntegrateBRDF(TexCoords.x, TexCoords.y);
+}
+)";
+
+// ============================================================
+// SKYBOX (unchanged)
+// ============================================================
 const char* hdrBgVertex = R"(
 #version 330 core
 layout (location = 0) in vec3 aPos;

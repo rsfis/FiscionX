@@ -971,6 +971,8 @@ namespace FiscionX {
 		GLuint specularF0Tex = 0;
 		GLuint metallicTex = 0;
 		bool useMetalRoughness = false;
+		float metallicFactor = 1.0f; // glTF spec default = 1.0
+		float roughnessFactor = 1.0f; // glTF spec default = 1.0
 
 		std::string alphaMode = "OPAQUE";
 		std::string originalAlphaMode = "OPAQUE";
@@ -1074,11 +1076,15 @@ namespace FiscionX {
 			GLint glossinessTex = -1, hasGlossinessMap = -1, glossinessInAlphaOfSpecular = -1;
 			GLint specularF0Tex = -1, hasSpecularF0Map = -1;
 			GLint metallicTex = -1, useMetalRoughness = -1;
+			GLint metallicFactor = -1, roughnessFactor = -1;
 			GLint environmentStrength = -1, environmentSkyColor = -1, environmentGroundColor = -1;
 			GLint reflectionsStrength = -1;
 			GLint isAffectedByLight = -1, acceptsShadows = -1;
 			GLint alpha = -1, numLights = -1;
 			GLint hasNormalMap = -1;
+			GLint hdrExposure = -1;
+			// IBL uniforms
+			GLint irradianceMap = -1, prefilterMap = -1, brdfLUT = -1, hasIBL = -1;
 			// Uniforms de luz (até 10)
 			struct LightUniforms {
 				GLint type = -1, pos = -1, dir = -1, color = -1, intensity = -1;
@@ -1175,6 +1181,13 @@ namespace FiscionX {
 		static GLuint mainDepthBuffer;
 		static GLuint screenQuadVAO, screenQuadVBO;
 		static GLuint godRaysShader;
+
+		// --- IBL ---
+		static GLuint iblIrradianceMap;    // samplerCube — diffuse irradiance
+		static GLuint iblPrefilterMap;     // samplerCube — specular prefiltered (mip chain)
+		static GLuint iblBrdfLUT;          // sampler2D   — BRDF integration LUT
+		static bool   iblReady;            // true after successful pre-computation
+		// -----------
 
 		static float sunDiskSize;
 		static float sunHaloSize;
