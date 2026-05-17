@@ -80,6 +80,7 @@ void update() {
         vehicle->setSteeringValue(0, 1);
     }
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_T)) {
+        FiscionX::Core::LoadHDR("assets/environment/ferndale_studio_12_2k.hdr");
         carChassiBody->setTransform(FiscionX::Vector3(3, 10, -4), FiscionX::Vector3(0, 0, 0));
     }
 
@@ -154,7 +155,7 @@ void draw() {
 
     FiscionX::Core::Draw::PostProcessing(viewProj, dirLight); // No godray; Add Bloom
     //FiscionX::Physics::DrawDebugWorld(projection, view);
-
+    
     FiscionX::Core::Draw::SwapBuffers();
 }
 
@@ -168,14 +169,15 @@ int main() {
     FiscionX::Physics::CreatePhysicsWorld(FiscionX::Vector3(0, -9.81f, 0), 10);
     FiscionX::Core::LoadHDR("assets/environment/puresky.hdr");
 
-    FiscionX::Core::AMBIENT_LIGHT_INTENSITY = 3.0f;
+    FiscionX::Core::AMBIENT_LIGHT_INTENSITY = 0.6f;
+    FiscionX::Core::HDR_EXPOSURE = 1.0f;
 
     dirLight = new FiscionX::Light();
     dirLight->type = FiscionX::LIGHT_DIRECTIONAL;
     dirLight->yaw = 0;
     dirLight->pitch = -138;
     dirLight->color = FiscionX::Vector3(1.0f, 1.0f, 1.0f);
-    dirLight->intensity = 4.0f;
+    dirLight->intensity = 5.0f;
     dirLight->maxDistance = 0.0f;
     dirLight->cutOff = 0.0f;
     dirLight->outerCutOff = 0.0f;
@@ -204,7 +206,7 @@ int main() {
 
     FiscionX::Core::CreateAllShadowMaps();
 
-    // Emission Textures; Lights extracted from glb; Contact Shadows; Anim Blending; Draw halo and glow also for point lights and spot lights; Point lights are traversing walls/solid objects (Criação da textura está errada, computar está errado, renderizar está errado); Sombras e Luz devem passar por malhas com transparência; Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Terrains; Water
+    // Real HDR; Displacement Map & SPOM; Emission Textures; Lights extracted from glb; Contact Shadows; Anim Blending; Draw halo and glow also for point lights and spot lights; Point lights are traversing walls/solid objects (Criação da textura está errada, computar está errado, renderizar está errado); Sombras e Luz devem passar por malhas com transparência; Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Terrains; Water
 
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb",
@@ -219,7 +221,7 @@ int main() {
         FiscionX::Vector3(0.1f, 0.1f, 0.1f)
     );
     boxModel = new FiscionX::Model(
-        "assets/models/metal_water_tank_2.glb",
+        "assets/models/factory.glb",
         FiscionX::Vector3(0, 0.09f, 4.2f),
         FiscionX::Vector3(2, 0, 0),
         FiscionX::Vector3(0.5f, 0.5f, 0.5f)
@@ -233,13 +235,14 @@ int main() {
 
     skinnedModel->playAnim("Armature|Idle_01", true); // Armature|Idle_01 / CameraAction
 
+
+    staticModel->buildLODs({ 0.5f, 0.25f, 0.1f }); // gera 3 LODs
+    staticModel->lodDistances = { 10.0f, 40.0f, 250.0f }; // distâncias de transição
+    staticModel->enableFrustumCulling = true;
+
     kratosStaticModel->buildLODs({ 0.5f, 0.25f, 0.1f }); // gera 3 LODs
     kratosStaticModel->lodDistances = { 10.0f, 40.0f, 250.0f }; // distâncias de transição
     kratosStaticModel->enableFrustumCulling = true;
-
-    staticModel->buildLODs({ 0.5f, 0.25f, 0.1f }); // gera 3 LODs
-    staticModel->lodDistances = { 10.0f, 40.0f, 80.0f }; // distâncias de transição
-    staticModel->enableFrustumCulling = true;
 
     skinnedModel->buildLODs({ 0.5f, 0.25f, 0.1f }); // gera 3 LODs
     skinnedModel->lodDistances = { 10.0f, 40.0f, 80.0f }; // distâncias de transição

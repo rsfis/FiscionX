@@ -11,6 +11,9 @@ add_executable(ExampleWithFiscionX
     source/stb_image.cpp
     source/stb_image_write.cpp
     source/tiny_gltf.cpp
+    source/meshoptimizer_simplifier.cpp
+    source/allocator.cpp
+    source/indexgenerator.cpp
 )
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
