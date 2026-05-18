@@ -167,7 +167,7 @@ int main() {
     FiscionX::Core::SetWindowIcon("assets/icons/fiscionx_logo_big_512.png");
     FiscionX::Core::SetCursorMode(FISCIONX_CURSOR_DISABLED);
     FiscionX::Physics::CreatePhysicsWorld(FiscionX::Vector3(0, -9.81f, 0), 10);
-    FiscionX::Core::LoadHDR("assets/environment/puresky.hdr");
+    FiscionX::Core::LoadHDR("assets/environment/street.hdr");
 
     FiscionX::Core::AMBIENT_LIGHT_INTENSITY = 0.4f;
     FiscionX::Core::HDR_EXPOSURE = 1.0f;
