@@ -1,8 +1,4 @@
 # FiscionX
-<img width="885" height="717" alt="image" src="https://github.com/user-attachments/assets/c761c5e5-0229-4de1-87a1-d46a3ef849a3" />
-<img width="520" height="714" alt="image" src="https://github.com/user-attachments/assets/29d0ca4f-d690-4ff6-af05-4d40165cfc3a" />
-
-
 **FiscionX** is a modern and lightweight C++ framework built on OpenGL for game development designed for Windows x64 and x86 architectures. It offers out-of-the-box support for skinned and static 3D models, spatial audio, embedded GLB model loading, physics, and a powerful shader system — all designed for fast prototyping and efficient runtime performance.
 
 ## ✨ Features
@@ -133,3 +129,6 @@ Or:
 ## Links
 Discord - https://discord.gg/42ScmJA2t6.
 Wiki - https://github.com/rsfis/fiscionx/wiki.
+
+<img width="885" height="717" alt="image" src="https://github.com/user-attachments/assets/c761c5e5-0229-4de1-87a1-d46a3ef849a3" />
+<img width="520" height="714" alt="image" src="https://github.com/user-attachments/assets/29d0ca4f-d690-4ff6-af05-4d40165cfc3a" />
