@@ -397,7 +397,6 @@ bool FiscionX::Core::LoadHDR(const char* path)
 	glDeleteProgram(shBrdfLUT);
 
 	iblReady = true;
-	std::cout << "IBL pre-computation complete (irradiance + prefilter + BRDF LUT)\n";
 	return true;
 }
 
