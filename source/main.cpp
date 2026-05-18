@@ -169,7 +169,7 @@ int main() {
     FiscionX::Physics::CreatePhysicsWorld(FiscionX::Vector3(0, -9.81f, 0), 10);
     FiscionX::Core::LoadHDR("assets/environment/puresky.hdr");
 
-    FiscionX::Core::AMBIENT_LIGHT_INTENSITY = 0.6f;
+    FiscionX::Core::AMBIENT_LIGHT_INTENSITY = 0.4f;
     FiscionX::Core::HDR_EXPOSURE = 1.0f;
 
     dirLight = new FiscionX::Light();
@@ -221,7 +221,7 @@ int main() {
         FiscionX::Vector3(0.1f, 0.1f, 0.1f)
     );
     boxModel = new FiscionX::Model(
-        "assets/models/factory.glb",
+        "assets/models/tree_scene2.glb",
         FiscionX::Vector3(0, 0.09f, 4.2f),
         FiscionX::Vector3(2, 0, 0),
         FiscionX::Vector3(0.5f, 0.5f, 0.5f)
