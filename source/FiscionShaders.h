@@ -532,12 +532,16 @@ void main() {
 
     vec3 kS_amb = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0_base, roughness);
     vec3 kD_amb = (vec3(1.0) - kS_amb) * (1.0 - metallic);
-    vec3 irradiance = texture(irradianceMap, N).rgb;
+    // Clamp raw IBL samples to prevent astronomically-bright HDR sun pixels
+    // (which survive convolution as high-energy spikes) from overflowing the
+    // PBR accumulator and inverting through ACES into a black artifact.
+    const float IBL_SAMPLE_MAX = 20.0;
+    vec3 irradiance = min(texture(irradianceMap, N).rgb, vec3(IBL_SAMPLE_MAX));
     vec3 diffuse_ibl = irradiance * baseColor;
 
     const float MAX_REFLECTION_LOD = 4.0;
     vec3 R = reflect(-V, N);
-    vec3 prefilteredColor = textureLod(prefilterMap, R, roughness * MAX_REFLECTION_LOD).rgb;
+    vec3 prefilteredColor = min(textureLod(prefilterMap, R, roughness * MAX_REFLECTION_LOD).rgb, vec3(IBL_SAMPLE_MAX));
     vec2 envBRDF = texture(brdfLUT, vec2(max(dot(N, V), 0.0), roughness)).rg;
     vec3 specular_ibl = prefilteredColor * (F0_base * envBRDF.x + envBRDF.y) * reflectionsStrength;
 
@@ -547,6 +551,15 @@ void main() {
     vec3 ambientHemi = mix(environmentGroundColor, environmentSkyColor, hemi);
     ambientContribution = baseColor * ambientHemi * environmentStrength;
   }
+
+  // Cap the IBL contribution luminance to avoid NaN / overflow / ACES inversion
+  // when the HDR environment contains an extremely bright sun disk (tens of thousands
+  // of nits). The irradiance convolution spreads that energy everywhere, so every
+  // surface facing the sun can receive values >>1 that cause ACES to produce values
+  // slightly above 1.0 per-channel, resulting in the characteristic black artifact.
+  // We cap BEFORE multiplying by environmentStrength so the tonemap input stays sane.
+  const float IBL_MAX = 10.0;
+  ambientContribution = min(ambientContribution, vec3(IBL_MAX));
 
   const float localAmbientFactor = 0.05;
 
@@ -1059,6 +1072,11 @@ void main() {
     vec3 irradiance = vec3(0.0);
     float sampleDelta = 0.025;
     float nrSamples = 0.0;
+    // IBL_BAKE_MAX: caps the raw HDR environment sample so that a single
+    // extremely bright sun disk (50 000+ nits) cannot dominate the entire
+    // irradiance integral, which would flood every surface with blown-out
+    // energy and invert through ACES into the characteristic black artifact.
+    const float IBL_BAKE_MAX = 20.0;
 
     for (float phi = 0.0; phi < 2.0 * PI; phi += sampleDelta) {
         for (float theta = 0.0; theta < 0.5 * PI; theta += sampleDelta) {
@@ -1066,7 +1084,7 @@ void main() {
             vec3 tangentSample = vec3(sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta));
             // tangent to world
             vec3 sampleVec = tangentSample.x * right + tangentSample.y * up + tangentSample.z * N;
-            irradiance += texture(environmentMap, sampleVec).rgb * cos(theta) * sin(theta);
+            irradiance += min(texture(environmentMap, sampleVec).rgb, vec3(IBL_BAKE_MAX)) * cos(theta) * sin(theta);
             nrSamples++;
         }
     }
@@ -1140,7 +1158,7 @@ void main() {
             float saTexel  = 4.0 * PI / (6.0 * resolution * resolution);
             float saSample = 1.0 / (float(SAMPLE_COUNT) * pdf + 0.0001);
             float mipLevel = roughness == 0.0 ? 0.0 : 0.5 * log2(saSample / saTexel);
-            prefilteredColor += textureLod(environmentMap, L, mipLevel).rgb * NdotL;
+            prefilteredColor += min(textureLod(environmentMap, L, mipLevel).rgb, vec3(20.0)) * NdotL;
             totalWeight      += NdotL;
         }
     }
