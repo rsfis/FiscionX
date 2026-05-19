@@ -3336,6 +3336,30 @@ void FiscionX::Model::drawSubMesh(
 		else { glEnable(GL_CULL_FACE); glCullFace(GL_FRONT); }
 
 		glUniformMatrix4fv(uniformCache.model, 1, GL_FALSE, glm::value_ptr(modelMatrix));
+
+		// === Alpha-transparent shadow support ===
+		// Determine alphaMode for this submesh
+		int depthAlphaMode = 0;
+		if (mesh.alphaMode == "MASK")  depthAlphaMode = 1;
+		else if (mesh.alphaMode == "BLEND") depthAlphaMode = 2;
+
+		GLint locAlphaMode = glGetUniformLocation(shader, "alphaMode");
+		GLint locAlphaCutoff = glGetUniformLocation(shader, "alphaCutoff");
+		GLint locBaseTex = glGetUniformLocation(shader, "baseColorTex");
+		GLint locTransFactor = glGetUniformLocation(shader, "transmissionFactor");
+
+		if (locAlphaMode != -1) glUniform1i(locAlphaMode, depthAlphaMode);
+		if (locAlphaCutoff != -1) glUniform1f(locAlphaCutoff, mesh.alphaCutoff);
+		if (locTransFactor != -1) glUniform1f(locTransFactor, mesh.transmissionFactor);
+
+		// Bind base color texture so the fragment shader can sample alpha
+		if (locBaseTex != -1 && mesh.baseColorTex != 0) {
+			glActiveTexture(GL_TEXTURE0);
+			glBindTexture(GL_TEXTURE_2D, mesh.baseColorTex);
+			glUniform1i(locBaseTex, 0);
+		}
+		// ========================================
+
 		glDrawElements(GL_TRIANGLES, activeIndexCount, activeIndexType, 0);
 		glBindVertexArray(0);
 		glUseProgram(0);

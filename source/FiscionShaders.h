@@ -125,9 +125,12 @@ void main() {
 const char* depth2DskinnedVertex = R"(
 #version 420 core
 
-layout(location = 0) in vec3 aPos;
+layout(location = 0) in vec3  aPos;
+layout(location = 3) in vec2  aTexCoord;
 layout(location = 4) in uvec4 aJoint;
 layout(location = 5) in vec4  aWeight;
+
+out vec2 vTexCoord;
 
 layout(std140, binding = 0) uniform Skin { mat4 bones[100]; };
 
@@ -135,6 +138,7 @@ uniform mat4 model;
 uniform mat4 lightSpaceMatrix;
 
 void main() {
+    vTexCoord = aTexCoord;
     mat4 skinMat =
         aWeight.x * bones[aJoint.x]
         + aWeight.y * bones[aJoint.y]
@@ -149,11 +153,15 @@ const char* depth2DstaticVertex = R"(
 #version 420 core
 
 layout(location = 0) in vec3 aPos;
+layout(location = 3) in vec2 aTexCoord;
+
+out vec2 vTexCoord;
 
 uniform mat4 model;
 uniform mat4 lightSpaceMatrix;
 
 void main() {
+	vTexCoord = aTexCoord;
 	gl_Position = lightSpaceMatrix * model * vec4(aPos, 1.0);
 }
 )";
@@ -162,8 +170,11 @@ const char* depthCubeSkinnedVertex = R"(
 #version 420 core
 
 layout(location = 0) in vec3  aPos;
+layout(location = 3) in vec2  aTexCoord;
 layout(location = 4) in uvec4 aJoint;
 layout(location = 5) in vec4  aWeight;
+
+out vec2 vTexCoord;
 
 layout(std140, binding = 0) uniform Skin { mat4 bones[100]; };
 
@@ -171,6 +182,7 @@ uniform mat4 model;
 uniform mat4 shadowMatrices[15];
 
 void main() {
+    vTexCoord = aTexCoord;
     mat4 skinMat =
         aWeight.x * bones[aJoint.x]
         + aWeight.y * bones[aJoint.y]
@@ -186,11 +198,15 @@ const char* depthCubeStaticVertex = R"(
 #version 420 core
 
 layout(location = 0) in vec3 aPos;
+layout(location = 3) in vec2 aTexCoord;
+
+out vec2 vTexCoord;
 
 uniform mat4 model;
 uniform mat4 shadowMatrices[15];
 
 void main() {
+	vTexCoord = aTexCoord;
 	vec4 worldPos = model * vec4(aPos, 1.0);
 	gl_Position = shadowMatrices[gl_InstanceID] * worldPos;
 }
@@ -198,7 +214,34 @@ void main() {
 
 const char* depth_fragment = R"(
 #version 420 core
-void main() {}
+
+in vec2 vTexCoord;
+
+uniform sampler2D baseColorTex;
+uniform int  alphaMode;        // 0=OPAQUE, 1=MASK, 2=BLEND
+uniform float alphaCutoff;
+uniform float transmissionFactor;
+
+void main() {
+    // OPAQUE: nothing to do — depth is written automatically
+    if (alphaMode == 0) return;
+
+    float a = texture(baseColorTex, vTexCoord).a;
+
+    // MASK (e.g. foliage, grilles): hard cutout — same silhouette as the color pass
+    if (alphaMode == 1) {
+        if (a < alphaCutoff) discard;
+        return;
+    }
+
+    // BLEND / translucent: stochastic (dithered) shadow
+    // Pixels are randomly discarded with probability proportional to transparency,
+    // so a 50%-alpha surface casts ~50% of a full shadow on average.
+    // transmissionFactor further reduces opacity (glass, water).
+    float effectiveAlpha = a * (1.0 - transmissionFactor);
+    float rnd = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+    if (rnd > effectiveAlpha) discard;
+}
 )";
 
 // For FiscionX High Quality Render Pipeline
