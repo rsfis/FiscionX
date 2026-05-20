@@ -307,6 +307,9 @@ uniform float transmissionFactor;
 uniform int hasNormalMap;
 uniform int numLights;
 
+uniform sampler2D aoTex;    // Ambient Occlusion Map (canal R = AO factor)
+uniform int hasAOMap;       // 1 se a textura está presente, 0 caso contrário
+
 uniform int lightType[15];
 uniform vec3 lightPos[15];
 uniform vec3 lightDir[15];
@@ -509,9 +512,6 @@ void main() {
   baseSample = texture(baseColorTex, fs_in.TexCoords);
   if (alphaMode == 1 && baseSample.a < alphaCutoff) discard;
   vec3 baseColor = baseSample.rgb;
-  // NÃO aplicar pow(2.2) aqui: as texturas de cor são carregadas com GL_SRGB8_ALPHA8 /
-  // GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM, então o OpenGL já converte sRGB→linear
-  // automaticamente na leitura. Aplicar de novo causaria double-degamma (ficaria laranja).
 
   float metallic;
   float roughness;
@@ -520,16 +520,11 @@ void main() {
   if (useMetalRoughness == 1) {
     vec4 metallicProps = texture(metallicTex, fs_in.TexCoords);
 
-    // glTF spec: roughness no canal G, metallic no canal B.
-    // Os fatores do material MULTIPLICAM o valor da textura (Blender exporta assim).
     roughness = metallicProps.g * roughnessFactor;
     metallic  = metallicProps.b * metallicFactor;
 
     F0_base = mix(vec3(0.04), baseColor, metallic);
   } else if (hasGlossinessMap == 1) {
-    // KHR_materials_pbrSpecularGlossiness:
-    // - specularGlossinessTexture: RGB = especular F0 (sRGB), A = glossiness (linear)
-    // - glossiness está no canal A da textura combinada (specularGlossiness)
     float glossiness = texture(glossinessTex, fs_in.TexCoords).a;
     roughness = 1.0 - glossiness;
     // metallic não existe neste workflow — usar 0 para não suprimir kD
@@ -570,14 +565,10 @@ void main() {
 
   vec3 ambientContribution;
   if (hasIBL == 1) {
-    // iblScale = 1.0 para ambos os workflows: não penalizar glossiness arbitrariamente
     float iblScale = 1.0;
 
     vec3 kS_amb = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0_base, roughness);
     vec3 kD_amb = (vec3(1.0) - kS_amb) * (1.0 - metallic);
-    // Clamp raw IBL samples to prevent astronomically-bright HDR sun pixels
-    // (which survive convolution as high-energy spikes) from overflowing the
-    // PBR accumulator and inverting through ACES into a black artifact.
     const float IBL_SAMPLE_MAX = 20.0;
     vec3 irradiance = min(texture(irradianceMap, N).rgb, vec3(IBL_SAMPLE_MAX));
     vec3 diffuse_ibl = irradiance * baseColor;
@@ -595,14 +586,15 @@ void main() {
     ambientContribution = baseColor * ambientHemi * environmentStrength;
   }
 
-  // Cap the IBL contribution luminance to avoid NaN / overflow / ACES inversion
-  // when the HDR environment contains an extremely bright sun disk (tens of thousands
-  // of nits). The irradiance convolution spreads that energy everywhere, so every
-  // surface facing the sun can receive values >>1 that cause ACES to produce values
-  // slightly above 1.0 per-channel, resulting in the characteristic black artifact.
-  // We cap BEFORE multiplying by environmentStrength so the tonemap input stays sane.
   const float IBL_MAX = 10.0;
   ambientContribution = min(ambientContribution, vec3(IBL_MAX));
+
+  
+  float ao = 1.0;
+  if (hasAOMap == 1) {
+    ao = texture(aoTex, fs_in.TexCoords).r;
+  }
+  ambientContribution *= ao;
 
   const float localAmbientFactor = 0.05;
 
@@ -692,9 +684,6 @@ void main() {
 
   result = mix(result, result + transLight, transAmt);
 
-  // The FBO is GL_RGB LDR. PBR produces HDR linear values — must tonemap + gamma
-  // here so the stored pixel is already correct sRGB, consistent with the skybox.
-  // ACES Filmic (Narkowicz 2015): compresses highlights without oversaturating.
   #define ACES(c) clamp(((c)*(2.51*(c)+0.03))/((c)*(2.43*(c)+0.59)+0.14),0.0,1.0)
   #define TO_SRGB(c) pow(max((c),vec3(0.0)),vec3(1.0/2.2))
 
