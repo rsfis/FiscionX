@@ -2673,6 +2673,44 @@ void FiscionX::Model::init(const std::string& path) {
 								GLfloat maxAniso = 0.0f; glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
 							}
 						}
+
+						if (mat.occlusionTexture.index >= 0) {
+							int texIndex = mat.occlusionTexture.index;
+							if (texIndex < (int)gltfModel.textures.size()) {
+								int imgIndex = gltfModel.textures[texIndex].source;
+								if (imgIndex >= 0 && imgIndex < (int)gltfModel.images.size()) {
+									const auto& img = gltfModel.images[imgIndex];
+
+									glGenTextures(1, &sub.aoTex);
+									glBindTexture(GL_TEXTURE_2D, sub.aoTex);
+
+									// AO é dado linear (não sRGB). Armazenar como GL_RED
+									// ou GL_COMPRESSED_RED_RGTC1 economiza VRAM e banda.
+									if (FiscionX::Core::compressTexturesAutomatically) {
+										glHint(GL_TEXTURE_COMPRESSION_HINT, GL_NICEST);
+										// RGTC1 = BC4 — compressão single-channel sem perdas visíveis para AO
+										GLenum srcFmt = (img.component >= 3) ? GL_RGB : GL_RED;
+										if (img.component == 4) srcFmt = GL_RGBA;
+										glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_RED_RGTC1,
+											img.width, img.height, 0, srcFmt, GL_UNSIGNED_BYTE, img.image.data());
+									}
+									else {
+										GLenum srcFmt = (img.component >= 3) ? GL_RGB : GL_RED;
+										if (img.component == 4) srcFmt = GL_RGBA;
+										glTexImage2D(GL_TEXTURE_2D, 0, GL_RED,
+											img.width, img.height, 0, srcFmt, GL_UNSIGNED_BYTE, img.image.data());
+									}
+									glGenerateMipmap(GL_TEXTURE_2D);
+									glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+									glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+									glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+									glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+									GLfloat maxAniso = 0.0f; glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
+									glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, maxAniso);
+									glBindTexture(GL_TEXTURE_2D, 0);
+								}
+							}
+						}
 					}
 
 					meshes.push_back(sub);
@@ -2726,6 +2764,11 @@ void FiscionX::Model::destroy() {
 		if (mesh.normalMapTex) {
 			glDeleteTextures(1, &mesh.normalMapTex);
 			mesh.normalMapTex = 0;
+		}
+
+		if (mesh.aoTex) {
+			glDeleteTextures(1, &mesh.aoTex);
+			mesh.aoTex = 0;
 		}
 
 		if (mesh.transmissionTex) {
@@ -3283,6 +3326,8 @@ void FiscionX::Model::drawSubMesh(
 		uniformCache.normalMapTex = glGetUniformLocation(shader, "normalMapTex");
 		uniformCache.hasNormalMap = glGetUniformLocation(shader, "hasNormalMap");
 		uniformCache.shadowMap = glGetUniformLocation(shader, "shadowMap");
+		uniformCache.aoTex = glGetUniformLocation(shader, "aoTex");
+		uniformCache.hasAOMap = glGetUniformLocation(shader, "hasAOMap");
 		uniformCache.glossinessTex = glGetUniformLocation(shader, "glossinessTex");
 		uniformCache.hasGlossinessMap = glGetUniformLocation(shader, "hasGlossinessMap");
 		uniformCache.glossinessInAlphaOfSpecular = glGetUniformLocation(shader, "glossinessInAlphaOfSpecular");
@@ -3465,6 +3510,19 @@ void FiscionX::Model::drawSubMesh(
 	}
 	else {
 		glUniform1i(uniformCache.hasIBL, 0);
+	}
+
+	// ── Ambient Occlusion Map (slot 9) ───────────────────────────────────────
+	glActiveTexture(GL_TEXTURE9);
+	if (mesh.aoTex != 0) {
+		glBindTexture(GL_TEXTURE_2D, mesh.aoTex);
+		glUniform1i(uniformCache.aoTex, 9);
+		glUniform1i(uniformCache.hasAOMap, 1);
+	}
+	else {
+		glBindTexture(GL_TEXTURE_2D, 0);
+		glUniform1i(uniformCache.aoTex, 9);
+		glUniform1i(uniformCache.hasAOMap, 0);
 	}
 	// ─────────────────────────────────────────────────────────────────────────
 

@@ -966,6 +966,7 @@ namespace FiscionX {
 
 		GLuint baseColorTex = 0;
 		GLuint normalMapTex = 0;
+		GLuint aoTex = 0;          // Ambient Occlusion Map (glTF occlusionTexture, canal R)
 		GLuint transmissionTex = 0;
 		GLuint glossinessTex = 0;
 		GLuint specularF0Tex = 0;
@@ -1073,6 +1074,7 @@ namespace FiscionX {
 			// Uniforms simples
 			GLint model = -1, lightSpaceMatrix = -1, alphaMode = -1, alphaCutoff = -1;
 			GLint baseColorTex = -1, normalMapTex = -1, shadowMap = -1;
+			GLint aoTex = -1, hasAOMap = -1;     // Ambient Occlusion Map
 			GLint glossinessTex = -1, hasGlossinessMap = -1, glossinessInAlphaOfSpecular = -1;
 			GLint specularF0Tex = -1, hasSpecularF0Map = -1;
 			GLint metallicTex = -1, useMetalRoughness = -1;
