@@ -1584,8 +1584,8 @@ void FiscionX::Model::Instance::update(float deltaTime, bool isSkinned) {
 	if (!isSkinned && !hasCameraAnim) return;
 
 	if (!model) return;
-	auto itAnim = model->animations.find(currentAnim.name);
-	if (itAnim == model->animations.end()) return;
+	auto itAnim = animations.find(currentAnim.name);
+	if (itAnim == animations.end()) return;
 	const tinygltf::Animation& anim = itAnim->second;
 
 	currentAnim.time += deltaTime;
@@ -3674,6 +3674,14 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 				instSubVisible.assign(meshes.size(), true);
 			}
 
+			// Garante que o UBO de skinning correto desta instância está ativo
+			// antes de qualquer drawSubMesh. Sem este bind, todas as instâncias
+			// lêem os ossos da última instância que chamou update(), fazendo
+			// todas tocarem a mesma animação visualmente.
+			if (isSkinned && inst.uboSkin != 0) {
+				glBindBufferBase(GL_UNIFORM_BUFFER, 0, inst.uboSkin);
+			}
+
 			for (int i = 0; i < (int)meshes.size(); i++) {
 				const auto& mesh = meshes[i];
 				bool isBlend = (mesh.alphaMode == "BLEND");
@@ -5128,44 +5136,34 @@ void FiscionX::Core::DrawTransparentPass(FiscionX::Mat4 view, FiscionX::Mat4 pro
 	// Coleta TODAS as meshes BLEND de todos os modelos, com suas matrizes
 	// de model e referência ao Model dono (para uniforms de luz/bones).
 	struct BlendEntry {
-		float          dist;
+		float                      dist;
 		FiscionX::Model* model;
+		FiscionX::Model::Instance* inst;   // instância exata que gerou esta entrada
 		const FiscionX::SubMesh* mesh;
-		glm::mat4      modelMatrix;
+		glm::mat4                  modelMatrix;
 	};
 
 	glm::vec3 camPos(Camera.position.x, Camera.position.y, Camera.position.z);
 	std::vector<BlendEntry> entries;
 
 	for (FiscionX::Model* model : AllModels) {
-		// Lambda para evitar duplicar a lógica de coleta de meshes
-		auto collectMeshes = [&](const glm::mat4& base) {
+		for (auto& inst : model->instances) {
+			if (!inst.visible) continue;
+
+			glm::mat4 base;
+			if (inst.physicsSyncTransformMatrix != glm::mat4(1.0f))
+				base = glm::scale(inst.physicsSyncTransformMatrix, glm::vec3(inst.scale.x, inst.scale.y, inst.scale.z));
+			else
+				base =
+				glm::translate(glm::mat4(1.0f), glm::vec3(inst.position.x, inst.position.y, inst.position.z))
+				* glm::eulerAngleXYZ(inst.rotation.y, inst.rotation.x, inst.rotation.z)
+				* glm::scale(glm::mat4(1.0f), glm::vec3(inst.scale.x, inst.scale.y, inst.scale.z));
+
 			for (const auto& mesh : model->meshes) {
 				if (mesh.alphaMode != "BLEND") continue;
 				glm::mat4 mm = base * (model->isSkinned ? glm::mat4(1.0f) : mesh.transform);
 				glm::vec3 wp = glm::vec3(mm * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-				entries.push_back({ glm::length(wp - camPos), model, &mesh, mm });
-			}
-			};
-
-		// Instâncias adicionais
-		for (const auto& inst : model->instances) {
-			if (inst.visible == true) {
-				glm::mat4 base =
-					glm::translate(glm::mat4(1.0f), glm::vec3(inst.position.x, inst.position.y, inst.position.z))
-					* glm::eulerAngleXYZ(inst.rotation.y, inst.rotation.x, inst.rotation.z)
-					* glm::scale(glm::mat4(1.0f), glm::vec3(inst.scale.x, inst.scale.y, inst.scale.z));
-
-				if (inst.physicsSyncTransformMatrix != glm::mat4(1.0f))
-					base = glm::scale(inst.physicsSyncTransformMatrix, glm::vec3(inst.scale.x, inst.scale.y, inst.scale.z));
-
-				collectMeshes(base);
-
-				glm::mat4 instBase =
-					glm::translate(glm::mat4(1.0f), glm::vec3(inst.position.x, inst.position.y, inst.position.z))
-					* glm::eulerAngleXYZ(inst.rotation.y, inst.rotation.x, inst.rotation.z)
-					* glm::scale(glm::mat4(1.0f), glm::vec3(inst.scale.x, inst.scale.y, inst.scale.z));
-				collectMeshes(instBase);
+				entries.push_back({ glm::length(wp - camPos), model, &inst, &mesh, mm });
 			}
 		}
 	}
@@ -5193,8 +5191,14 @@ void FiscionX::Core::DrawTransparentPass(FiscionX::Mat4 view, FiscionX::Mat4 pro
 			lastShader = sh;
 			lastModel = e.model;
 		}
-		for (auto& inst : e.model->instances)
-			e.model->drawSubMesh(*e.mesh, sh, e.modelMatrix, glm::mat4(1.0f), 0, false, &inst);
+
+		// Rebinda o UBO de skinning correto desta instância antes do draw call.
+		// Sem isto, todas as instâncias transparentes usam os ossos da última
+		// instância que chamou update(), resultando em animação e pose compartilhadas.
+		if (e.model->isSkinned && e.inst->uboSkin != 0)
+			glBindBufferBase(GL_UNIFORM_BUFFER, 0, e.inst->uboSkin);
+
+		e.model->drawSubMesh(*e.mesh, sh, e.modelMatrix, glm::mat4(1.0f), 0, false, e.inst);
 	}
 
 	glDepthMask(GL_TRUE);
