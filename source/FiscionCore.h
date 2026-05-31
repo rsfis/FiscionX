@@ -997,8 +997,6 @@ namespace FiscionX {
 
 	struct Model {
 		std::vector<SubMesh> meshes;
-		FiscionX::Vector3 position, rotation, scale;
-		glm::mat4 physicsSyncTransformMatrix = glm::mat4(1.0f);
 		bool isSkinned = false;
 
 		tinygltf::Model gltfModel;
@@ -1006,12 +1004,6 @@ namespace FiscionX {
 		std::vector<tinygltf::Skin> skins;
 
 		std::map<std::string, tinygltf::Animation> animations;
-		struct AnimationState {
-			std::string name;
-			bool        repeat;
-			std::string nextAnim;
-			float       time = 0.0f;
-		} currentAnim;
 
 		std::map<int, glm::vec3> animTranslations;
 		std::map<int, glm::quat> animRotations;
@@ -1040,36 +1032,68 @@ namespace FiscionX {
 			FiscionX::Vector3 rotation;
 			FiscionX::Vector3 scale;
 			bool visible = true;
+
+			std::vector<tinygltf::Node> nodes;
+			std::vector<tinygltf::Skin> skins;
+
+			bool isAffectedByLight = true;
+			bool castsShadows = true;
+			bool acceptsShadows = true;
+
+			bool enableFrustumCulling = false;
+
+			int  cameraNodeIndex = -1;   // index of the camera node found in the glTF (-1 = none)
+			bool drivesCamera = false; // true while this model is driving Core::Camera
+			bool cameraAnimFinished = false; // true once a non-repeating anim has reached its end
+
+			glm::mat4 physicsSyncTransformMatrix = glm::mat4(1.0f);
+
+			float alpha = 1.0f;
+
+			std::map<std::string, tinygltf::Animation> animations;
+			struct AnimationState {
+				std::string name;
+				bool        repeat;
+				std::string nextAnim;
+				float       time = 0.0f;
+			} currentAnim;
+
+			std::map<int, glm::vec3> animTranslations;
+			std::map<int, glm::quat> animRotations;
+			std::map<int, glm::vec3> animScales;
+
+			std::map<int, glm::mat4> nodeGlobalTransforms;
+			std::map<int, int>        nodeParents;
+
+			std::vector<glm::mat4> finalBoneMatrices;
+			GLuint uboSkin = 0;
+
+			std::vector<glm::mat4> boneTransforms;
+
+			std::vector<GLuint> occlusionQueries;
+			std::vector<bool> isVisible;
+
+			Model* model;
+
+			static bool isSubMeshInFrustum(const SubMesh& sub,
+				const glm::mat4& modelMatrix,
+				const glm::vec4 planes[6]);
+			void computeSubMeshVisibility(const glm::mat4& viewProj,
+				std::vector<bool>& outVisible) const;
+			void updateOcclusion(const glm::mat4& viewProj);
+			void syncTransformWithBody(Physics::Rigidbody* body, Vector3 positionOffset, Vector3 rotationOffset);
+			void playAnim(const std::string& name, bool repeat, const std::string& next = "");
+			void update(float deltaTime, bool isSkinned);
 		};
 		std::vector<Instance> instances;
 
 		glm::vec3 boundingCenter = glm::vec3(0.0f);
-		float boundingRadius = 1.0f;
+		float boundingRadius = 1.1f;
 
-		bool isAffectedByLight = true;
-		bool castsShadows = true;
-		bool acceptsShadows = true;
+		std::vector<float> lodDistances;
 
-		// ── Frustum Culling ──────────────────────────────────────────────────
-		// When true, the model is skipped entirely if its bounding sphere lies
-		// outside all 6 frustum planes (extracted from viewProj each frame).
-		bool enableFrustumCulling = false;
-
-		// ── Automatic LODs ───────────────────────────────────────────────────
-		// ratios:    polygon-reduction factors passed to buildLODs()
-		//            e.g. { 0.5f, 0.25f, 0.1f } → 50 %, 25 %, 10 % of original
-		// distances: camera distances (world units) at which each LOD kicks in
-		//            e.g. { 30.f, 70.f, 250.f } → LOD0 from 30, LOD1 from 70, …
-		//            Beyond lodDistances.back() the model is culled by distance.
-		std::vector<float> lodDistances;    // must match number of built LODs
-
-		// Generates simplified GPU meshes for every SubMesh and stores them in
-		// SubMesh::lodLevels. Call once after loading; safe to call again to
-		// rebuild (old LOD buffers are released first).
-		// ratios: reduction factor per LOD level (0 < ratio <= 1).
 		void buildLODs(const std::vector<float>& ratios);
 
-		// Dentro de struct Model, no FiscionCore.h — adicione após "float alpha = 1.0f;"
 		struct UniformCache {
 			// Uniforms simples
 			GLint model = -1, lightSpaceMatrix = -1, alphaMode = -1, alphaCutoff = -1;
@@ -1099,7 +1123,7 @@ namespace FiscionX {
 		mutable UniformCache uniformCache;
 
 		const std::vector<glm::mat4>& getBoneTransforms() const;
-		Model(const std::string& path, Vector3 pos, Vector3 rot, Vector3 scl);
+		Model(const std::string& path);
 		void playAnim(const std::string& name, bool repeat, const std::string& next = "");
 		void update(float deltaTime);
 		GLuint getBaseColorTexture(const tinygltf::Model& model, int materialIndex);
@@ -1107,27 +1131,9 @@ namespace FiscionX {
 		GLuint getGlossinessTextureFromSpecGloss(const tinygltf::Model& model, int materialIndex);
 		GLuint getNormalMapTexture(const tinygltf::Model& model, int materialIndex);
 		void init(const std::string& path);
-		void updateOcclusion(const glm::mat4& viewProj);
-		void syncTransformWithBody(Physics::Rigidbody* body, Vector3 positionOffset, Vector3 rotationOffset);
 
-		// Extracts the 6 Gribb-Hartmann frustum planes from a viewProj matrix.
 		static void extractFrustumPlanes(const glm::mat4& viewProj, glm::vec4 planes[6]);
 
-		// Returns true if a single SubMesh AABB (in local space) is at least
-		// partially inside the frustum defined by the 6 pre-extracted planes.
-		// modelMatrix transforms the AABB from local to world space.
-		static bool isSubMeshInFrustum(const SubMesh& sub,
-			const glm::mat4& modelMatrix,
-			const glm::vec4 planes[6]);
-
-		// Fills outVisible[i] with true/false per submesh.
-		// When enableFrustumCulling is false every entry is set to true.
-		void computeSubMeshVisibility(const glm::mat4& viewProj,
-			std::vector<bool>& outVisible) const;
-
-		// Selects the appropriate LOD index for a given camera distance.
-		// Returns -1 for the base mesh, 0..N-1 for LOD levels, or INT_MAX if
-		// the model is beyond the last LOD distance (should be culled).
 		int selectLOD(float distanceSq) const;
 		void drawSubMesh(
 			const SubMesh& mesh,
@@ -1136,18 +1142,52 @@ namespace FiscionX {
 			const glm::mat4& lightSpaceMatrix,
 			GLuint depthMap,
 			bool depthPass,
+			Instance* inst,
 			GLuint overrideVAO = 0,
 			GLuint overrideEBO = 0,
 			GLsizei overrideIndexCount = 0,
 			GLenum overrideIndexType = GL_UNSIGNED_INT
 		);
-		void destroy();
+		void unload();
+		// FiscionCore.h — dentro de Model
 		inline void addInstance(FiscionX::Vector3 position, FiscionX::Vector3 rotation, FiscionX::Vector3 scale) {
-			instances.push_back({ position, rotation, scale });
+			Instance inst;
+			inst.position = position;
+			inst.rotation = rotation;
+			inst.scale = scale;
+			inst.model = this;
+			inst.nodes = nodes;
+			inst.skins = skins;
+			inst.physicsSyncTransformMatrix = glm::mat4(1.0f);
+			inst.animTranslations = animTranslations;
+			inst.animRotations = animRotations;
+			inst.animScales = animScales;
+			inst.nodeGlobalTransforms = nodeGlobalTransforms;
+			inst.nodeParents = nodeParents;
+			inst.finalBoneMatrices = finalBoneMatrices;
+			inst.animations = animations;   // cada instância tem sua própria cópia
+			inst.boneTransforms = boneTransforms;
+			inst.occlusionQueries = occlusionQueries;
+			inst.isVisible = isVisible;
+			inst.cameraNodeIndex = cameraNodeIndex;   // FIX: propaga o nó de câmera para a instância
+
+			// Cada instância precisa de seu próprio UBO de skinning independente.
+			// Compartilhar o uboSkin do Model faz com que todas as instâncias
+			// usem os ossos da última a atualizar, quebrando a animação individual.
+			if (isSkinned) {
+				glGenBuffers(1, &inst.uboSkin);
+				glBindBuffer(GL_UNIFORM_BUFFER, inst.uboSkin);
+				std::vector<glm::mat4> identityMats(100, glm::mat4(1.0f));
+				glBufferData(GL_UNIFORM_BUFFER, sizeof(glm::mat4) * 100, identityMats.data(), GL_DYNAMIC_DRAW);
+				glBindBufferBase(GL_UNIFORM_BUFFER, 0, inst.uboSkin);
+			}
+			else {
+				inst.uboSkin = 0;
+			}
+
+			instances.push_back(std::move(inst));
 		}
 		void draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLuint depthMap, bool depthPass, FiscionX::Mat4 view, FiscionX::Mat4 projection);
-		// Configura uniforms globais do shader (luzes, câmera, bones).
-		// Usado pelo passo global de transparência em Core::DrawTransparentPass().
 		void bindShaderForTransparency(GLuint shader, FiscionX::Mat4 view, FiscionX::Mat4 projection);
 	};
 

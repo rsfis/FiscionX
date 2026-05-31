@@ -105,19 +105,17 @@ void update() {
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_L)) dirLight->pitch -= 0.04f;
     if (skinnedModel) {
         if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_M)) {
-            skinnedModel->destroy();
-            delete skinnedModel;
-            skinnedModel = nullptr;
+            skinnedModel->instances.empty();
         }
     }
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_ESCAPE)) FiscionX::Core::Terminate();
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_Z)) {
-        skinnedModel->playAnim("CameraAction", false);
+        skinnedModel->instances[0].playAnim("CameraAction", false);
     }
 
     if (skinnedModel) {
-        if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_SPACE)) skinnedModel->position.y += 0.004f;
-        if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_B)) skinnedModel->position.z += 0.004f;
+        if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_SPACE)) skinnedModel->instances[0].position.y += 0.004f;
+        if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_B)) skinnedModel->instances[0].position.z += 0.004f;
     }
 }
 
@@ -206,51 +204,65 @@ int main() {
 
     FiscionX::Core::CreateAllShadowMaps();
 
-    // Ambient Occlusion Map; Displacement Map & SPOM; Emission Textures; Lights extracted from glb; Contact Shadows; Anim Blending; Draw halo and glow also for point lights and spot lights; Point lights are traversing walls/solid objects (Criação da textura está errada, computar está errado, renderizar está errado); Sombras e Luz devem passar por malhas com transparência; Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Terrains; Water
+    // Alpha extracted from image; Shape Keys; Reflection Probes; Displacement Map & SPOM; Emission Textures; Lights extracted from glb; Contact Shadows; Anim Blending; Draw halo and glow also for point lights and spot lights; Point lights are traversing walls/solid objects (Criação da textura está errada, computar está errado, renderizar está errado); Sombras e Luz devem passar por malhas com transparência; Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Terrains; Water
 
     staticModel = new FiscionX::Model(
-        "assets/models/car_scene.glb",
+        "assets/models/car_scene.glb"
+    );
+    staticModel->addInstance(
         FiscionX::Vector3(0, 0, 0),
         FiscionX::Vector3(0, 0, 0),
         FiscionX::Vector3(0.01f, 0.01f, 0.01f)
     );
     kratosStaticModel = new FiscionX::Model(
-        "assets/models/kratos.glb",
+        "assets/models/ellie.glb"
+    );
+    kratosStaticModel->addInstance(
         FiscionX::Vector3(0, 3, 7.0f),
         FiscionX::Vector3(0),
-        FiscionX::Vector3(0.1f, 0.1f, 0.1f)
+        FiscionX::Vector3(2.1f, 2.1f, 2.1f)
+    );
+    kratosStaticModel->addInstance(
+        FiscionX::Vector3(0, 0, 7.0f),
+        FiscionX::Vector3(0),
+        FiscionX::Vector3(2.1f, 2.1f, 2.1f)
     );
     boxModel = new FiscionX::Model(
-        "assets/models/tree_scene2.glb",
+        "assets/models/tree_scene2.glb"
+    );
+    boxModel->addInstance(
         FiscionX::Vector3(0, 0.09f, 4.2f),
         FiscionX::Vector3(2, 0, 0),
         FiscionX::Vector3(0.5f, 0.5f, 0.5f)
     );
     skinnedModel = new FiscionX::Model(
-        "assets/models/camel.glb", // camel.glb / camera_test_anim.glb
+        "assets/models/camel.glb" // camel.glb / camera_test_anim.glb
+    );
+    skinnedModel->addInstance(
         FiscionX::Vector3(0.0f, 0.0f, 3.0f), // 0.0f, 0.0f, 3.0f / 0.0f, 0.0f, 0.0f
-        FiscionX::Vector3(1, 0, 0), // 1, 0, 0 / 0, 0, 0
+        FiscionX::Vector3(0, 0, 0), // 1, 0, 0 / 0, 0, 0
+        FiscionX::Vector3(1.0f, 1.0f, 1.0f) // 1.0f, 1.0f, 1.0f / 0.6f, 0.6f, 0.6f
+    );
+    skinnedModel->addInstance(
+        FiscionX::Vector3(0.0f, 3.0f, 3.0f), // 0.0f, 0.0f, 3.0f / 0.0f, 0.0f, 0.0f
+        FiscionX::Vector3(1.5f, 0, 0), // 1, 0, 0 / 0, 0, 0
         FiscionX::Vector3(1.0f, 1.0f, 1.0f) // 1.0f, 1.0f, 1.0f / 0.6f, 0.6f, 0.6f
     );
 
-    skinnedModel->playAnim("Armature|Idle_01", true); // Armature|Idle_01 / CameraAction
-
+    skinnedModel->instances[0].playAnim("Armature|Idle_01", true); // Armature|Idle_01 / CameraAction
+    skinnedModel->instances[1].playAnim("Armature|WalkCycle", true); // Armature|Idle_01 / CameraAction
 
     staticModel->buildLODs({ 0.5f, 0.25f, 0.1f }); // gera 3 LODs
     staticModel->lodDistances = { 10.0f, 40.0f, 250.0f }; // distâncias de transição
-    staticModel->enableFrustumCulling = true;
 
     kratosStaticModel->buildLODs({ 0.5f, 0.25f, 0.1f }); // gera 3 LODs
     kratosStaticModel->lodDistances = { 10.0f, 40.0f, 250.0f }; // distâncias de transição
-    kratosStaticModel->enableFrustumCulling = true;
 
     skinnedModel->buildLODs({ 0.5f, 0.25f, 0.1f }); // gera 3 LODs
     skinnedModel->lodDistances = { 10.0f, 40.0f, 80.0f }; // distâncias de transição
-    skinnedModel->enableFrustumCulling = true;
 
     boxModel->buildLODs({ 0.5f, 0.25f, 0.1f }); // gera 3 LODs
     boxModel->lodDistances = { 10.0f, 40.0f, 80.0f }; // distâncias de transição
-    boxModel->enableFrustumCulling = true;
 
     img = new FiscionX::UI::Image("assets/images/didi.png");
 

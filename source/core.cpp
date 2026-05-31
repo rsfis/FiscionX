@@ -1545,13 +1545,12 @@ const std::vector<glm::mat4>& FiscionX::Model::getBoneTransforms() const {
 	return boneTransforms;
 }
 
-FiscionX::Model::Model(const std::string& path, FiscionX::Vector3 pos, FiscionX::Vector3 rot, FiscionX::Vector3 scl)
-	: position(pos), rotation(rot), scale(scl)
+FiscionX::Model::Model(const std::string& path)
 {
 	init(path);
 }
 
-void FiscionX::Model::playAnim(const std::string& name, bool repeat, const std::string& next) {
+void FiscionX::Model::Instance::playAnim(const std::string& name, bool repeat, const std::string& next) {
 	if (cameraNodeIndex >= 0) {
 		cameraAnimFinished = false;
 		drivesCamera = true;
@@ -1563,6 +1562,12 @@ void FiscionX::Model::playAnim(const std::string& name, bool repeat, const std::
 }
 
 void FiscionX::Model::update(float deltaTime) {
+	for (auto& inst : instances) {
+		inst.update(deltaTime, isSkinned);
+	}
+}
+
+void FiscionX::Model::Instance::update(float deltaTime, bool isSkinned) {
 	// ── Occlusion queries — non-blocking: só lê se o resultado já está disponível ──
 	for (size_t i = 0; i < occlusionQueries.size(); ++i) {
 		GLuint available = 0;
@@ -1578,8 +1583,9 @@ void FiscionX::Model::update(float deltaTime) {
 	bool hasCameraAnim = (cameraNodeIndex >= 0 && !currentAnim.name.empty());
 	if (!isSkinned && !hasCameraAnim) return;
 
-	auto itAnim = animations.find(currentAnim.name);
-	if (itAnim == animations.end()) return;
+	if (!model) return;
+	auto itAnim = model->animations.find(currentAnim.name);
+	if (itAnim == model->animations.end()) return;
 	const tinygltf::Animation& anim = itAnim->second;
 
 	currentAnim.time += deltaTime;
@@ -1595,11 +1601,11 @@ void FiscionX::Model::update(float deltaTime) {
 		const tinygltf::AnimationSampler& samp = anim.samplers[channel.sampler];
 		int nodeIndex = channel.target_node;
 
-		const tinygltf::Accessor& inputAcc = gltfModel.accessors[samp.input];
+		const tinygltf::Accessor& inputAcc = model->gltfModel.accessors[samp.input];
 		if (inputAcc.count == 0) continue;
 
-		const tinygltf::BufferView& inputView = gltfModel.bufferViews[inputAcc.bufferView];
-		const tinygltf::Buffer& inputBuffer = gltfModel.buffers[inputView.buffer];
+		const tinygltf::BufferView& inputView = model->gltfModel.bufferViews[inputAcc.bufferView];
+		const tinygltf::Buffer& inputBuffer = model->gltfModel.buffers[inputView.buffer];
 		const float* times = reinterpret_cast<const float*>(
 			&inputBuffer.data[inputView.byteOffset + inputAcc.byteOffset]);
 
@@ -1611,9 +1617,9 @@ void FiscionX::Model::update(float deltaTime) {
 		if (maxTime > 0.0f && tSample > maxTime)
 			tSample = currentAnim.repeat ? fmodf(tSample, maxTime) : maxTime;
 
-		const tinygltf::Accessor& outputAcc = gltfModel.accessors[samp.output];
-		const tinygltf::BufferView& outputView = gltfModel.bufferViews[outputAcc.bufferView];
-		const tinygltf::Buffer& outputBuffer = gltfModel.buffers[outputView.buffer];
+		const tinygltf::Accessor& outputAcc = model->gltfModel.accessors[samp.output];
+		const tinygltf::BufferView& outputView = model->gltfModel.bufferViews[outputAcc.bufferView];
+		const tinygltf::Buffer& outputBuffer = model->gltfModel.buffers[outputView.buffer];
 		const float* values = reinterpret_cast<const float*>(
 			&outputBuffer.data[outputView.byteOffset + outputAcc.byteOffset]);
 
@@ -1669,7 +1675,7 @@ void FiscionX::Model::update(float deltaTime) {
 
 	// ── Hierarquia de nós — recursão sem clear() do mapa, sobrescreve direto ──
 	std::function<void(int, const glm::mat4&)> recurseGlobal = [&](int idx, const glm::mat4& parentMat) {
-		const tinygltf::Node& node = nodes[idx];
+		const tinygltf::Node& node = model->gltfModel.nodes[idx];
 
 		glm::mat4 local;
 		if (!node.matrix.empty()) {
@@ -1695,7 +1701,7 @@ void FiscionX::Model::update(float deltaTime) {
 		for (int c : node.children) recurseGlobal(c, nodeGlobalTransforms[idx]);
 		};
 
-	for (int root : gltfModel.scenes[gltfModel.defaultScene].nodes)
+	for (int root : model->gltfModel.scenes[model->gltfModel.defaultScene].nodes)
 		recurseGlobal(root, glm::mat4(1.0f));
 
 	// ── Drive Core::Camera from the animated camera node ──────────────────────
@@ -1720,13 +1726,13 @@ void FiscionX::Model::update(float deltaTime) {
 		}
 	}
 
-	if (!skins.empty()) {
-		const tinygltf::Skin& skin = skins[0];
+	if (!model->skins.empty()) {
+		const tinygltf::Skin& skin = model->skins[0];
 		finalBoneMatrices.resize(skin.joints.size());
 
-		const tinygltf::Accessor& invBindAcc = gltfModel.accessors[skin.inverseBindMatrices];
-		const tinygltf::BufferView& invBindView = gltfModel.bufferViews[invBindAcc.bufferView];
-		const tinygltf::Buffer& invBindBuf = gltfModel.buffers[invBindView.buffer];
+		const tinygltf::Accessor& invBindAcc = model->gltfModel.accessors[skin.inverseBindMatrices];
+		const tinygltf::BufferView& invBindView = model->gltfModel.bufferViews[invBindAcc.bufferView];
+		const tinygltf::Buffer& invBindBuf = model->gltfModel.buffers[invBindView.buffer];
 
 		for (size_t i = 0; i < skin.joints.size(); ++i) {
 			int jointIdx = skin.joints[i];
@@ -1885,14 +1891,6 @@ GLuint FiscionX::Model::getGlossinessTextureFromSpecGloss(const tinygltf::Model&
 	return 0;
 }
 
-// OPTIM: getNormalMapTexture uses GL_COMPRESSED_RG_RGTC2 (BC5) instead of
-// GL_COMPRESSED_RGBA_BPTC_UNORM (BC7).  Normal maps only need the RG channels
-// (reconstruct B in the shader), so BC5 gives identical quality at half the
-// VRAM footprint and faster sampling.  The fragment shader must do:
-//   vec3 n; n.xy = texture(normalMapTex, uv).rg * 2.0 - 1.0;
-//   n.z = sqrt(max(0.0, 1.0 - dot(n.xy, n.xy)));
-// The existing shader already reads .rgb so this is backward-compatible when
-// GL_COMPRESSED_RG_RGTC2 stores the data in the R and G channels.
 GLuint FiscionX::Model::getNormalMapTexture(const tinygltf::Model& model, int materialIndex) {
 	if (materialIndex < 0 || materialIndex >= (int)model.materials.size()) return 0;
 	const auto& mat = model.materials[materialIndex];
@@ -1999,10 +1997,7 @@ void FiscionX::Model::init(const std::string& path) {
 		glm::mat4 nodeWorldMat = buildGlobal(cameraNodeIndex);
 
 		// Apply the Model's own transform so position/rotation/scale are respected
-		glm::mat4 modelMat =
-			glm::translate(glm::mat4(1.0f), glm::vec3(position.x, position.y, position.z))
-			* glm::eulerAngleXYZ(rotation.y, rotation.x, rotation.z)
-			* glm::scale(glm::mat4(1.0f), glm::vec3(scale.x, scale.y, scale.z));
+		glm::mat4 modelMat = glm::mat4(1.0f);
 
 		glm::mat4 worldMat = modelMat * nodeWorldMat;
 
@@ -2733,7 +2728,7 @@ void FiscionX::Model::init(const std::string& path) {
 	FiscionX::Core::AllModels.push_back(this);
 }
 
-void FiscionX::Model::destroy() {
+void FiscionX::Model::unload() {
 
 	// ========= MESHES =========
 	for (auto& mesh : meshes) {
@@ -3160,7 +3155,7 @@ void FiscionX::Model::extractFrustumPlanes(const glm::mat4& vp, glm::vec4 planes
 // Tests one SubMesh AABB against 6 frustum planes.
 // modelMatrix: local → world transform for this submesh.
 // Returns true if the AABB is at least partially inside all planes.
-bool FiscionX::Model::isSubMeshInFrustum(const SubMesh& sub,
+bool FiscionX::Model::Instance::isSubMeshInFrustum(const SubMesh& sub,
 	const glm::mat4& modelMatrix,
 	const glm::vec4 planes[6])
 {
@@ -3198,10 +3193,10 @@ bool FiscionX::Model::isSubMeshInFrustum(const SubMesh& sub,
 
 // Fills outVisible[i] for each submesh.
 // When enableFrustumCulling is false every slot is set to true (no culling).
-void FiscionX::Model::computeSubMeshVisibility(const glm::mat4& viewProj,
+void FiscionX::Model::Instance::computeSubMeshVisibility(const glm::mat4& viewProj,
 	std::vector<bool>& outVisible) const
 {
-	const int n = static_cast<int>(meshes.size());
+	const int n = static_cast<int>(model->meshes.size());
 	outVisible.assign(n, true); // default: all visible
 
 	if (!enableFrustumCulling) return;
@@ -3220,8 +3215,8 @@ void FiscionX::Model::computeSubMeshVisibility(const glm::mat4& viewProj,
 		baseMatrix = glm::scale(physicsSyncTransformMatrix, glm::vec3(scale.x, scale.y, scale.z));
 
 	for (int i = 0; i < n; ++i) {
-		const SubMesh& sub = meshes[i];
-		glm::mat4 M = baseMatrix * (isSkinned ? glm::mat4(1.0f) : sub.transform);
+		const SubMesh& sub = model->meshes[i];
+		glm::mat4 M = baseMatrix * (model->isSkinned ? glm::mat4(1.0f) : sub.transform);
 		outVisible[i] = isSubMeshInFrustum(sub, M, planes);
 	}
 }
@@ -3249,7 +3244,7 @@ int FiscionX::Model::selectLOD(float distanceSq) const {
 	return INT_MAX;
 }
 
-void FiscionX::Model::updateOcclusion(const glm::mat4& viewProj) {
+void FiscionX::Model::Instance::updateOcclusion(const glm::mat4& viewProj) {
 	glm::mat4 baseMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(position.x, position.y, position.z))
 		* glm::eulerAngleXYZ(rotation.y, rotation.x, rotation.z)
 		* glm::scale(glm::mat4(1.0f), glm::vec3(scale.x, scale.y, scale.z));
@@ -3262,11 +3257,11 @@ void FiscionX::Model::updateOcclusion(const glm::mat4& viewProj) {
 		FiscionX::Core::Camera.position.z);
 	glm::vec3 modelPos(position.x, position.y, position.z);
 	float dSq = glm::dot(camPos - modelPos, camPos - modelPos);
-	int occLOD = lodDistances.empty() ? -1 : selectLOD(dSq);
+	int occLOD = model->lodDistances.empty() ? -1 : model->selectLOD(dSq);
 
-	for (size_t i = 0; i < meshes.size(); ++i) {
-		const auto& mesh = meshes[i];
-		glm::mat4 modelMatrix = baseMatrix * (isSkinned ? glm::mat4(1.0f) : mesh.transform);
+	for (size_t i = 0; i < model->meshes.size(); ++i) {
+		const auto& mesh = model->meshes[i];
+		glm::mat4 modelMatrix = baseMatrix * (model->isSkinned ? glm::mat4(1.0f) : mesh.transform);
 		glm::mat4 mvp = viewProj * modelMatrix;
 
 		// Escolhe VAO/indexCount do LOD ativo (se disponível), senão usa base mesh.
@@ -3301,6 +3296,7 @@ void FiscionX::Model::drawSubMesh(
 	const glm::mat4& lightSpaceMatrix,
 	GLuint depthMap,
 	bool depthPass,
+	Instance* inst,
 	GLuint overrideVAO,
 	GLuint overrideEBO,
 	GLsizei overrideIndexCount,
@@ -3487,8 +3483,8 @@ void FiscionX::Model::drawSubMesh(
 	glUniform3f(uniformCache.environmentSkyColor, 0.3f, 0.3f, 0.35f);
 	glUniform3f(uniformCache.environmentGroundColor, 0.05f, 0.05f, 0.07f);
 	glUniform1f(uniformCache.reflectionsStrength, FiscionX::Core::REFLECTIONS_STRENGTH);
-	glUniform1i(uniformCache.isAffectedByLight, this->isAffectedByLight ? 1 : 0);
-	glUniform1i(uniformCache.acceptsShadows, this->acceptsShadows ? 1 : 0);
+	glUniform1i(uniformCache.isAffectedByLight, inst->isAffectedByLight ? 1 : 0);
+	glUniform1i(uniformCache.acceptsShadows, inst->acceptsShadows ? 1 : 0);
 	glUniform1f(uniformCache.alpha, alpha);
 	glUniform1f(uniformCache.hdrExposure, FiscionX::Core::HDR_EXPOSURE);
 
@@ -3621,82 +3617,40 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 		// DIRECTIONAL ja foi tratado lá em cima com Array Texture
 	}
 
-	glm::mat4 baseMatrix =
-		glm::translate(glm::mat4(1.0f), glm::vec3(position.x, position.y, position.z))
-		* glm::eulerAngleXYZ(rotation.y, rotation.x, rotation.z)
-		* glm::scale(glm::mat4(1.0f), glm::vec3(scale.x, scale.y, scale.z));
+	// Instâncias adicionais — malhas opacas/mask (BLEND é tratado em DrawTransparentPass)
+	for (Instance& inst : instances) {
+		glm::mat4 baseMatrix = glm::mat4(1.0f);
 
-	// Occlusion queries só fazem sentido no color pass.
-	// No depth pass (shadow cascades) draw() é chamado várias vezes por frame —
-	// rodar updateOcclusion em cada chamada multiplicava os draw calls de query
-	// por N_cascades, pagando o custo da base mesh completa mesmo com LOD ativo.
-	// Também corrigida a ordem da multiplicação: projection * view (não view * projection).
-	if (!depthPass) {
-		updateOcclusion(glm::mat4(projection) * glm::mat4(view));
-	}
-	if (physicsSyncTransformMatrix != glm::mat4(1.0f)) {
-		baseMatrix = glm::scale(physicsSyncTransformMatrix, glm::vec3(scale.x, scale.y, scale.z));
-	}
+		if (!depthPass) {
+			inst.updateOcclusion(glm::mat4(projection) * glm::mat4(view));
+		}
+		if (inst.physicsSyncTransformMatrix != glm::mat4(1.0f)) {
+			baseMatrix = glm::scale(inst.physicsSyncTransformMatrix, glm::vec3(inst.scale.x, inst.scale.y, inst.scale.z));
+		}
 
-	// ── Per-SubMesh Frustum Culling ─────────────────────────────────────────
-	// During the shadow depth pass we must NOT cull by the camera frustum:
-	// objects behind the camera still cast visible shadows.  Culling is only
-	// applied during the regular color pass.
-	std::vector<bool> subMeshVisible;
-	if (!depthPass) {
-		glm::mat4 viewProj = glm::mat4(projection) * glm::mat4(view);
-		computeSubMeshVisibility(viewProj, subMeshVisible);
-	}
-	else {
-		subMeshVisible.assign(meshes.size(), true); // sombra: nunca cullar
-	}
-
-	// ── Distance-based LOD selection ─────────────────────────────────────────
-	// Compute squared camera→model distance once, then pick the LOD index.
-	int activeLOD = -1; // -1 = full-resolution base mesh
-	if (!lodDistances.empty()) {
-		glm::vec3 camPos(
-			FiscionX::Core::Camera.position.x,
-			FiscionX::Core::Camera.position.y,
-			FiscionX::Core::Camera.position.z);
-		glm::vec3 modelPos(position.x, position.y, position.z);
-		float dSq = glm::dot(camPos - modelPos, camPos - modelPos);
-		activeLOD = selectLOD(dSq);
-		if (activeLOD == INT_MAX) return; // beyond last LOD → cull by distance
-	}
-
-	// Passo OPAQUE/MASK: desenha tudo exceto BLEND.
-	// Meshes BLEND são coletadas globalmente em draw() do main e desenhadas
-	// depois de todos os opacos via Core::DrawTransparentPass().
-	for (int i = 0; i < (int)meshes.size(); i++) {
-		const auto& mesh = meshes[i];
-
-		bool isBlend = (mesh.alphaMode == "BLEND");
-
-		// No depth pass inclui BLEND (para sombras); no color pass pula BLEND.
-		if (!depthPass && isBlend) continue;
-
-		// ── Per-SubMesh Frustum Culling: skip if this submesh is outside the frustum
-		if (!subMeshVisible[i]) continue;
-
-		if (!isBlend && !isVisible[i]) continue;
-
-		glm::mat4 modelMatrix = baseMatrix * (isSkinned ? glm::mat4(1.0f) : mesh.transform);
-
-		// LOD: passa os buffers do LOD diretamente para drawSubMesh — zero cópia do SubMesh
-		if (activeLOD >= 0 && activeLOD < (int)mesh.lodLevels.size()) {
-			const SubMesh::LODLevel& lod = mesh.lodLevels[activeLOD];
-			drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass,
-				lod.vao, lod.ebo, (GLsizei)lod.indexCount, lod.indexType);
+		std::vector<bool> subMeshVisible;
+		if (!depthPass) {
+			glm::mat4 viewProj = glm::mat4(projection) * glm::mat4(view);
+			inst.computeSubMeshVisibility(viewProj, subMeshVisible);
 		}
 		else {
-			drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass,
-				0, 0, 0, GL_UNSIGNED_INT);
+			subMeshVisible.assign(meshes.size(), true); // sombra: nunca cullar
 		}
-	}
 
-	// Instâncias adicionais — malhas opacas/mask (BLEND é tratado em DrawTransparentPass)
-	for (const Instance& inst : instances) {
+		// ── Distance-based LOD selection ─────────────────────────────────────────
+		// Compute squared camera→model distance once, then pick the LOD index.
+		int activeLOD = -1; // -1 = full-resolution base mesh
+		if (!lodDistances.empty()) {
+			glm::vec3 camPos(
+				FiscionX::Core::Camera.position.x,
+				FiscionX::Core::Camera.position.y,
+				FiscionX::Core::Camera.position.z);
+			glm::vec3 modelPos(inst.position.x, inst.position.y, inst.position.z);
+			float dSq = glm::dot(camPos - modelPos, camPos - modelPos);
+			activeLOD = selectLOD(dSq);
+			if (activeLOD == INT_MAX) return; // beyond last LOD → cull by distance
+		}
+
 		if (inst.visible == true) {
 			glm::mat4 instBase =
 				glm::translate(glm::mat4(1.0f), glm::vec3(inst.position.x, inst.position.y, inst.position.z))
@@ -3706,14 +3660,14 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 			// Compute per-submesh frustum visibility for this instance.
 			// During depth pass (shadow) never cull — objects behind the camera still cast shadows.
 			std::vector<bool> instSubVisible;
-			if (enableFrustumCulling && !depthPass) {
+			if (inst.enableFrustumCulling && !depthPass) {
 				glm::mat4 viewProj = glm::mat4(projection) * glm::mat4(view);
 				glm::vec4 planes[6];
 				extractFrustumPlanes(viewProj, planes);
 				instSubVisible.resize(meshes.size());
 				for (int i = 0; i < (int)meshes.size(); ++i) {
 					glm::mat4 M = instBase * (isSkinned ? glm::mat4(1.0f) : meshes[i].transform);
-					instSubVisible[i] = isSubMeshInFrustum(meshes[i], M, planes);
+					instSubVisible[i] = inst.isSubMeshInFrustum(meshes[i], M, planes);
 				}
 			}
 			else {
@@ -3728,11 +3682,11 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 				glm::mat4 modelMatrix = instBase * (isSkinned ? glm::mat4(1.0f) : mesh.transform);
 				if (activeLOD >= 0 && activeLOD < (int)mesh.lodLevels.size()) {
 					const SubMesh::LODLevel& lod = mesh.lodLevels[activeLOD];
-					drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass,
+					drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass, &inst,
 						lod.vao, lod.ebo, (GLsizei)lod.indexCount, lod.indexType);
 				}
 				else {
-					drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass,
+					drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass, &inst,
 						0, 0, 0, GL_UNSIGNED_INT);
 				}
 			}
@@ -3802,7 +3756,7 @@ void FiscionX::Model::bindShaderForTransparency(GLuint shader, FiscionX::Mat4 vi
 	}
 }
 
-void FiscionX::Model::syncTransformWithBody(FiscionX::Physics::Rigidbody* body, FiscionX::Vector3 positionOffset, FiscionX::Vector3 rotationOffset) {
+void FiscionX::Model::Instance::syncTransformWithBody(FiscionX::Physics::Rigidbody* body, FiscionX::Vector3 positionOffset, FiscionX::Vector3 rotationOffset) {
 	btTransform trans;
 	body->body->getMotionState()->getWorldTransform(trans);
 	btVector3 pos = trans.getOrigin();
@@ -4744,138 +4698,90 @@ glm::mat4 FiscionX::Core::getLightSpaceMatrix(FiscionX::Light& L, const float ne
 }
 
 void FiscionX::Core::RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 projection, FiscionX::Mat4 viewProj) {
-	// update skin UBOs once
+	float now = static_cast<float>(glfwGetTime());
+
+	// 1. Update Skinning UBOs for all visible/shadow-casting instances
 	for (auto& model : AllModels) {
-		if (!model->castsShadows) continue;
-		if (model->isSkinned) {
-			const std::vector<glm::mat4>& bones = model->getBoneTransforms();
-			glBindBuffer(GL_UNIFORM_BUFFER, model->uboSkin);
-			glBufferData(GL_UNIFORM_BUFFER, sizeof(glm::mat4) * bones.size(), bones.data(), GL_DYNAMIC_DRAW);
-			glBindBufferBase(GL_UNIFORM_BUFFER, 0, model->uboSkin);
+		for (auto& inst : model->instances) {
+			if (!inst.visible || !inst.castsShadows) continue;
+
+			if (model->isSkinned && !inst.boneTransforms.empty()) {
+				glBindBuffer(GL_UNIFORM_BUFFER, inst.uboSkin);
+				glBufferData(GL_UNIFORM_BUFFER, sizeof(glm::mat4) * inst.boneTransforms.size(), inst.boneTransforms.data(), GL_DYNAMIC_DRAW);
+				// Nota: O bind final (glBindBufferBase) é feito dentro do inst.draw() ou antes do draw call
+			}
 		}
 	}
 
-	float now = static_cast<float>(glfwGetTime());
-
-	// Cache model world positions
-	std::vector<glm::vec3> modelWorldPositions;
-	modelWorldPositions.reserve(AllModels.size());
-	for (auto& m : AllModels) {
-		if (!m->castsShadows) continue;
-		glm::vec3 worldPos = glm::vec3(m->position.x, m->position.y, m->position.z);
-		modelWorldPositions.push_back(worldPos);
-	}
-
-	// Track camera motion so directional shadows update when camera moves
+	// Track camera motion
 	static glm::vec3 _lastCameraPos = glm::vec3(Camera.position.x, Camera.position.y, Camera.position.z);
-	bool cameraMoved = glm::length(_lastCameraPos - glm::vec3(Camera.position.x, Camera.position.y, Camera.position.z)) > 0.05f; // tweak threshold
-	_lastCameraPos = glm::vec3(Camera.position.x, Camera.position.y, Camera.position.z);
+	glm::vec3 currentCamPos = glm::vec3(Camera.position.x, Camera.position.y, Camera.position.z);
+	bool cameraMoved = glm::length(_lastCameraPos - currentCamPos) > 0.05f;
+	_lastCameraPos = currentCamPos;
 
 	for (size_t i = 0; i < AllLights.size(); ++i) {
-		Light& L = *AllLights[i]; // Non-const to update timing fields
+		Light& L = *AllLights[i];
 		ShadowMap& sm = AllShadowMaps[i];
-
 		if (!L.enableShadows) continue;
 
-		// decide if we should rebuild this light's shadow map
-		bool moved = (L.lastPosition != glm::vec3(FLT_MAX)) && (glm::length(L.lastPosition - glm::vec3(L.position.x, L.position.y, L.position.z)) > 0.01f);
+		glm::vec3 lPos = glm::vec3(L.position.x, L.position.y, L.position.z);
+		bool moved = (L.lastPosition != glm::vec3(FLT_MAX)) && (glm::length(L.lastPosition - lPos) > 0.01f);
 		bool timeExpired = (now - L.lastShadowUpdateTime) >= L.shadowUpdatePeriod;
 		bool firstTime = (L.lastPosition == glm::vec3(FLT_MAX));
 
 		bool shouldUpdate = moved || timeExpired || firstTime;
-		// Directional must also update if camera moved (because light space uses camera center)
 		if (L.type == LIGHT_DIRECTIONAL) shouldUpdate = shouldUpdate || cameraMoved;
 
 		if (!shouldUpdate) continue;
 
-		// Record update
 		L.lastShadowUpdateTime = now;
-		L.lastPosition = glm::vec3(L.position.x, L.position.y, L.position.z);
+		L.lastPosition = lPos;
 
 		// ==========================================
-		// CASCADE SHADOW MAP (DIRECTIONAL LIGHT)
+		// CASCADE SHADOW MAP (DIRECTIONAL)
 		// ==========================================
 		if (L.type == LIGHT_DIRECTIONAL) {
 			sm.cascadeLightSpaceMatrices.clear();
-
-			// Loopa pelas camadas (cascatas)
 			for (size_t c = 0; c < shadowCascadeLevels.size() + 1; ++c) {
 				float prevSplit = (c == 0) ? NEAR_PLANE : shadowCascadeLevels[c - 1];
 				float currSplit = (c < shadowCascadeLevels.size()) ? shadowCascadeLevels[c] : FAR_PLANE;
-
-				// Calcula matriz ajustada para essa fatia
 				sm.cascadeLightSpaceMatrices.push_back(getLightSpaceMatrix(L, prevSplit, currSplit));
 			}
 
 			glViewport(0, 0, DIR_SHADOW_SIZE, DIR_SHADOW_SIZE);
 			glBindFramebuffer(GL_FRAMEBUFFER, sm.fbo);
 
-			// Renderiza cada Layer do Texture Array
 			for (unsigned int layer = 0; layer < sm.cascadeLightSpaceMatrices.size(); ++layer) {
 				glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, sm.depthMap, 0, layer);
 				glClear(GL_DEPTH_BUFFER_BIT);
-
-				// Fix Peter Panning
 				glEnable(GL_CULL_FACE);
 				glCullFace(GL_FRONT);
 
-				// STATIC PASS
-				glUseProgram(depthShaderStatic);
-				glUniformMatrix4fv(glGetUniformLocation(depthShaderStatic, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(sm.cascadeLightSpaceMatrices[layer]));
-
 				for (auto& m : AllModels) {
-					if (m->castsShadows && !m->isSkinned)
-						m->draw(depthShaderStatic, glm::mat4(1.0f), 0, true, view, projection);
-				}
+					GLuint shader = m->isSkinned ? depthShaderSkinned : depthShaderStatic;
+					glUseProgram(shader);
+					glUniformMatrix4fv(glGetUniformLocation(shader, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(sm.cascadeLightSpaceMatrices[layer]));
 
-				// SKINNED PASS
-				glUseProgram(depthShaderSkinned);
-				glUniformMatrix4fv(glGetUniformLocation(depthShaderSkinned, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(sm.cascadeLightSpaceMatrices[layer]));
-
-				for (auto& m : AllModels) {
-					if (m->castsShadows && m->isSkinned)
-						m->draw(depthShaderSkinned, glm::mat4(1.0f), 0, true, view, projection);
+					m->draw(shader, sm.cascadeLightSpaceMatrices[layer], 0, true, view, projection);
 				}
 			}
-
 			glCullFace(GL_BACK);
 			glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		}
+
 		// ==========================================
 		// POINT LIGHT (CUBEMAP)
 		// ==========================================
 		else if (L.type == LIGHT_POINT) {
-			// --- OPTIMIZED: prefilter models in range once ---
-			glm::vec3 pos = glm::vec3(L.position.x, L.position.y, L.position.z);
-			std::vector<size_t> staticIndices;
-			std::vector<size_t> skinnedIndices;
-			staticIndices.reserve(AllModels.size());
-			skinnedIndices.reserve(AllModels.size());
-
-			for (size_t mi = 0; mi < AllModels.size(); ++mi) {
-				if (!AllModels[mi]->castsShadows) continue;
-				float dist = glm::length(modelWorldPositions[mi] - pos);
-				if (dist <= (L.maxDistance + 1.0f)) {
-					if (AllModels[mi]->isSkinned) skinnedIndices.push_back(mi);
-					else staticIndices.push_back(mi);
-				}
-			}
-
-			// If nothing is in range, skip entire cubemap generation
-			if (staticIndices.empty() && skinnedIndices.empty()) {
-				continue;
-			}
-
 			float zFar = L.maxDistance;
 			glm::mat4 proj = glm::perspective(glm::radians(90.0f), 1.0f, NEAR_PLANE, zFar);
-
 			std::array<glm::mat4, 6> shadowMatrices = {
-				proj * glm::lookAt(pos, pos + glm::vec3(1, 0, 0), glm::vec3(0,-1, 0)),
-				proj * glm::lookAt(pos, pos + glm::vec3(-1, 0, 0), glm::vec3(0,-1, 0)),
-				proj * glm::lookAt(pos, pos + glm::vec3(0, 1, 0), glm::vec3(0, 0, 1)),
-				proj * glm::lookAt(pos, pos + glm::vec3(0,-1, 0), glm::vec3(0, 0,-1)),
-				proj * glm::lookAt(pos, pos + glm::vec3(0, 0, 1), glm::vec3(0,-1, 0)),
-				proj * glm::lookAt(pos, pos + glm::vec3(0, 0,-1), glm::vec3(0,-1, 0)),
+				proj * glm::lookAt(lPos, lPos + glm::vec3(1, 0, 0),  glm::vec3(0,-1, 0)),
+				proj * glm::lookAt(lPos, lPos + glm::vec3(-1, 0, 0), glm::vec3(0,-1, 0)),
+				proj * glm::lookAt(lPos, lPos + glm::vec3(0, 1, 0),  glm::vec3(0, 0, 1)),
+				proj * glm::lookAt(lPos, lPos + glm::vec3(0,-1, 0),  glm::vec3(0, 0,-1)),
+				proj * glm::lookAt(lPos, lPos + glm::vec3(0, 0, 1),  glm::vec3(0,-1, 0)),
+				proj * glm::lookAt(lPos, lPos + glm::vec3(0, 0,-1),  glm::vec3(0,-1, 0)),
 			};
 
 			glViewport(0, 0, POINT_SHADOW_SIZE, POINT_SHADOW_SIZE);
@@ -4885,85 +4791,41 @@ void FiscionX::Core::RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 p
 				glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, sm.depthMap, 0);
 				glClear(GL_DEPTH_BUFFER_BIT);
 
-				// STATIC - depth-only (only loop the filtered staticIndices)
-				if (!staticIndices.empty()) {
-					glUseProgram(depthShaderCubeStatic);
-					glUniform1f(glGetUniformLocation(depthShaderCubeStatic, "farPlane"), zFar);
-					glUniform3fv(glGetUniformLocation(depthShaderCubeStatic, "lightPos"), 1, glm::value_ptr(pos));
-					glUniformMatrix4fv(glGetUniformLocation(depthShaderCubeStatic, ("shadowMatrices[" + std::to_string(face) + "]").c_str()), 1, GL_FALSE, glm::value_ptr(shadowMatrices[face]));
+				for (auto& m : AllModels) {
+					GLuint shader = m->isSkinned ? depthShaderCubeSkinned : depthShaderCubeStatic;
+					glUseProgram(shader);
+					glUniform1f(glGetUniformLocation(shader, "farPlane"), zFar);
+					glUniform3fv(glGetUniformLocation(shader, "lightPos"), 1, glm::value_ptr(lPos));
+					glUniformMatrix4fv(glGetUniformLocation(shader, "shadowMatrices[0]"), 1, GL_FALSE, glm::value_ptr(shadowMatrices[face]));
 
-					for (size_t idx : staticIndices) {
-						if (!AllModels[idx]->castsShadows) continue;
-						AllModels[idx]->draw(depthShaderCubeStatic, glm::mat4(1.0f), 0, true, view, projection);
-					}
-				}
-
-				// SKINNED - depth-only (only loop the filtered skinnedIndices)
-				if (!skinnedIndices.empty()) {
-					glUseProgram(depthShaderCubeSkinned);
-					glUniform1f(glGetUniformLocation(depthShaderCubeSkinned, "farPlane"), zFar);
-					glUniform3fv(glGetUniformLocation(depthShaderCubeSkinned, "lightPos"), 1, glm::value_ptr(pos));
-					glUniformMatrix4fv(glGetUniformLocation(depthShaderCubeSkinned, ("shadowMatrices[" + std::to_string(face) + "]").c_str()), 1, GL_FALSE, glm::value_ptr(shadowMatrices[face]));
-
-					for (size_t idx : skinnedIndices) {
-						if (!AllModels[idx]->castsShadows) continue;
-						AllModels[idx]->draw(depthShaderCubeSkinned, glm::mat4(1.0f), 0, true, view, projection);
-					}
+					m->draw(shader, shadowMatrices[face], 0, true, view, projection);
 				}
 			}
-
 			glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		}
+
 		// ==========================================
-		// SPOT LIGHT (LEGACY 2D SHADOW)
+		// SPOT LIGHT
 		// ==========================================
 		else if (L.type == LIGHT_SPOT) {
-			// Spot: distance + cone culling (kept as-is)
-			sm.lightSpaceMatrix = ComputeLightSpaceMatrix(L); // Essa aqui ainda usa a antiga pra spot, ta safe
-			glm::vec3 lightPos = glm::vec3(L.position.x, L.position.y, L.position.z);
-
+			sm.lightSpaceMatrix = ComputeLightSpaceMatrix(L);
 			glViewport(0, 0, SPOT_SHADOW_SIZE, SPOT_SHADOW_SIZE);
 			glBindFramebuffer(GL_FRAMEBUFFER, sm.fbo);
 			glClear(GL_DEPTH_BUFFER_BIT);
 			glEnable(GL_CULL_FACE);
 			glCullFace(GL_FRONT);
 
-			// STATIC
-			glUseProgram(depthShaderStatic);
-			glUniformMatrix4fv(glGetUniformLocation(depthShaderStatic, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(sm.lightSpaceMatrix));
+			glm::vec3 spotDir = glm::normalize(glm::vec3(L.direction.x, L.direction.y, L.direction.z));
 
-			for (size_t mi = 0; mi < AllModels.size(); ++mi) {
-				float dist = glm::length(modelWorldPositions[mi] - lightPos);
-				if (dist > (L.maxDistance + 1.0f)) continue;
+			for (auto& m : AllModels) {
+				GLuint shader = m->isSkinned ? depthShaderSkinned : depthShaderStatic;
+				glUseProgram(shader);
+				glUniformMatrix4fv(glGetUniformLocation(shader, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(sm.lightSpaceMatrix));
 
-				glm::vec3 toModel = glm::normalize(modelWorldPositions[mi] - lightPos);
-				float dp = glm::dot(glm::normalize(glm::vec3(L.direction.x, L.direction.y, L.direction.z)), toModel);
-				if (dp < L.outerCutOff - 0.01f) continue;
 
-				if (!AllModels[mi]->isSkinned) {
-					if (!AllModels[mi]->castsShadows) continue;
-					AllModels[mi]->draw(depthShaderStatic, glm::mat4(1.0f), 0, true, view, projection);
-				}
+				m->draw(shader, sm.lightSpaceMatrix, 0, true, view, projection);
+
 			}
-
-			// SKINNED
-			glUseProgram(depthShaderSkinned);
-			glUniformMatrix4fv(glGetUniformLocation(depthShaderSkinned, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(sm.lightSpaceMatrix));
-
-			for (size_t mi = 0; mi < AllModels.size(); ++mi) {
-				float dist = glm::length(modelWorldPositions[mi] - lightPos);
-				if (dist > (L.maxDistance + 1.0f)) continue;
-
-				glm::vec3 toModel = glm::normalize(modelWorldPositions[mi] - lightPos);
-				float dp = glm::dot(glm::normalize(glm::vec3(L.direction.x, L.direction.y, L.direction.z)), toModel);
-				if (dp < L.outerCutOff - 0.01f) continue;
-
-				if (AllModels[mi]->isSkinned) {
-					if (!AllModels[mi]->castsShadows) continue;
-					AllModels[mi]->draw(depthShaderSkinned, glm::mat4(1.0f), 0, true, view, projection);
-				}
-			}
-
 			glCullFace(GL_BACK);
 			glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		}
@@ -5286,20 +5148,19 @@ void FiscionX::Core::DrawTransparentPass(FiscionX::Mat4 view, FiscionX::Mat4 pro
 			}
 			};
 
-		// Modelo principal
-		glm::mat4 base =
-			glm::translate(glm::mat4(1.0f), glm::vec3(model->position.x, model->position.y, model->position.z))
-			* glm::eulerAngleXYZ(model->rotation.y, model->rotation.x, model->rotation.z)
-			* glm::scale(glm::mat4(1.0f), glm::vec3(model->scale.x, model->scale.y, model->scale.z));
-
-		if (model->physicsSyncTransformMatrix != glm::mat4(1.0f))
-			base = glm::scale(model->physicsSyncTransformMatrix, glm::vec3(model->scale.x, model->scale.y, model->scale.z));
-
-		collectMeshes(base);
-
 		// Instâncias adicionais
 		for (const auto& inst : model->instances) {
 			if (inst.visible == true) {
+				glm::mat4 base =
+					glm::translate(glm::mat4(1.0f), glm::vec3(inst.position.x, inst.position.y, inst.position.z))
+					* glm::eulerAngleXYZ(inst.rotation.y, inst.rotation.x, inst.rotation.z)
+					* glm::scale(glm::mat4(1.0f), glm::vec3(inst.scale.x, inst.scale.y, inst.scale.z));
+
+				if (inst.physicsSyncTransformMatrix != glm::mat4(1.0f))
+					base = glm::scale(inst.physicsSyncTransformMatrix, glm::vec3(inst.scale.x, inst.scale.y, inst.scale.z));
+
+				collectMeshes(base);
+
 				glm::mat4 instBase =
 					glm::translate(glm::mat4(1.0f), glm::vec3(inst.position.x, inst.position.y, inst.position.z))
 					* glm::eulerAngleXYZ(inst.rotation.y, inst.rotation.x, inst.rotation.z)
@@ -5332,8 +5193,8 @@ void FiscionX::Core::DrawTransparentPass(FiscionX::Mat4 view, FiscionX::Mat4 pro
 			lastShader = sh;
 			lastModel = e.model;
 		}
-
-		e.model->drawSubMesh(*e.mesh, sh, e.modelMatrix, glm::mat4(1.0f), 0, false);
+		for (auto& inst : e.model->instances)
+			e.model->drawSubMesh(*e.mesh, sh, e.modelMatrix, glm::mat4(1.0f), 0, false, &inst);
 	}
 
 	glDepthMask(GL_TRUE);
@@ -5364,7 +5225,7 @@ void FiscionX::Core::Terminate() {
 	// ========= MODELS =========
 	for (auto* model : AllModels) {
 		if (model) {
-			model->destroy();
+			model->unload();
 		}
 	}
 	AllModels.clear();
