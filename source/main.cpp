@@ -251,7 +251,6 @@ int main() {
 
     skinnedModel->instances[0].playAnim("Armature|Idle_01", true); // Armature|Idle_01 / CameraAction
     skinnedModel->instances[1].playAnim("Armature|WalkCycle", true); // Armature|Idle_01 / CameraAction
-    std::cout << skinnedModel->instances[0].currentAnim.name << "  " << skinnedModel->instances[1].currentAnim.name;
 
     staticModel->buildLODs({ 0.5f, 0.25f, 0.1f }); // gera 3 LODs
     staticModel->lodDistances = { 10.0f, 40.0f, 250.0f }; // distâncias de transição

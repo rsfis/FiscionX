@@ -39,7 +39,6 @@ static GLuint g_hdrVAO = 0;
 static GLuint g_hdrVBO = 0;
 static GLuint g_hdrProgram = 0;
 
-// IBL pre-computed textures (filled by LoadHDR after equirect conversion)
 GLuint FiscionX::Core::iblIrradianceMap = 0;
 GLuint FiscionX::Core::iblPrefilterMap = 0;
 GLuint FiscionX::Core::iblBrdfLUT = 0;
@@ -97,7 +96,6 @@ float lastX = 640, lastY = 360;
 bool firstMouse = true;
 float deltaTime = 0.0f, lastFrame = 0;
 
-// =================== Shader Loader ===================
 GLuint LoadShader(const char* vertexSrc, const char* fragmentSrc);
 
 bool FiscionX::Core::LoadHDR(const char* path)
@@ -109,7 +107,6 @@ bool FiscionX::Core::LoadHDR(const char* path)
 	if (!data)
 		return false;
 
-	// ── Equirectangular texture (used by skybox shader) ──────────────────────
 	glGenTextures(1, &g_hdrTex);
 	glBindTexture(GL_TEXTURE_2D, g_hdrTex);
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, data);
@@ -120,7 +117,6 @@ bool FiscionX::Core::LoadHDR(const char* path)
 	stbi_image_free(data);
 	stbi_set_flip_vertically_on_load(false);
 
-	// ── Skybox shader ─────────────────────────────────────────────────────────
 	{
 		GLuint vs = glCreateShader(GL_VERTEX_SHADER);
 		glShaderSource(vs, 1, &hdrBgVertex, nullptr);
@@ -136,7 +132,6 @@ bool FiscionX::Core::LoadHDR(const char* path)
 		glDeleteShader(fs);
 	}
 
-	// ── Unit cube geometry (shared by all IBL capture passes) ─────────────────
 	float skyboxVertices[] = {
 		-1.0f,  1.0f, -1.0f,
 		-1.0f, -1.0f, -1.0f,
@@ -192,8 +187,6 @@ bool FiscionX::Core::LoadHDR(const char* path)
 	glBindVertexArray(0);
 	glBindTexture(GL_TEXTURE_2D, 0);
 
-	// ── IBL CAPTURE SETUP ─────────────────────────────────────────────────────
-	// Compile IBL shaders
 	auto compileIBLShader = [](const char* vSrc, const char* fSrc) -> GLuint {
 		GLuint vs = glCreateShader(GL_VERTEX_SHADER);
 		glShaderSource(vs, 1, &vSrc, nullptr);
@@ -215,7 +208,6 @@ bool FiscionX::Core::LoadHDR(const char* path)
 	GLuint shPrefilter = compileIBLShader(iblCubeVertex, iblPrefilterFragment);
 	GLuint shBrdfLUT = compileIBLShader(iblBrdfLUTVertex, iblBrdfLUTFragment);
 
-	// Six capture view matrices (looking at each face of the cube from the center)
 	glm::mat4 captureProjection = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, 10.0f);
 	glm::mat4 captureViews[6] = {
 		glm::lookAt(glm::vec3(0), glm::vec3(1, 0, 0), glm::vec3(0,-1, 0)),
@@ -226,7 +218,6 @@ bool FiscionX::Core::LoadHDR(const char* path)
 		glm::lookAt(glm::vec3(0), glm::vec3(0, 0,-1), glm::vec3(0,-1, 0)),
 	};
 
-	// ── PASS 1: equirectangular HDR → envCubemap (512x512) ───────────────────
 	const int ENV_SIZE = 512;
 	GLuint envCubemap;
 	glGenTextures(1, &envCubemap);
@@ -262,11 +253,9 @@ bool FiscionX::Core::LoadHDR(const char* path)
 		glBindVertexArray(g_hdrVAO);
 		glDrawArrays(GL_TRIANGLES, 0, 36);
 	}
-	// Generate mipmaps for the env cubemap (needed by prefilter importance sampling)
 	glBindTexture(GL_TEXTURE_CUBE_MAP, envCubemap);
 	glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
 
-	// ── PASS 2: Irradiance Convolution (32x32) ────────────────────────────────
 	const int IRR_SIZE = 32;
 	glGenTextures(1, &iblIrradianceMap);
 	glBindTexture(GL_TEXTURE_CUBE_MAP, iblIrradianceMap);
@@ -298,7 +287,6 @@ bool FiscionX::Core::LoadHDR(const char* path)
 		glDrawArrays(GL_TRIANGLES, 0, 36);
 	}
 
-	// ── PASS 3: Prefiltered Environment Map (128x128 + 5 mip levels) ─────────
 	const int PRE_SIZE = 128;
 	const int MAX_MIP_LEVELS = 5;
 	glGenTextures(1, &iblPrefilterMap);
@@ -340,7 +328,6 @@ bool FiscionX::Core::LoadHDR(const char* path)
 		}
 	}
 
-	// ── PASS 4: BRDF Integration LUT (512x512 RG16F) ─────────────────────────
 	const int BRDF_SIZE = 512;
 	glGenTextures(1, &iblBrdfLUT);
 	glBindTexture(GL_TEXTURE_2D, iblBrdfLUT);
@@ -357,7 +344,6 @@ bool FiscionX::Core::LoadHDR(const char* path)
 	glViewport(0, 0, BRDF_SIZE, BRDF_SIZE);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-	// Render full-screen quad for BRDF LUT
 	{
 		float quadVerts[] = {
 			-1.0f,  1.0f, 0.0f, 1.0f,
@@ -384,13 +370,12 @@ bool FiscionX::Core::LoadHDR(const char* path)
 		glDeleteBuffers(1, &brdfVBO);
 	}
 
-	// ── Cleanup ───────────────────────────────────────────────────────────────
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	glViewport(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
 
 	glDeleteFramebuffers(1, &captureFBO);
 	glDeleteRenderbuffers(1, &captureRBO);
-	glDeleteTextures(1, &envCubemap); // envCubemap foi apenas intermediário; não é mais necessário
+	glDeleteTextures(1, &envCubemap);
 	glDeleteProgram(shEquirect);
 	glDeleteProgram(shIrradiance);
 	glDeleteProgram(shPrefilter);
@@ -409,7 +394,6 @@ void FiscionX::Core::Draw::HDR(FiscionX::Mat4 view, FiscionX::Mat4 projection)
 
 	glUseProgram(g_hdrProgram);
 
-	// remove posição da câmera (skybox não "anda")
 	glm::mat4 viewNoTranslate = glm::mat4(glm::mat3((glm::mat4)view));
 
 	glUniformMatrix4fv(glGetUniformLocation(g_hdrProgram, "view"), 1, GL_FALSE, glm::value_ptr(viewNoTranslate));
@@ -421,7 +405,7 @@ void FiscionX::Core::Draw::HDR(FiscionX::Mat4 view, FiscionX::Mat4 projection)
 	glUniform1i(glGetUniformLocation(g_hdrProgram, "hdrTex"), 0);
 
 	glBindVertexArray(g_hdrVAO);
-	glDrawArrays(GL_TRIANGLES, 0, 36); // <-- precisa virar cubo
+	glDrawArrays(GL_TRIANGLES, 0, 36);
 
 	glDepthMask(GL_TRUE);
 	glDepthFunc(GL_LESS);
@@ -553,11 +537,9 @@ FiscionX::Vector3 FiscionX::Math::lookAt3D(const FiscionX::Vector3& position, co
 FiscionX::Vector3 FiscionX::Math::toEulerAngles(const FiscionX::Vector3& lookAtForward, FiscionX::Vector2 axisLock) {
 	glm::vec3 f(lookAtForward.x, lookAtForward.y, lookAtForward.z);
 
-	// Trava PITCH → projeta o forward no plano XZ (elimina Y)
 	if (axisLock.y == 0.0f)
 		f.y = 0.0f;
 
-	// Trava YAW → projeta o forward no plano YZ (elimina X)
 	if (axisLock.x == 0.0f)
 		f.x = 0.0f;
 
@@ -804,8 +786,6 @@ void FiscionX::UI::Image::draw(FiscionX::Vector2 position) {
 		0.0f, (float)FiscionX::Core::SCREEN_HEIGHT
 	);
 
-	// OPTIM: uniform locations cached per shader handle — glGetUniformLocation
-	// was called ~10x every frame per image; now resolved only when shader changes.
 	static GLuint s_cachedShader = 0;
 	static GLint s_locTex = -1, s_locPosMode = -1, s_locPos = -1, s_locProj = -1;
 	static GLint s_locScale = -1, s_locAspect = -1, s_locRot = -1, s_locAlpha = -1;
@@ -852,7 +832,7 @@ void FiscionX::UI::Image::draw(FiscionX::Vector2 position) {
 	glEnable(GL_DEPTH_TEST);
 }
 
-GLuint FiscionX::UI::Image::shader = 0; // Define global IMAGE shader variable
+GLuint FiscionX::UI::Image::shader = 0;
 
 // ================== Text ====================
 FiscionX::UI::Font::Font(const char* fontPath, int pixelSize) {
@@ -884,7 +864,6 @@ FiscionX::UI::Font::Font(const char* fontPath, int pixelSize) {
 
 	glGenerateMipmap(GL_TEXTURE_2D);
 
-	// Filtros que ativam mipmaps
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -943,9 +922,6 @@ FiscionX::UI::Font::~Font() {
 	glDeleteTextures(1, &textureAtlas);
 }
 
-// OPTIM: DrawText batched — all glyphs are uploaded in a single glBufferData
-// and drawn with one glDrawArrays call instead of N calls (one per character).
-// Reduces GPU round-trips from O(N) to O(1).
 void FiscionX::UI::DrawText(Font* font, const char* text, FiscionX::Vector2 position, float scale, FiscionX::Vector4 color, float rotation) {
 	glUseProgram(FiscionX::Core::textShader);
 
@@ -977,8 +953,6 @@ void FiscionX::UI::DrawText(Font* font, const char* text, FiscionX::Vector2 posi
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	glDisable(GL_DEPTH_TEST);
 
-	// OPTIM: batch all glyph quads into a single CPU-side vector, then upload
-	// and draw once — previously this was one glBufferSubData + glDrawArrays per char.
 	size_t len = strlen(text);
 	std::vector<float> batchVerts;
 	batchVerts.reserve(len * 6 * 4); // 6 verts * 4 floats per glyph
@@ -1051,7 +1025,6 @@ FiscionX::UI::Video::Video(const char* path, int desiredWidth, int desiredHeight
 	mediaPlayer = libvlc_media_player_new_from_media(media);
 	libvlc_media_release(media); media = nullptr;
 
-	// registra callbacks
 	libvlc_video_set_callbacks(mediaPlayer,
 		&Video::lockCallback,
 		&Video::unlockCallback,
@@ -1068,7 +1041,6 @@ FiscionX::UI::Video::Video(const char* path, int desiredWidth, int desiredHeight
 	libvlc_audio_set_mute(mediaPlayer, 0);
 	libvlc_audio_set_volume(mediaPlayer, 100);
 
-	// cria quad OpenGL
 	glGenVertexArrays(1, &VAO);
 	glGenBuffers(1, &VBO);
 	glGenBuffers(1, &EBO);
@@ -1533,9 +1505,7 @@ void FiscionX::generateTangents(
 	}
 
 	for (auto& v : vertices) {
-		// Orthogonalizes using Gram-Schmidt function
 		v.tangent = glm::normalize(v.tangent - v.normal * glm::dot(v.normal, v.tangent));
-		// Determines handedness (bitangent cross)
 		float handedness = (glm::dot(glm::cross(v.normal, v.tangent), v.bitangent) < 0.0f) ? -1.0f : 1.0f;
 		v.tangent = glm::vec4(v.tangent, handedness);
 	}
@@ -1568,7 +1538,6 @@ void FiscionX::Model::update(float deltaTime) {
 }
 
 void FiscionX::Model::Instance::update(float deltaTime, bool isSkinned) {
-	// ── Occlusion queries — non-blocking: só lê se o resultado já está disponível ──
 	for (size_t i = 0; i < occlusionQueries.size(); ++i) {
 		GLuint available = 0;
 		glGetQueryObjectuiv(occlusionQueries[i], GL_QUERY_RESULT_AVAILABLE, &available);
@@ -1577,7 +1546,6 @@ void FiscionX::Model::Instance::update(float deltaTime, bool isSkinned) {
 			glGetQueryObjectuiv(occlusionQueries[i], GL_QUERY_RESULT, &samples);
 			isVisible[i] = (samples != 0);
 		}
-		// Se não disponível ainda, mantém o valor do frame anterior (zero stall)
 	}
 
 	bool hasCameraAnim = (cameraNodeIndex >= 0 && !currentAnim.name.empty());
@@ -1591,7 +1559,6 @@ void FiscionX::Model::Instance::update(float deltaTime, bool isSkinned) {
 	currentAnim.time += deltaTime;
 	float t = currentAnim.time;
 
-	// ── Loop único: calcula maxTime E coleta interpolações de uma vez ──
 	float maxTime = 0.0f;
 	animTranslations.clear();
 	animRotations.clear();
@@ -1612,7 +1579,6 @@ void FiscionX::Model::Instance::update(float deltaTime, bool isSkinned) {
 		float lastKey = times[inputAcc.count - 1];
 		if (lastKey > maxTime) maxTime = lastKey;
 
-		// Ajusta t para amostragem (ainda não aplicamos wrap global)
 		float tSample = t;
 		if (maxTime > 0.0f && tSample > maxTime)
 			tSample = currentAnim.repeat ? fmodf(tSample, maxTime) : maxTime;
@@ -1625,7 +1591,6 @@ void FiscionX::Model::Instance::update(float deltaTime, bool isSkinned) {
 
 		int keyCount = static_cast<int>(inputAcc.count);
 
-		// Busca binária — O(log n) em vez de O(n)
 		int lo = 0, hi = keyCount - 1;
 		while (lo < hi) {
 			int mid = (lo + hi + 1) / 2;
@@ -1656,7 +1621,6 @@ void FiscionX::Model::Instance::update(float deltaTime, bool isSkinned) {
 		}
 	}
 
-	// Ajusta tempo global agora que maxTime foi calculado
 	if (maxTime > 0.0f && t > maxTime) {
 		if (currentAnim.repeat) {
 			t = fmodf(t, maxTime);
@@ -1673,7 +1637,6 @@ void FiscionX::Model::Instance::update(float deltaTime, bool isSkinned) {
 
 	boneTransforms = finalBoneMatrices;
 
-	// ── Hierarquia de nós — recursão sem clear() do mapa, sobrescreve direto ──
 	std::function<void(int, const glm::mat4&)> recurseGlobal = [&](int idx, const glm::mat4& parentMat) {
 		const tinygltf::Node& node = model->gltfModel.nodes[idx];
 
@@ -1704,7 +1667,6 @@ void FiscionX::Model::Instance::update(float deltaTime, bool isSkinned) {
 	for (int root : model->gltfModel.scenes[model->gltfModel.defaultScene].nodes)
 		recurseGlobal(root, glm::mat4(1.0f));
 
-	// ── Drive Core::Camera from the animated camera node ──────────────────────
 	if (cameraNodeIndex >= 0 && nodeGlobalTransforms.count(cameraNodeIndex)) {
 		bool justFinished = (!currentAnim.repeat && t >= maxTime && maxTime > 0.0f);
 		if (!cameraAnimFinished) {
@@ -1742,7 +1704,6 @@ void FiscionX::Model::Instance::update(float deltaTime, bool isSkinned) {
 		}
 
 		glBindBuffer(GL_UNIFORM_BUFFER, uboSkin);
-		// glBufferSubData: NÃO realoca, apenas copia — muito mais rápido que glBufferData
 		glBufferSubData(GL_UNIFORM_BUFFER, 0,
 			sizeof(glm::mat4) * finalBoneMatrices.size(),
 			finalBoneMatrices.data());
@@ -1777,9 +1738,6 @@ GLuint FiscionX::Model::getBaseColorTexture(const tinygltf::Model& model, int ma
 	GLuint texID;
 	glGenTextures(1, &texID);
 	glBindTexture(GL_TEXTURE_2D, texID);
-	// Texturas de cor base (albedo/baseColor) são sRGB no glTF/Blender.
-	// GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM faz a conversão sRGB→linear automaticamente
-	// na leitura do shader, sem necessidade de pow(2.2) no GLSL.
 	if (FiscionX::Core::compressTexturesAutomatically) {
 		glHint(GL_TEXTURE_COMPRESSION_HINT, GL_NICEST);
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM,
@@ -1906,13 +1864,10 @@ GLuint FiscionX::Model::getNormalMapTexture(const tinygltf::Model& model, int ma
 	glBindTexture(GL_TEXTURE_2D, texID);
 	if (FiscionX::Core::compressTexturesAutomatically) {
 		glHint(GL_TEXTURE_COMPRESSION_HINT, GL_NICEST);
-		// OPTIM: BC5/RGTC2 for normal maps — stores only RG (half the VRAM of BC7).
-		// The fragment shader reconstructs Z: n.z = sqrt(1 - dot(n.xy, n.xy)).
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_RG_RGTC2,
 			img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
 	}
 	else {
-		// OPTIM: GL_RG8 for uncompressed path — normal maps need only 2 channels.
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RG8,
 			img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
 	}
@@ -1955,7 +1910,6 @@ void FiscionX::Model::init(const std::string& path) {
 		animations[a.name] = a;
 	}
 
-	// ── Detect the first camera node in the glTF ──────────────────────────────
 	cameraNodeIndex = -1;
 	for (int i = 0; i < (int)nodes.size(); ++i) {
 		if (nodes[i].camera >= 0) {
@@ -1964,12 +1918,9 @@ void FiscionX::Model::init(const std::string& path) {
 		}
 	}
 
-	// If there is a camera node but NO animations, apply its static transform
-	// to Core::Camera immediately.
 	if (cameraNodeIndex >= 0 && gltfModel.animations.empty()) {
 		const tinygltf::Node& camNode = nodes[cameraNodeIndex];
 
-		// Build the node's local-to-world matrix by walking up the parent chain
 		std::function<glm::mat4(int)> buildGlobal = [&](int idx) -> glm::mat4 {
 			const tinygltf::Node& n = nodes[idx];
 			glm::mat4 local(1.0f);
@@ -1996,16 +1947,13 @@ void FiscionX::Model::init(const std::string& path) {
 
 		glm::mat4 nodeWorldMat = buildGlobal(cameraNodeIndex);
 
-		// Apply the Model's own transform so position/rotation/scale are respected
 		glm::mat4 modelMat = glm::mat4(1.0f);
 
 		glm::mat4 worldMat = modelMat * nodeWorldMat;
 
-		// Position = column 3
 		glm::vec3 camPos = glm::vec3(worldMat[3]);
 		Core::Camera.position = FiscionX::Vector3(camPos.x, camPos.y, camPos.z);
 
-		// Forward in glTF cameras points along -Z in their local space
 		glm::vec3 fwd = glm::normalize(-glm::vec3(worldMat[2]));
 		Core::Camera.yaw = glm::degrees(std::atan2(fwd.z, fwd.x));
 		Core::Camera.pitch = glm::degrees(std::asin(glm::clamp(fwd.y, -1.0f, 1.0f)));
@@ -2628,7 +2576,6 @@ void FiscionX::Model::init(const std::string& path) {
 							}
 						}
 
-						// Sempre ler os fatores escalares (glTF spec: default = 1.0 para ambos)
 						sub.metallicFactor = static_cast<float>(mat.pbrMetallicRoughness.metallicFactor);
 						sub.roughnessFactor = static_cast<float>(mat.pbrMetallicRoughness.roughnessFactor);
 
@@ -2787,7 +2734,6 @@ void FiscionX::Model::unload() {
 		}
 	}
 
-	// ========= LOD GPU BUFFERS =========
 	for (auto& mesh : meshes) {
 		for (auto& lod : mesh.lodLevels) {
 			if (lod.vao) { glDeleteVertexArrays(1, &lod.vao); lod.vao = 0; }
@@ -2797,7 +2743,6 @@ void FiscionX::Model::unload() {
 		mesh.lodLevels.clear();
 	}
 
-	// ========= LIMPEZA CPU & GPU =========
 	meshes.clear();
 	nodes.clear();
 	skins.clear();
@@ -2808,29 +2753,6 @@ void FiscionX::Model::unload() {
 		FiscionX::Core::AllModels.end()
 	);
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ─────────────────────────────────────────────────────────────────────────────
-// Model::buildLODs  —  Quadric Error Metric edge-collapse simplifier
-//
-// Self-contained, no external library.  Operates on cpuPositions/cpuIndices
-// stored at load time in each SubMesh.  Produces a correct simplified mesh
-// (no holes, no exploding geometry) for each LOD ratio.
-//
-// Algorithm outline (per SubMesh):
-//   1. Build a symmetric 4×4 quadric Q per vertex (sum of plane quadrics of
-//      all incident triangles).
-//   2. For every edge (u,v) compute the optimal collapse point and cost =
-//      v^T (Qu+Qv) v.
-//   3. Collapse edges greedily from lowest cost until the target vertex count
-//      is reached.
-//   4. Re-index the remaining triangles and upload a new VAO/VBO/EBO.
-// ─────────────────────────────────────────────────────────────────────────────
-
-// --- meshoptimizer simplifier (production-grade LOD, same as Godot/Unreal) --
-// Add these files to your project build:
-//   dependencies/meshoptimizer/meshoptimizer.h
-//   dependencies/meshoptimizer/meshoptimizer_simplifier.cpp   (compile as C++)
 
 namespace {
 	void meshSimplify(
@@ -2858,18 +2780,13 @@ namespace {
 		float ratio = glm::clamp(targetRatio, 0.02f, 1.0f);
 		size_t targetIdx = std::max((size_t)3, (size_t)(I * ratio)) / 3 * 3;
 
-		// ── Step 1: generate position-only remap so meshopt sees unique verts ─
-		// glTF VBOs duplicate vertices across UV seams; meshopt needs a mesh
-		// where identical positions are merged into one logical vertex.
 		std::vector<uint32_t> posRemap(V);
 		size_t uniqueV = meshopt_generateVertexRemapMulti(
 			posRemap.data(),
 			inIdx.data(), I,
 			V,
-			nullptr, 0   // no streams → position-only welding done below
+			nullptr, 0
 		);
-		// Actually use a simpler approach: remap indices through position-only stream
-		// meshopt_generateVertexRemap works on a flat float buffer
 		std::vector<uint32_t> posRemapClean(V);
 		uniqueV = meshopt_generateVertexRemap(
 			posRemapClean.data(),
@@ -2877,7 +2794,6 @@ namespace {
 			inPos.data(), V, sizeof(glm::vec3)
 		);
 
-		// Build welded index buffer (operates on unique positions)
 		std::vector<uint32_t> weldedIdx(I);
 		meshopt_remapIndexBuffer(weldedIdx.data(), inIdx.data(), I, posRemapClean.data());
 
@@ -2885,7 +2801,6 @@ namespace {
 		meshopt_remapVertexBuffer(weldedPos.data(), inPos.data(), V,
 			sizeof(glm::vec3), posRemapClean.data());
 
-		// ── Step 2: simplify on the welded (unique-position) mesh ─────────────
 		size_t targetWeldedIdx = std::max((size_t)3, (size_t)(weldedIdx.size() * ratio)) / 3 * 3;
 
 		std::vector<uint32_t> simpIdx(weldedIdx.size());
@@ -2904,13 +2819,9 @@ namespace {
 
 		if (simpIdxCount < 3) { passThrough(); return; }
 
-		// ── Step 3: compact — remove unused welded vertices ───────────────────
 		std::vector<uint32_t> compactRemap(uniqueV, UINT32_MAX);
 		outPos.clear();
 		outPos.reserve(simpIdxCount);
-		// For each welded vertex that survived, find ONE original vertex that
-		// maps to it (for UV propagation).
-		// Build inverse of posRemapClean: weldedV → any original vertex index
 		std::vector<uint32_t> weldedToOrig(uniqueV, UINT32_MAX);
 		for (uint32_t i = 0; i < (uint32_t)V; ++i) {
 			uint32_t w = posRemapClean[i];
@@ -2934,7 +2845,6 @@ namespace {
 		for (size_t i = 0; i < simpIdxCount; ++i)
 			outIdx[i] = compactRemap[simpIdx[i]];
 
-		// Final degenerate check
 		std::vector<uint32_t> cleanIdx;
 		cleanIdx.reserve(outIdx.size());
 		for (size_t t = 0; t < outIdx.size(); t += 3) {
@@ -2951,9 +2861,8 @@ namespace {
 		if (outOriginalIndex) *outOriginalIndex = std::move(origOf);
 	}
 
-} // anonymous namespace
+}
 void FiscionX::Model::buildLODs(const std::vector<float>& ratios) {
-	// Release previously built LOD GPU buffers
 	for (auto& sub : meshes) {
 		for (auto& lod : sub.lodLevels) {
 			if (lod.vao) { glDeleteVertexArrays(1, &lod.vao); lod.vao = 0; }
@@ -2977,10 +2886,6 @@ void FiscionX::Model::buildLODs(const std::vector<float>& ratios) {
 			sub.cpuWeights.size() == sub.cpuPositions.size());
 
 		for (float ratio : ratios) {
-			// --- QEM simplification on CPU -----------------------------------
-			// maxError: quanto mais longe (menor ratio), mais toleramos erro geométrico.
-			// Mas nunca 1.0 — evita malhas explodidas em UV seams.
-			// ratio 0.5 → 0.01 | ratio 0.25 → 0.02 | ratio 0.1 → 0.05
 			float maxError = glm::clamp(0.005f / ratio, 0.005f, 0.08f);
 
 			std::vector<glm::vec3> simpPos;
@@ -2992,7 +2897,6 @@ void FiscionX::Model::buildLODs(const std::vector<float>& ratios) {
 
 			const size_t nVerts = simpPos.size();
 
-			// --- Recompute per-vertex normals --------------------------------
 			std::vector<glm::vec3> normals(nVerts, glm::vec3(0.0f));
 			for (size_t t = 0; t < simpIdx.size() / 3; ++t) {
 				uint32_t ia = simpIdx[t * 3 + 0], ib = simpIdx[t * 3 + 1], ic = simpIdx[t * 3 + 2];
@@ -3005,9 +2909,6 @@ void FiscionX::Model::buildLODs(const std::vector<float>& ratios) {
 				else            n = glm::vec3(0.f, 1.f, 0.f); // safe fallback
 			}
 
-			// --- Build VBO: pos(3) + normal(3) + tangent(4) + uv(2) ---------
-			// Tangent is computed per-triangle to avoid the NaN from normalize(0,0,0).
-			// We accumulate tangent per vertex the same way as normals.
 			std::vector<glm::vec3> tangents(nVerts, glm::vec3(0.0f));
 			std::vector<glm::vec2> uvs(nVerts, glm::vec2(0.0f));
 			if (hasUVs) {
@@ -3122,19 +3023,6 @@ void FiscionX::Model::buildLODs(const std::vector<float>& ratios) {
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Frustum culling — per-SubMesh AABB (triangle-group granularity)
-//
-// extractFrustumPlanes: Gribb-Hartmann extraction from viewProj.
-// isSubMeshInFrustum:   tests one SubMesh AABB against pre-extracted planes.
-// computeSubMeshVisibility: fills a bool per submesh for the whole model.
-//
-// draw() uses computeSubMeshVisibility so that individual submeshes (groups of
-// triangles) are skipped instead of the whole model.
-// ─────────────────────────────────────────────────────────────────────────────
-
-// Gribb-Hartmann plane extraction.
-// GLM col-major: m[col][row].  Row r = (m[0][r], m[1][r], m[2][r], m[3][r]).
 void FiscionX::Model::extractFrustumPlanes(const glm::mat4& vp, glm::vec4 planes[6])
 {
 	const glm::mat4& m = vp;
@@ -3152,9 +3040,6 @@ void FiscionX::Model::extractFrustumPlanes(const glm::mat4& vp, glm::vec4 planes
 	planes[5] = { m[0][3] - m[0][2], m[1][3] - m[1][2], m[2][3] - m[2][2], m[3][3] - m[3][2] };
 }
 
-// Tests one SubMesh AABB against 6 frustum planes.
-// modelMatrix: local → world transform for this submesh.
-// Returns true if the AABB is at least partially inside all planes.
 bool FiscionX::Model::Instance::isSubMeshInFrustum(const SubMesh& sub,
 	const glm::mat4& modelMatrix,
 	const glm::vec4 planes[6])
@@ -3192,7 +3077,6 @@ bool FiscionX::Model::Instance::isSubMeshInFrustum(const SubMesh& sub,
 }
 
 // Fills outVisible[i] for each submesh.
-// When enableFrustumCulling is false every slot is set to true (no culling).
 void FiscionX::Model::Instance::computeSubMeshVisibility(const glm::mat4& viewProj,
 	std::vector<bool>& outVisible) const
 {
@@ -3221,11 +3105,6 @@ void FiscionX::Model::Instance::computeSubMeshVisibility(const glm::mat4& viewPr
 	}
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Model::selectLOD
-// distanceSq: squared distance from camera to model center.
-// Returns: -1 = base mesh,  0..N-1 = LOD index,  INT_MAX = cull by distance.
-// ─────────────────────────────────────────────────────────────────────────────
 int FiscionX::Model::selectLOD(float distanceSq) const {
 	if (lodDistances.empty()) return -1;
 
@@ -3235,12 +3114,6 @@ int FiscionX::Model::selectLOD(float distanceSq) const {
 			return i - 1; // -1 = base mesh
 		}
 	}
-	// Além do último limiar → cullar por distância.
-	// O comentário original dizia "não cullar", mas isso fazia o modelo mais
-	// simplificado continuar sendo desenhado infinitamente longe.
-	// Retornar INT_MAX deixa draw() decidir: se quiser cullar, checa INT_MAX;
-	// se preferir exibir o LOD mais simples, compara contra lodLevels.size()-1.
-	// Por consistência com a doc e com a verificação em draw(), retornamos INT_MAX.
 	return INT_MAX;
 }
 
@@ -3249,8 +3122,6 @@ void FiscionX::Model::Instance::updateOcclusion(const glm::mat4& viewProj) {
 		* glm::eulerAngleXYZ(rotation.y, rotation.x, rotation.z)
 		* glm::scale(glm::mat4(1.0f), glm::vec3(scale.x, scale.y, scale.z));
 
-	// Seleciona o LOD ativo para que o occlusion query use a mesh simplificada
-	// quando o modelo está longe — evita submeter triângulos extras ao GPU.
 	glm::vec3 camPos(
 		FiscionX::Core::Camera.position.x,
 		FiscionX::Core::Camera.position.y,
@@ -3378,8 +3249,6 @@ void FiscionX::Model::drawSubMesh(
 
 		glUniformMatrix4fv(uniformCache.model, 1, GL_FALSE, glm::value_ptr(modelMatrix));
 
-		// === Alpha-transparent shadow support ===
-		// Determine alphaMode for this submesh
 		int depthAlphaMode = 0;
 		if (mesh.alphaMode == "MASK")  depthAlphaMode = 1;
 		else if (mesh.alphaMode == "BLEND") depthAlphaMode = 2;
@@ -3393,7 +3262,6 @@ void FiscionX::Model::drawSubMesh(
 		if (locAlphaCutoff != -1) glUniform1f(locAlphaCutoff, mesh.alphaCutoff);
 		if (locTransFactor != -1) glUniform1f(locTransFactor, mesh.transmissionFactor);
 
-		// Bind base color texture so the fragment shader can sample alpha
 		if (locBaseTex != -1 && mesh.baseColorTex != 0) {
 			glActiveTexture(GL_TEXTURE0);
 			glBindTexture(GL_TEXTURE_2D, mesh.baseColorTex);
@@ -3432,9 +3300,6 @@ void FiscionX::Model::drawSubMesh(
 	glUniformMatrix4fv(uniformCache.model, 1, GL_FALSE, glm::value_ptr(modelMatrix));
 	glUniformMatrix4fv(uniformCache.lightSpaceMatrix, 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
 
-	// OPTIM: compute normalMatrix on CPU once per draw call — avoids
-	// transpose(inverse(model)) executing per vertex on the GPU.
-	// For uniform-scale models mat3(model) is equivalent and even cheaper.
 	{
 		static GLint s_locNM = -2; // -2 = not yet looked up for this shader
 		static GLuint s_nmShader = 0;
@@ -3566,7 +3431,6 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 	glUniform1i(glGetUniformLocation(shader, "numLights"), numLights);
 	glUniform1f(glGetUniformLocation(shader, "reflectionsStrength"), FiscionX::Core::REFLECTIONS_STRENGTH);
 
-	// --- CSM: ENVIANDO DADOS DA DIREÇÃO (SOL) ---
 	// Procura a primeira luz direcional (nosso Sol)
 	int dirLightIndex = -1;
 	for (int i = 0; i < numLights; ++i) {
@@ -3595,12 +3459,6 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 			glUniformMatrix4fv(glGetUniformLocation(shader, ("cascadeLightSpaceMatrices[" + std::to_string(i) + "]").c_str()), 1, GL_FALSE, glm::value_ptr(sm.cascadeLightSpaceMatrices[i]));
 		}
 	}
-	// --------------------------------------------
-
-	// OPTIM: light uniforms are NOT re-uploaded here — drawSubMesh() already
-	// uploads every light via the per-model uniformCache.  Uploading them here
-	// too was redundant (N_lights * N_meshes * 2 uploads → N_lights * N_meshes).
-	// Shadow map textures still need to be bound before the mesh loop.
 	for (int i = 0; i < numLights; ++i) {
 		const Light& L = *FiscionX::Core::AllLights[i];
 		const ShadowMap& sm = FiscionX::Core::AllShadowMaps[i];
@@ -3617,7 +3475,6 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 		// DIRECTIONAL ja foi tratado lá em cima com Array Texture
 	}
 
-	// Instâncias adicionais — malhas opacas/mask (BLEND é tratado em DrawTransparentPass)
 	for (Instance& inst : instances) {
 		glm::mat4 baseMatrix = glm::mat4(1.0f);
 
@@ -3637,8 +3494,6 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 			subMeshVisible.assign(meshes.size(), true); // sombra: nunca cullar
 		}
 
-		// ── Distance-based LOD selection ─────────────────────────────────────────
-		// Compute squared camera→model distance once, then pick the LOD index.
 		int activeLOD = -1; // -1 = full-resolution base mesh
 		if (!lodDistances.empty()) {
 			glm::vec3 camPos(
@@ -3657,8 +3512,6 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 				* glm::eulerAngleXYZ(inst.rotation.y, inst.rotation.x, inst.rotation.z)
 				* glm::scale(glm::mat4(1.0f), glm::vec3(inst.scale.x, inst.scale.y, inst.scale.z));
 
-			// Compute per-submesh frustum visibility for this instance.
-			// During depth pass (shadow) never cull — objects behind the camera still cast shadows.
 			std::vector<bool> instSubVisible;
 			if (inst.enableFrustumCulling && !depthPass) {
 				glm::mat4 viewProj = glm::mat4(projection) * glm::mat4(view);
@@ -3674,10 +3527,6 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 				instSubVisible.assign(meshes.size(), true);
 			}
 
-			// Garante que o UBO de skinning correto desta instância está ativo
-			// antes de qualquer drawSubMesh. Sem este bind, todas as instâncias
-			// lêem os ossos da última instância que chamou update(), fazendo
-			// todas tocarem a mesma animação visualmente.
 			if (isSkinned && inst.uboSkin != 0) {
 				glBindBufferBase(GL_UNIFORM_BUFFER, 0, inst.uboSkin);
 			}
@@ -3702,8 +3551,6 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 	}
 }
 
-// Configura uniforms globais do shader (view/proj/luzes) sem iterar meshes.
-// Chamado pelo passo global de transparência antes de drawSubMesh().
 void FiscionX::Model::bindShaderForTransparency(GLuint shader, FiscionX::Mat4 view, FiscionX::Mat4 projection) {
 	int numLights = static_cast<int>(FiscionX::Core::AllLights.size());
 
@@ -4643,7 +4490,6 @@ glm::mat4 FiscionX::Core::ComputeLightSpaceMatrix(Light& L) {
 
 glm::mat4 FiscionX::Core::getLightSpaceMatrix(FiscionX::Light& L, const float nearPlane, const float farPlane)
 {
-	// 1. Recalcula direção (Tua lógica original mantida)
 	float yawRads = glm::radians(L.yaw);
 	float pitchRads = glm::radians(L.pitch);
 
@@ -4654,7 +4500,6 @@ glm::mat4 FiscionX::Core::getLightSpaceMatrix(FiscionX::Light& L, const float ne
 
 	L.direction = FiscionX::Vector3(glm::normalize(newDirection).x, glm::normalize(newDirection).y, glm::normalize(newDirection).z); // Atualiza na struct pra garantir
 
-	// 2. Calcula o Frustum da fatia atual da câmera
 	const auto proj = glm::perspective(
 		glm::radians(FiscionX::Core::Camera.fov),
 		(float)FiscionX::Core::SCREEN_WIDTH / (float)FiscionX::Core::SCREEN_HEIGHT,
@@ -4664,17 +4509,13 @@ glm::mat4 FiscionX::Core::getLightSpaceMatrix(FiscionX::Light& L, const float ne
 
 	const auto corners = getFrustumCornersWorldSpace(proj, FiscionX::Core::Camera.GetView());
 
-	// 3. Acha o centro geométrico dessa fatia
 	glm::vec3 center = glm::vec3(0, 0, 0);
 	for (const auto& v : corners)
 		center += glm::vec3(v);
 	center /= corners.size();
 
-	// 4. Cria a View Matrix da Luz olhando para esse centro
-	// O "up" vector precisa ser estável pra sombra não tremer igual vara verde
 	const auto lightView = glm::lookAt(center - glm::vec3(L.direction.x, L.direction.y, L.direction.z), center, glm::vec3(0.0f, 1.0f, 0.0f));
 
-	// 5. Ajusta o Ortho (Bounding Box) pra cobrir EXATAMENTE os cantos dessa fatia vistos da luz
 	float minX = std::numeric_limits<float>::max();
 	float maxX = std::numeric_limits<float>::lowest();
 	float minY = std::numeric_limits<float>::max();
@@ -4693,8 +4534,6 @@ glm::mat4 FiscionX::Core::getLightSpaceMatrix(FiscionX::Light& L, const float ne
 		maxZ = std::max(maxZ, trf.z);
 	}
 
-	// Tunez: Multiplicador zMult pra pegar objetos que estão atrás da câmera mas projetam sombra nela (árvores, prédios)
-	// Se ficar cortando sombra atrás de você, aumenta isso aqui.
 	float zMult = 10.0f;
 	if (minZ < 0) minZ *= zMult;
 	else minZ /= zMult;
@@ -4708,7 +4547,6 @@ glm::mat4 FiscionX::Core::getLightSpaceMatrix(FiscionX::Light& L, const float ne
 void FiscionX::Core::RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 projection, FiscionX::Mat4 viewProj) {
 	float now = static_cast<float>(glfwGetTime());
 
-	// 1. Update Skinning UBOs for all visible/shadow-casting instances
 	for (auto& model : AllModels) {
 		for (auto& inst : model->instances) {
 			if (!inst.visible || !inst.castsShadows) continue;
@@ -4716,7 +4554,6 @@ void FiscionX::Core::RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 p
 			if (model->isSkinned && !inst.boneTransforms.empty()) {
 				glBindBuffer(GL_UNIFORM_BUFFER, inst.uboSkin);
 				glBufferData(GL_UNIFORM_BUFFER, sizeof(glm::mat4) * inst.boneTransforms.size(), inst.boneTransforms.data(), GL_DYNAMIC_DRAW);
-				// Nota: O bind final (glBindBufferBase) é feito dentro do inst.draw() ou antes do draw call
 			}
 		}
 	}
@@ -4745,9 +4582,6 @@ void FiscionX::Core::RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 p
 		L.lastShadowUpdateTime = now;
 		L.lastPosition = lPos;
 
-		// ==========================================
-		// CASCADE SHADOW MAP (DIRECTIONAL)
-		// ==========================================
 		if (L.type == LIGHT_DIRECTIONAL) {
 			sm.cascadeLightSpaceMatrices.clear();
 			for (size_t c = 0; c < shadowCascadeLevels.size() + 1; ++c) {
@@ -4777,9 +4611,6 @@ void FiscionX::Core::RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 p
 			glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		}
 
-		// ==========================================
-		// POINT LIGHT (CUBEMAP)
-		// ==========================================
 		else if (L.type == LIGHT_POINT) {
 			float zFar = L.maxDistance;
 			glm::mat4 proj = glm::perspective(glm::radians(90.0f), 1.0f, NEAR_PLANE, zFar);
@@ -4812,9 +4643,6 @@ void FiscionX::Core::RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 p
 			glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		}
 
-		// ==========================================
-		// SPOT LIGHT
-		// ==========================================
 		else if (L.type == LIGHT_SPOT) {
 			sm.lightSpaceMatrix = ComputeLightSpaceMatrix(L);
 			glViewport(0, 0, SPOT_SHADOW_SIZE, SPOT_SHADOW_SIZE);
@@ -5133,12 +4961,10 @@ void FiscionX::Core::SetWindowFullscreen(bool fullscreen, int monitorIndex) {
 }
 
 void FiscionX::Core::DrawTransparentPass(FiscionX::Mat4 view, FiscionX::Mat4 projection) {
-	// Coleta TODAS as meshes BLEND de todos os modelos, com suas matrizes
-	// de model e referência ao Model dono (para uniforms de luz/bones).
 	struct BlendEntry {
 		float                      dist;
 		FiscionX::Model* model;
-		FiscionX::Model::Instance* inst;   // instância exata que gerou esta entrada
+		FiscionX::Model::Instance* inst;
 		const FiscionX::SubMesh* mesh;
 		glm::mat4                  modelMatrix;
 	};
@@ -5170,7 +4996,6 @@ void FiscionX::Core::DrawTransparentPass(FiscionX::Mat4 view, FiscionX::Mat4 pro
 
 	if (entries.empty()) return;
 
-	// Ordena: mais longe da câmera primeiro (painter's algorithm)
 	std::sort(entries.begin(), entries.end(),
 		[](const BlendEntry& a, const BlendEntry& b) { return a.dist > b.dist; });
 
@@ -5185,16 +5010,12 @@ void FiscionX::Core::DrawTransparentPass(FiscionX::Mat4 view, FiscionX::Mat4 pro
 	for (const auto& e : entries) {
 		GLuint sh = e.model->isSkinned ? shaderSkinned : shaderStatic;
 
-		// Reenvia uniforms globais apenas quando o model ou shader muda
 		if (sh != lastShader || e.model != lastModel) {
 			e.model->bindShaderForTransparency(sh, view, projection);
 			lastShader = sh;
 			lastModel = e.model;
 		}
 
-		// Rebinda o UBO de skinning correto desta instância antes do draw call.
-		// Sem isto, todas as instâncias transparentes usam os ossos da última
-		// instância que chamou update(), resultando em animação e pose compartilhadas.
 		if (e.model->isSkinned && e.inst->uboSkin != 0)
 			glBindBufferBase(GL_UNIFORM_BUFFER, 0, e.inst->uboSkin);
 
@@ -5206,11 +5027,6 @@ void FiscionX::Core::DrawTransparentPass(FiscionX::Mat4 view, FiscionX::Mat4 pro
 }
 
 void FiscionX::Core::SortModels() {
-	// Modelos com qualquer mesh opaca vão primeiro, para que seu geometry
-	// seja escrito no depth buffer antes das transparências.
-	// Modelos mistos (opaco+blend no mesmo GLB) ficam no grupo "opaco"
-	// porque suas meshes BLEND serão coletadas e desenhadas globalmente
-	// pelo passo transparente em draw() — veja DrawTransparentPass().
 	auto hasAnyOpaque = [](const Model* model) {
 		if (model->alpha < 1.0f) return false; // model inteiro semi-transparente
 		return std::any_of(model->meshes.begin(), model->meshes.end(),

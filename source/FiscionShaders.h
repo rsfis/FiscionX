@@ -1030,9 +1030,15 @@ void main() {
     flareFinal += smoothstep(0.04, 0.0, abs(ring2 - 0.5)) * vec3(0.05, 0.05, 0.1) * 0.2;
 
     // Starburst (Pequenos raios de difração fixos)
-    //float ang = atan(uv_corr.y - sunPos_corr.y, uv_corr.x - sunPos_corr.x);
-    //float star = pow(sin(ang * 6.0 + 1.5), 10.0) * 0.5 + pow(sin(ang * 10.0), 10.0) * 0.3;
-    //flareFinal += star * sunColor * exp(-distToSun * 10.0) * 2.0;
+    float ang = atan(uv_corr.y - sunPos_corr.y,
+                 uv_corr.x - sunPos_corr.x);
+
+    float ray1 = pow(max(0.0, 0.5 + 0.5 * sin(ang * 6.0 + 1.5)), 10.0);
+    float ray2 = pow(max(0.0, 0.5 + 0.5 * sin(ang * 10.0)), 10.0);
+
+    float star = ray1 * 0.5 + ray2 * 0.3;
+
+    flareFinal += star * sunColor * exp(-distToSun * 25.0) * 2.0;
 
     // 3. FINALIZAÇÃO
     // Vinheta na borda para o flare não "cortar" bruscamente nas beiradas da tela
