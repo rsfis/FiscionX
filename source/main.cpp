@@ -103,9 +103,10 @@ void update() {
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_K)) dirLight->yaw -= 0.04f;
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_J)) dirLight->pitch += 0.04f;
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_L)) dirLight->pitch -= 0.04f;
-    if (skinnedModel) {
+    if (boxModel) {
         if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_M)) {
-            skinnedModel->instances.empty();
+            boxModel->instances.empty();
+            boxModel->unload();
         }
     }
     if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_ESCAPE)) FiscionX::Core::Terminate();

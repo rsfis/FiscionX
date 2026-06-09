@@ -1020,6 +1020,10 @@ namespace FiscionX {
 		std::vector<GLuint> occlusionQueries;
 		std::vector<bool> isVisible;
 
+		// OPTIM: texture cache — imgIndex -> GL texture ID
+		// Prevents re-uploading the same image when multiple materials reference it
+		std::unordered_map<int, GLuint> textureCache;
+
 		// Camera extracted from the GLB
 		int  cameraNodeIndex = -1;   // index of the camera node found in the glTF (-1 = none)
 		bool drivesCamera = false; // true while this model is driving Core::Camera

@@ -92,6 +92,9 @@ float FiscionX::Core::lastFPSTime;
 bool FiscionX::Core::enableShaderCache = true;
 bool FiscionX::Core::enableModelCache = true;
 
+// OPTIM: cached once at window creation — avoids GPU round-trip per texture upload
+static GLfloat g_maxAnisotropy = 1.0f;
+
 float lastX = 640, lastY = 360;
 bool firstMouse = true;
 float deltaTime = 0.0f, lastFrame = 0;
@@ -722,9 +725,8 @@ FiscionX::UI::Image::Image(const char* path) {
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	GLfloat maxAniso = 0.0f;
-	glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
-	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, maxAniso);
+	// OPTIM: use cached anisotropy
+	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, g_maxAnisotropy);
 
 	stbi_image_free(data);
 
@@ -1083,7 +1085,7 @@ void FiscionX::UI::Video::createTextureIfNeeded() {
 	glBindTexture(GL_TEXTURE_2D, texture);
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 	if (FiscionX::Core::compressTexturesAutomatically) {
-		glHint(GL_TEXTURE_COMPRESSION_HINT, GL_NICEST);
+		glHint(GL_TEXTURE_COMPRESSION_HINT, GL_FASTEST);
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_RGBA_BPTC_UNORM,
 			width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
 	}
@@ -1332,9 +1334,8 @@ FiscionX::Image3D::Image3D(const char* path) {
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	GLfloat maxAniso = 0.0f;
-	glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
-	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, maxAniso);
+	// OPTIM: use cached anisotropy
+	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, g_maxAnisotropy);
 
 	stbi_image_free(data);
 
@@ -1734,12 +1735,16 @@ GLuint FiscionX::Model::getBaseColorTexture(const tinygltf::Model& model, int ma
 	int imgIndex = model.textures[texIndex].source;
 	if (imgIndex < 0 || imgIndex >= (int)model.images.size()) return 0;
 
+	// OPTIM: return cached texture if already uploaded
+	auto cacheIt = textureCache.find(imgIndex);
+	if (cacheIt != textureCache.end()) return cacheIt->second;
+
 	const auto& img = model.images[imgIndex];
 	GLuint texID;
 	glGenTextures(1, &texID);
 	glBindTexture(GL_TEXTURE_2D, texID);
 	if (FiscionX::Core::compressTexturesAutomatically) {
-		glHint(GL_TEXTURE_COMPRESSION_HINT, GL_NICEST);
+		glHint(GL_TEXTURE_COMPRESSION_HINT, GL_FASTEST);
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM,
 			img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
 	}
@@ -1752,10 +1757,9 @@ GLuint FiscionX::Model::getBaseColorTexture(const tinygltf::Model& model, int ma
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-	GLfloat maxAniso = 0.0f;
-	glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
-	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, maxAniso);
+	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, g_maxAnisotropy);
 
+	textureCache[imgIndex] = texID;
 	return texID;
 }
 
@@ -1771,12 +1775,16 @@ GLuint FiscionX::Model::getDiffuseTextureFromSpecGloss(const tinygltf::Model& mo
 			if (texIndex >= 0 && texIndex < (int)model.textures.size()) {
 				int imgIndex = model.textures[texIndex].source;
 				if (imgIndex >= 0 && imgIndex < (int)model.images.size()) {
+					// OPTIM: return cached texture if already uploaded
+					auto cacheIt = textureCache.find(imgIndex);
+					if (cacheIt != textureCache.end()) return cacheIt->second;
+
 					const auto& img = model.images[imgIndex];
 					GLuint texID;
 					glGenTextures(1, &texID);
 					glBindTexture(GL_TEXTURE_2D, texID);
 					if (FiscionX::Core::compressTexturesAutomatically) {
-						glHint(GL_TEXTURE_COMPRESSION_HINT, GL_NICEST);
+						glHint(GL_TEXTURE_COMPRESSION_HINT, GL_FASTEST);
 						glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM,
 							img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
 					}
@@ -1789,9 +1797,8 @@ GLuint FiscionX::Model::getDiffuseTextureFromSpecGloss(const tinygltf::Model& mo
 					glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 					glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
 					glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-					GLfloat maxAniso = 0.0f;
-					glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
-					glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, maxAniso);
+					glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, g_maxAnisotropy);
+					textureCache[imgIndex] = texID;
 					return texID;
 				}
 			}
@@ -1813,6 +1820,10 @@ GLuint FiscionX::Model::getGlossinessTextureFromSpecGloss(const tinygltf::Model&
 			if (texIndex >= 0 && texIndex < (int)model.textures.size()) {
 				int imgIndex = model.textures[texIndex].source;
 				if (imgIndex >= 0 && imgIndex < (int)model.images.size()) {
+					// OPTIM: return cached texture if already uploaded
+					auto cacheIt = textureCache.find(imgIndex);
+					if (cacheIt != textureCache.end()) return cacheIt->second;
+
 					const auto& img = model.images[imgIndex];
 
 					GLenum format = GL_RGBA;
@@ -1824,7 +1835,7 @@ GLuint FiscionX::Model::getGlossinessTextureFromSpecGloss(const tinygltf::Model&
 					glGenTextures(1, &texID);
 					glBindTexture(GL_TEXTURE_2D, texID);
 					if (FiscionX::Core::compressTexturesAutomatically) {
-						glHint(GL_TEXTURE_COMPRESSION_HINT, GL_NICEST);
+						glHint(GL_TEXTURE_COMPRESSION_HINT, GL_FASTEST);
 						glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM,
 							img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
 					}
@@ -1837,9 +1848,8 @@ GLuint FiscionX::Model::getGlossinessTextureFromSpecGloss(const tinygltf::Model&
 					glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 					glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
 					glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-					GLfloat maxAniso = 0.0f;
-					glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
-					glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, maxAniso);
+					glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, g_maxAnisotropy);
+					textureCache[imgIndex] = texID;
 					return texID;
 				}
 			}
@@ -1857,13 +1867,20 @@ GLuint FiscionX::Model::getNormalMapTexture(const tinygltf::Model& model, int ma
 	int texIndex = mat.additionalValues.at("normalTexture").TextureIndex();
 	if (texIndex < 0 || texIndex >= (int)model.textures.size()) return 0;
 	int imgIndex = model.textures[texIndex].source;
+
+	// OPTIM: return cached texture if already uploaded
+	// Use a separate key range to avoid colliding with color textures in the same cache
+	int cacheKey = 100000 + imgIndex; // normal maps use offset key
+	auto cacheIt = textureCache.find(cacheKey);
+	if (cacheIt != textureCache.end()) return cacheIt->second;
+
 	const auto& img = model.images[imgIndex];
 
 	GLuint texID;
 	glGenTextures(1, &texID);
 	glBindTexture(GL_TEXTURE_2D, texID);
 	if (FiscionX::Core::compressTexturesAutomatically) {
-		glHint(GL_TEXTURE_COMPRESSION_HINT, GL_NICEST);
+		glHint(GL_TEXTURE_COMPRESSION_HINT, GL_FASTEST);
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_RG_RGTC2,
 			img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
 	}
@@ -1876,9 +1893,8 @@ GLuint FiscionX::Model::getNormalMapTexture(const tinygltf::Model& model, int ma
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-	GLfloat maxAniso = 0.0f;
-	glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
-	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, maxAniso);
+	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, g_maxAnisotropy);
+	textureCache[cacheKey] = texID;
 	return texID;
 }
 
@@ -2463,9 +2479,8 @@ void FiscionX::Model::init(const std::string& path) {
 					sub.indexType = indexGLType;
 
 					// ==== Textures / Materials ====
-					sub.baseColorTex = getBaseColorTexture(gltfModel, prim.material);
-					if (sub.baseColorTex == 0) sub.baseColorTex = getDiffuseTextureFromSpecGloss(gltfModel, prim.material);
-					sub.normalMapTex = getNormalMapTexture(gltfModel, prim.material);
+					// OPTIM: removed duplicate getBaseColorTexture/getNormalMapTexture calls here —
+					// they are already called correctly inside the material block below.
 
 					if (prim.material >= 0 && prim.material < (int)gltfModel.materials.size()) {
 						const auto& mat = gltfModel.materials[prim.material];
@@ -2485,23 +2500,31 @@ void FiscionX::Model::init(const std::string& path) {
 							if (texIndex >= 0 && texIndex < (int)gltfModel.textures.size()) {
 								int imgIndex = gltfModel.textures[texIndex].source;
 								if (imgIndex >= 0 && imgIndex < (int)gltfModel.images.size()) {
-									const auto& img = gltfModel.images[imgIndex];
-									glGenTextures(1, &sub.glossinessTex);
-									glBindTexture(GL_TEXTURE_2D, sub.glossinessTex);
-									if (FiscionX::Core::compressTexturesAutomatically) {
-										glHint(GL_TEXTURE_COMPRESSION_HINT, GL_NICEST);
-										glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM,
-											img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+									// OPTIM: texture cache (key offset 200000 = glossiness)
+									int cacheKey = 200000 + imgIndex;
+									auto cit = textureCache.find(cacheKey);
+									if (cit != textureCache.end()) {
+										sub.glossinessTex = cit->second;
 									}
 									else {
-										glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
-											img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+										const auto& img = gltfModel.images[imgIndex];
+										glGenTextures(1, &sub.glossinessTex);
+										glBindTexture(GL_TEXTURE_2D, sub.glossinessTex);
+										if (FiscionX::Core::compressTexturesAutomatically) {
+											glHint(GL_TEXTURE_COMPRESSION_HINT, GL_FASTEST);
+											glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM,
+												img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+										}
+										else {
+											glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+												img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+										}
+										glGenerateMipmap(GL_TEXTURE_2D);
+										glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+										glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+										glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, g_maxAnisotropy);
+										textureCache[cacheKey] = sub.glossinessTex;
 									}
-									glGenerateMipmap(GL_TEXTURE_2D);
-									glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-									glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-									GLfloat maxAniso = 0.0f; glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
-									glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, maxAniso);
 								}
 							}
 						}
@@ -2521,23 +2544,31 @@ void FiscionX::Model::init(const std::string& path) {
 							if (texIndex >= 0 && texIndex < (int)gltfModel.textures.size()) {
 								int imgIndex = gltfModel.textures[texIndex].source;
 								if (imgIndex >= 0 && imgIndex < (int)gltfModel.images.size()) {
-									const auto& img = gltfModel.images[imgIndex];
-									glGenTextures(1, &sub.specularF0Tex);
-									glBindTexture(GL_TEXTURE_2D, sub.specularF0Tex);
-									if (FiscionX::Core::compressTexturesAutomatically) {
-										glHint(GL_TEXTURE_COMPRESSION_HINT, GL_NICEST);
-										glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM,
-											img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+									// OPTIM: texture cache (key offset 300000 = specular)
+									int cacheKey = 300000 + imgIndex;
+									auto cit = textureCache.find(cacheKey);
+									if (cit != textureCache.end()) {
+										sub.specularF0Tex = cit->second;
 									}
 									else {
-										glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
-											img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+										const auto& img = gltfModel.images[imgIndex];
+										glGenTextures(1, &sub.specularF0Tex);
+										glBindTexture(GL_TEXTURE_2D, sub.specularF0Tex);
+										if (FiscionX::Core::compressTexturesAutomatically) {
+											glHint(GL_TEXTURE_COMPRESSION_HINT, GL_FASTEST);
+											glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM,
+												img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+										}
+										else {
+											glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+												img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+										}
+										glGenerateMipmap(GL_TEXTURE_2D);
+										glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+										glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+										glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, g_maxAnisotropy);
+										textureCache[cacheKey] = sub.specularF0Tex;
 									}
-									glGenerateMipmap(GL_TEXTURE_2D);
-									glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-									glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-									GLfloat maxAniso = 0.0f; glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
-									glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, maxAniso);
 								}
 							}
 						}
@@ -2554,23 +2585,31 @@ void FiscionX::Model::init(const std::string& path) {
 								if (texIndex >= 0 && texIndex < (int)gltfModel.textures.size()) {
 									int imgIndex = gltfModel.textures[texIndex].source;
 									if (imgIndex >= 0 && imgIndex < (int)gltfModel.images.size()) {
-										const auto& img = gltfModel.images[imgIndex];
-										glGenTextures(1, &sub.transmissionTex);
-										glBindTexture(GL_TEXTURE_2D, sub.transmissionTex);
-										if (FiscionX::Core::compressTexturesAutomatically) {
-											glHint(GL_TEXTURE_COMPRESSION_HINT, GL_NICEST);
-											glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_RGBA_BPTC_UNORM,
-												img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+										// OPTIM: texture cache (key offset 400000 = transmission)
+										int cacheKey = 400000 + imgIndex;
+										auto cit = textureCache.find(cacheKey);
+										if (cit != textureCache.end()) {
+											sub.transmissionTex = cit->second;
 										}
 										else {
-											glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
-												img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+											const auto& img = gltfModel.images[imgIndex];
+											glGenTextures(1, &sub.transmissionTex);
+											glBindTexture(GL_TEXTURE_2D, sub.transmissionTex);
+											if (FiscionX::Core::compressTexturesAutomatically) {
+												glHint(GL_TEXTURE_COMPRESSION_HINT, GL_FASTEST);
+												glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_RGBA_BPTC_UNORM,
+													img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+											}
+											else {
+												glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+													img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+											}
+											glGenerateMipmap(GL_TEXTURE_2D);
+											glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+											glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+											glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, g_maxAnisotropy);
+											textureCache[cacheKey] = sub.transmissionTex;
 										}
-										glGenerateMipmap(GL_TEXTURE_2D);
-										glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-										glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-										GLfloat maxAniso = 0.0f; glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
-										glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, maxAniso);
 									}
 								}
 							}
@@ -2587,32 +2626,38 @@ void FiscionX::Model::init(const std::string& path) {
 							int imgIndex = tex.source;
 
 							if (imgIndex >= 0 && imgIndex < (int)gltfModel.images.size()) {
-								const auto& img = gltfModel.images[imgIndex];
-
-								glGenTextures(1, &sub.metallicTex);
-								glBindTexture(GL_TEXTURE_2D, sub.metallicTex);
-
-								// Metal/Roughness e AO (canal R) não são sRGB
-								GLenum format = (img.component == 4) ? GL_RGBA : GL_RGB;
-								GLenum internalFormat = (img.component == 4) ? GL_RGBA : GL_RGB;
-
-								if (FiscionX::Core::compressTexturesAutomatically) {
-									glHint(GL_TEXTURE_COMPRESSION_HINT, GL_NICEST);
-									glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_RGBA,
-										img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+								// OPTIM: texture cache (key offset 500000 = metallic/roughness)
+								int cacheKey = 500000 + imgIndex;
+								auto cit = textureCache.find(cacheKey);
+								if (cit != textureCache.end()) {
+									sub.metallicTex = cit->second;
 								}
 								else {
-									glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
-										img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
-								}
-								glGenerateMipmap(GL_TEXTURE_2D);
+									const auto& img = gltfModel.images[imgIndex];
+									glGenTextures(1, &sub.metallicTex);
+									glBindTexture(GL_TEXTURE_2D, sub.metallicTex);
 
-								// Configurações de textura
-								glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-								glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-								glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-								glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-								GLfloat maxAniso = 0.0f; glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
+									// Metal/Roughness e AO (canal R) não são sRGB
+									GLenum format = (img.component == 4) ? GL_RGBA : GL_RGB;
+									GLenum internalFormat = (img.component == 4) ? GL_RGBA : GL_RGB;
+
+									if (FiscionX::Core::compressTexturesAutomatically) {
+										glHint(GL_TEXTURE_COMPRESSION_HINT, GL_FASTEST);
+										glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_RGBA,
+											img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+									}
+									else {
+										glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
+											img.width, img.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img.image.data());
+									}
+									glGenerateMipmap(GL_TEXTURE_2D);
+									glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+									glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+									glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+									glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+									glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, g_maxAnisotropy);
+									textureCache[cacheKey] = sub.metallicTex;
+								}
 							}
 						}
 
@@ -2621,35 +2666,41 @@ void FiscionX::Model::init(const std::string& path) {
 							if (texIndex < (int)gltfModel.textures.size()) {
 								int imgIndex = gltfModel.textures[texIndex].source;
 								if (imgIndex >= 0 && imgIndex < (int)gltfModel.images.size()) {
-									const auto& img = gltfModel.images[imgIndex];
-
-									glGenTextures(1, &sub.aoTex);
-									glBindTexture(GL_TEXTURE_2D, sub.aoTex);
-
-									// AO é dado linear (não sRGB). Armazenar como GL_RED
-									// ou GL_COMPRESSED_RED_RGTC1 economiza VRAM e banda.
-									if (FiscionX::Core::compressTexturesAutomatically) {
-										glHint(GL_TEXTURE_COMPRESSION_HINT, GL_NICEST);
-										// RGTC1 = BC4 — compressão single-channel sem perdas visíveis para AO
-										GLenum srcFmt = (img.component >= 3) ? GL_RGB : GL_RED;
-										if (img.component == 4) srcFmt = GL_RGBA;
-										glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_RED_RGTC1,
-											img.width, img.height, 0, srcFmt, GL_UNSIGNED_BYTE, img.image.data());
+									// OPTIM: texture cache (key offset 600000 = AO)
+									int cacheKey = 600000 + imgIndex;
+									auto cit = textureCache.find(cacheKey);
+									if (cit != textureCache.end()) {
+										sub.aoTex = cit->second;
 									}
 									else {
-										GLenum srcFmt = (img.component >= 3) ? GL_RGB : GL_RED;
-										if (img.component == 4) srcFmt = GL_RGBA;
-										glTexImage2D(GL_TEXTURE_2D, 0, GL_RED,
-											img.width, img.height, 0, srcFmt, GL_UNSIGNED_BYTE, img.image.data());
+										const auto& img = gltfModel.images[imgIndex];
+										glGenTextures(1, &sub.aoTex);
+										glBindTexture(GL_TEXTURE_2D, sub.aoTex);
+										// AO é dado linear (não sRGB). Armazenar como GL_RED
+										// ou GL_COMPRESSED_RED_RGTC1 economiza VRAM e banda.
+										if (FiscionX::Core::compressTexturesAutomatically) {
+											glHint(GL_TEXTURE_COMPRESSION_HINT, GL_FASTEST);
+											// RGTC1 = BC4 — compressão single-channel sem perdas visíveis para AO
+											GLenum srcFmt = (img.component >= 3) ? GL_RGB : GL_RED;
+											if (img.component == 4) srcFmt = GL_RGBA;
+											glTexImage2D(GL_TEXTURE_2D, 0, GL_COMPRESSED_RED_RGTC1,
+												img.width, img.height, 0, srcFmt, GL_UNSIGNED_BYTE, img.image.data());
+										}
+										else {
+											GLenum srcFmt = (img.component >= 3) ? GL_RGB : GL_RED;
+											if (img.component == 4) srcFmt = GL_RGBA;
+											glTexImage2D(GL_TEXTURE_2D, 0, GL_RED,
+												img.width, img.height, 0, srcFmt, GL_UNSIGNED_BYTE, img.image.data());
+										}
+										glGenerateMipmap(GL_TEXTURE_2D);
+										glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+										glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+										glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+										glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+										glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, g_maxAnisotropy);
+										glBindTexture(GL_TEXTURE_2D, 0);
+										textureCache[cacheKey] = sub.aoTex;
 									}
-									glGenerateMipmap(GL_TEXTURE_2D);
-									glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-									glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-									glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-									glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-									GLfloat maxAniso = 0.0f; glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
-									glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, maxAniso);
-									glBindTexture(GL_TEXTURE_2D, 0);
 								}
 							}
 						}
@@ -2675,11 +2726,11 @@ void FiscionX::Model::init(const std::string& path) {
 	FiscionX::Core::AllModels.push_back(this);
 }
 
-void FiscionX::Model::unload() {
-
+void FiscionX::Model::unload()
+{
 	// ========= MESHES =========
-	for (auto& mesh : meshes) {
-
+	for (auto& mesh : meshes)
+	{
 		if (mesh.vao) {
 			glDeleteVertexArrays(1, &mesh.vao);
 			mesh.vao = 0;
@@ -2694,10 +2745,8 @@ void FiscionX::Model::unload() {
 			glDeleteBuffers(1, &mesh.ebo);
 			mesh.ebo = 0;
 		}
-	}
 
-	// ========= TEXTURAS =========
-	for (auto& mesh : meshes) {
+		// ========= TEXTURAS =========
 		if (mesh.baseColorTex) {
 			glDeleteTextures(1, &mesh.baseColorTex);
 			mesh.baseColorTex = 0;
@@ -2732,24 +2781,29 @@ void FiscionX::Model::unload() {
 			glDeleteTextures(1, &mesh.metallicTex);
 			mesh.metallicTex = 0;
 		}
-	}
 
-	for (auto& mesh : meshes) {
-		for (auto& lod : mesh.lodLevels) {
+		// ========= LODS =========
+		for (auto& lod : mesh.lodLevels)
+		{
 			if (lod.vao) { glDeleteVertexArrays(1, &lod.vao); lod.vao = 0; }
 			if (lod.vbo) { glDeleteBuffers(1, &lod.vbo);      lod.vbo = 0; }
 			if (lod.ebo) { glDeleteBuffers(1, &lod.ebo);      lod.ebo = 0; }
 		}
-		mesh.lodLevels.clear();
+
+		std::vector<LOD>().swap(mesh.lodLevels);
 	}
 
-	meshes.clear();
-	nodes.clear();
-	skins.clear();
-	animations.clear();
+	std::vector<Mesh>().swap(meshes);
+	std::vector<Node>().swap(nodes);
+	std::vector<Skin>().swap(skins);
+	std::vector<Animation>().swap(animations);
 
 	FiscionX::Core::AllModels.erase(
-		std::remove(FiscionX::Core::AllModels.begin(), FiscionX::Core::AllModels.end(), this),
+		std::remove(
+			FiscionX::Core::AllModels.begin(),
+			FiscionX::Core::AllModels.end(),
+			this
+		),
 		FiscionX::Core::AllModels.end()
 	);
 }
@@ -4723,6 +4777,9 @@ void FiscionX::Core::NewWindow(int width, int height, const char* window_label) 
 
 	glEnable(GL_DEPTH_TEST);
 
+	// OPTIM: cache anisotropy once — avoids glGetFloatv round-trip on every texture
+	glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &g_maxAnisotropy);
+
 	// ====== SHADERS ======
 	/*
 	File* depthFragFile = new File("shaders/depth_fragment.glsl");
@@ -4772,9 +4829,8 @@ void FiscionX::Core::NewWindow(int width, int height, const char* window_label) 
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
 	float borderColor[] = { 1.0,1.0,1.0,1.0 };
 	glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
-	GLfloat maxAniso = 0.0f;
-	glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &maxAniso);
-	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, maxAniso);
+	// OPTIM: use cached anisotropy
+	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, g_maxAnisotropy);
 
 	glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
 	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
