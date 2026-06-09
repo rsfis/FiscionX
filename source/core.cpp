@@ -2726,11 +2726,11 @@ void FiscionX::Model::init(const std::string& path) {
 	FiscionX::Core::AllModels.push_back(this);
 }
 
-void FiscionX::Model::unload()
-{
+void FiscionX::Model::unload() {
+
 	// ========= MESHES =========
-	for (auto& mesh : meshes)
-	{
+	for (auto& mesh : meshes) {
+
 		if (mesh.vao) {
 			glDeleteVertexArrays(1, &mesh.vao);
 			mesh.vao = 0;
@@ -2745,8 +2745,10 @@ void FiscionX::Model::unload()
 			glDeleteBuffers(1, &mesh.ebo);
 			mesh.ebo = 0;
 		}
+	}
 
-		// ========= TEXTURAS =========
+	// ========= TEXTURAS =========
+	for (auto& mesh : meshes) {
 		if (mesh.baseColorTex) {
 			glDeleteTextures(1, &mesh.baseColorTex);
 			mesh.baseColorTex = 0;
@@ -2781,29 +2783,24 @@ void FiscionX::Model::unload()
 			glDeleteTextures(1, &mesh.metallicTex);
 			mesh.metallicTex = 0;
 		}
+	}
 
-		// ========= LODS =========
-		for (auto& lod : mesh.lodLevels)
-		{
+	for (auto& mesh : meshes) {
+		for (auto& lod : mesh.lodLevels) {
 			if (lod.vao) { glDeleteVertexArrays(1, &lod.vao); lod.vao = 0; }
 			if (lod.vbo) { glDeleteBuffers(1, &lod.vbo);      lod.vbo = 0; }
 			if (lod.ebo) { glDeleteBuffers(1, &lod.ebo);      lod.ebo = 0; }
 		}
-
-		std::vector<LOD>().swap(mesh.lodLevels);
+		mesh.lodLevels.clear();
 	}
 
-	std::vector<Mesh>().swap(meshes);
-	std::vector<Node>().swap(nodes);
-	std::vector<Skin>().swap(skins);
-	std::vector<Animation>().swap(animations);
+	meshes.clear();
+	nodes.clear();
+	skins.clear();
+	animations.clear();
 
 	FiscionX::Core::AllModels.erase(
-		std::remove(
-			FiscionX::Core::AllModels.begin(),
-			FiscionX::Core::AllModels.end(),
-			this
-		),
+		std::remove(FiscionX::Core::AllModels.begin(), FiscionX::Core::AllModels.end(), this),
 		FiscionX::Core::AllModels.end()
 	);
 }
