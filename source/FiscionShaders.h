@@ -370,6 +370,32 @@ float interleavedGradientNoise(vec2 n) {
     return fract(3.378 * fract(dot(n, vec2(0.754877666, 0.56984029))));
 }
 
+vec3 ShadowTintColor(vec3 lightCol, float shadowAmt) {
+    // Cor ambiente média (céu + chão), usada como base da luz que ainda
+    // "vaza" para dentro da sombra via dispersão/GI aproximada.
+    vec3 ambientAvg = (environmentSkyColor + environmentGroundColor) * 0.5;
+
+    // Tinta complementar: desloca a cor da sombra para o lado oposto do
+    // espectro da luz principal (luz quente -> sombra fria, e vice-versa).
+    vec3 complementary = vec3(1.0) - lightCol;
+
+    // Mistura ambiente + complementar como a "cor de fundo" da sombra.
+    vec3 scatterColor = mix(ambientAvg, complementary, 0.35);
+    scatterColor = max(scatterColor, vec3(0.02)); // nunca cai pra preto absoluto
+
+    // Quanto mais forte a sombra (oclusão total), mais a cor de dispersão
+    // domina e mais escuro fica; em penumbras parciais, mistura suave.
+    float occlusion = clamp(shadowAmt, 0.0, 1.0);
+
+    // Fator de escurecimento varia com a luminância da cor de dispersão:
+    // ambientes com luz ambiente forte geram sombras mais claras;
+    // ambientes escuros geram sombras quase pretas, porém com a tinta.
+    float scatterLum = dot(scatterColor, vec3(0.299, 0.587, 0.114));
+    float darken = mix(1.0, 0.08 + 0.4 * scatterLum, occlusion);
+
+    return mix(vec3(1.0), scatterColor * darken, occlusion);
+}
+
 float ShadowCalculationCSM(vec3 fragPosWorld, vec3 N, vec3 L) {
     if (acceptsShadows == 0) return 0.0;
 
@@ -560,6 +586,10 @@ void main() {
 
   vec3 V = normalize(viewPos - fs_in.FragPos);
 
+  if (dot(N, V) < 0.0) {
+    N = -N;
+  }
+
   vec3 ambientSum = vec3(0.0);
   vec3 directLightSum = vec3(0.0);
 
@@ -670,9 +700,9 @@ void main() {
     
     vec3 directContrib = (diffuse + specularBRDF) * lightCol * NdotL * intensity;
 
-    float shadowTerm = 1.0 - shadow;
+    vec3 shadowColor = ShadowTintColor(lightCol, shadow);
 
-    directLightSum += attenuation * directContrib * shadowTerm;
+    directLightSum += attenuation * directContrib * shadowColor;
     
     ambientSum += attenuation * localAmbientFactor * baseColor * lightCol * intensity;
   }
@@ -711,7 +741,9 @@ uniform float alpha;
 
 void main() {
     vec4 color = texture(tex, TexCoord);
-    FragColor = vec4(color.rgb, color.a * alpha);
+    float finalAlpha = color.a * alpha;
+    if (finalAlpha < 0.01) discard; // pixels transparentes nao forcam depth=1.0
+    FragColor = vec4(color.rgb, finalAlpha);
 }
 )";
 
@@ -756,7 +788,9 @@ uniform float alpha;
 
 void main() {
     vec4 color = texture(tex, TexCoord);
-    FragColor = vec4(color.rgb, color.a * alpha);
+    float finalAlpha = color.a * alpha;
+    if (finalAlpha < 0.01) discard; // pixels transparentes nao escrevem profundidade/cor
+    FragColor = vec4(color.rgb, finalAlpha);
 }
 )";
 
@@ -917,6 +951,7 @@ in vec2 TexCoords;
 
 uniform sampler2D screenTexture;
 uniform sampler2D depthTexture;
+uniform sampler2D ssaoTexture;
 
 uniform vec2 lightPosOnScreen;
 uniform float sunVisibility;
@@ -975,6 +1010,8 @@ vec3 drawGhost(vec2 uv, vec2 pos, float size, float falloff, vec3 color, float c
 
 void main() {
     vec3 sceneColor = texture(screenTexture, TexCoords).rgb;
+    vec4 ssaoSample = texture(ssaoTexture, TexCoords);
+    sceneColor = sceneColor * ssaoSample.a + ssaoSample.rgb;
     vec2 uv_corr = TexCoords * vec2(aspect, 1.0);
     vec2 sunPos_corr = lightPosOnScreen * vec2(aspect, 1.0);
     vec2 center_corr = vec2(0.5) * vec2(aspect, 1.0);
@@ -1054,6 +1091,151 @@ void main() {
     vec3 color = sceneColor + effectLDR;
 
     FragColor = vec4(clamp(color, 0.0, 1.0) - colorCorrection, 1.0);
+}
+)";
+
+const char* ssaoFragment = R"(
+#version 330 core
+out vec4 FragColor;
+in vec2 TexCoords;
+
+uniform sampler2D depthTexture;
+uniform sampler2D colorTexture;
+uniform sampler2D noiseTex;
+
+uniform mat4 projection;
+uniform mat4 invProjection;
+
+uniform vec2 screenSize;
+uniform float nearPlane;
+uniform float farPlane;
+
+uniform float radius;
+uniform float bias;
+uniform float intensity;
+uniform float giStrength;
+
+const int KERNEL_SIZE = 16;
+uniform vec3 samples[KERNEL_SIZE];
+
+float LinearizeDepth(float depth) {
+    float z = depth * 2.0 - 1.0;
+    return (2.0 * nearPlane * farPlane) / (farPlane + nearPlane - z * (farPlane - nearPlane));
+}
+
+vec3 ViewPosFromDepth(vec2 uv, float depth) {
+    vec4 clip = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    vec4 view = invProjection * clip;
+    return view.xyz / view.w;
+}
+
+vec3 ViewNormalFromDepth(vec2 uv, vec3 viewPos) {
+    vec2 texel = 1.0 / screenSize;
+
+    float dC = texture(depthTexture, uv).r;
+    float dR = texture(depthTexture, uv + vec2(texel.x, 0.0)).r;
+    float dL = texture(depthTexture, uv - vec2(texel.x, 0.0)).r;
+    float dU = texture(depthTexture, uv + vec2(0.0, texel.y)).r;
+    float dD = texture(depthTexture, uv - vec2(0.0, texel.y)).r;
+
+    vec2 hUV = (abs(dR - dC) < abs(dL - dC)) ? uv + vec2(texel.x, 0.0) : uv - vec2(texel.x, 0.0);
+    vec2 vUV = (abs(dU - dC) < abs(dD - dC)) ? uv + vec2(0.0, texel.y) : uv - vec2(0.0, texel.y);
+
+    float dH = texture(depthTexture, hUV).r;
+    float dV = texture(depthTexture, vUV).r;
+
+    vec3 posH = ViewPosFromDepth(hUV, dH);
+    vec3 posV = ViewPosFromDepth(vUV, dV);
+
+    vec3 dx = posH - viewPos;
+    vec3 dy = posV - viewPos;
+
+    vec3 n = cross(dx, dy);
+    if ((hUV.x - uv.x) < 0.0) n = -n;
+    if ((vUV.y - uv.y) < 0.0) n = -n;
+
+    if (dot(n, n) < 1e-12) return vec3(0.0, 0.0, 1.0);
+    return normalize(n);
+}
+
+void main() {
+    float depth = texture(depthTexture, TexCoords).r;
+    if (depth >= 0.9999) {
+        // Sem geometria opaca aqui (céu, ou objeto 3D transparente / overlay 2D
+        // que não escreve no depth buffer). Não aplicar AO nem GI:
+        // occlusion = 1.0 (alpha=1 -> sceneColor * 1.0) e indirect = 0.0.
+        FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+
+    vec3 fragPos = ViewPosFromDepth(TexCoords, depth);
+    vec3 normal = ViewNormalFromDepth(TexCoords, fragPos);
+
+    vec2 noiseScale = screenSize / 4.0;
+    vec3 randomVec = normalize(texture(noiseTex, TexCoords * noiseScale).xyz * 2.0 - 1.0);
+
+    vec3 tangent = normalize(randomVec - normal * dot(randomVec, normal));
+    vec3 bitangent = cross(normal, tangent);
+    mat3 TBN = mat3(tangent, bitangent, normal);
+
+    float occlusion = 0.0;
+    vec3 indirect = vec3(0.0);
+
+    for (int i = 0; i < KERNEL_SIZE; i++) {
+        vec3 samplePos = TBN * samples[i];
+        samplePos = fragPos + samplePos * radius;
+
+        vec4 offset = projection * vec4(samplePos, 1.0);
+        offset.xyz /= offset.w;
+        offset.xyz = offset.xyz * 0.5 + 0.5;
+
+        if (offset.x < 0.0 || offset.x > 1.0 || offset.y < 0.0 || offset.y > 1.0) continue;
+
+        vec4 occluderSample = texture(colorTexture, offset.xy);
+
+        float sampleDepth = texture(depthTexture, offset.xy).r;
+        if (sampleDepth >= 0.9999) continue;
+        vec3 occluderViewPos = ViewPosFromDepth(offset.xy, sampleDepth);
+
+        float rangeCheck = smoothstep(0.0, 1.0, radius / max(abs(fragPos.z - occluderViewPos.z), 0.0001));
+
+        if (occluderViewPos.z >= samplePos.z + bias) {
+            occlusion += rangeCheck;
+
+            vec3 occluderNormal = ViewNormalFromDepth(offset.xy, occluderViewPos);
+            vec3 toFrag = normalize(fragPos - occluderViewPos);
+            float bounceFactor = max(dot(occluderNormal, toFrag), 0.0);
+
+            indirect += occluderSample.rgb * bounceFactor * rangeCheck;
+        }
+    }
+
+    occlusion = 1.0 - (occlusion / float(KERNEL_SIZE));
+    occlusion = clamp(pow(occlusion, intensity), 0.0, 1.0);
+
+    indirect = (indirect / float(KERNEL_SIZE)) * giStrength;
+
+    FragColor = vec4(indirect, occlusion);
+}
+)";
+
+const char* ssaoBlurFragment = R"(
+#version 330 core
+out vec4 FragColor;
+in vec2 TexCoords;
+
+uniform sampler2D ssaoInput;
+uniform vec2 screenSize;
+
+void main() {
+    vec2 texel = 1.0 / screenSize;
+    vec4 result = vec4(0.0);
+    for (int x = -2; x <= 2; x++) {
+        for (int y = -2; y <= 2; y++) {
+            result += texture(ssaoInput, TexCoords + vec2(float(x), float(y)) * texel);
+        }
+    }
+    FragColor = result / 25.0;
 }
 )";
 

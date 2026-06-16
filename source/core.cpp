@@ -22,6 +22,14 @@ GLuint FiscionX::Core::mainDepthBuffer;
 GLuint FiscionX::Core::screenQuadVAO;
 GLuint FiscionX::Core::screenQuadVBO;
 GLuint FiscionX::Core::godRaysShader;
+GLuint FiscionX::Core::ssaoFBO;
+GLuint FiscionX::Core::ssaoColorBuffer;
+GLuint FiscionX::Core::ssaoBlurFBO;
+GLuint FiscionX::Core::ssaoBlurColorBuffer;
+GLuint FiscionX::Core::ssaoShader;
+GLuint FiscionX::Core::ssaoBlurShader;
+GLuint FiscionX::Core::ssaoNoiseTex;
+std::vector<glm::vec3> FiscionX::Core::ssaoKernel;
 float FiscionX::Core::sunDiskSize = 0.030;
 float FiscionX::Core::sunHaloSize = 0.3;
 FiscionX::Vector3 FiscionX::Core::sunColor(1.0, 0.95, 0.8);
@@ -31,7 +39,7 @@ float FiscionX::Core::godRaysDecay = 0.97;
 float FiscionX::Core::godRaysExposure = 1.4;
 int FiscionX::Core::godRaysNumOfSamples = 10;
 FiscionX::Vector3 FiscionX::Core::colorCorrection(0.0f, 0.0f, 0.0f);
-float FiscionX::Core::REFLECTIONS_STRENGTH = 0.2f;
+float FiscionX::Core::REFLECTIONS_STRENGTH = 0.8f;
 float FiscionX::Core::HDR_EXPOSURE = 1.0f;
 
 static GLuint g_hdrTex = 0;
@@ -110,6 +118,17 @@ bool FiscionX::Core::LoadHDR(const char* path)
 	if (!data)
 		return false;
 
+	// Libera recursos GPU anteriores para evitar leak de IDs.
+	// g_hdrVAO e g_hdrVBO são REUTILIZADOS (não deletados) porque o
+	// glBufferData do cubo já foi enviado — só precisamos de nova textura
+	// e novos mapas IBL.
+	if (g_hdrTex) { glDeleteTextures(1, &g_hdrTex);        g_hdrTex = 0; }
+	if (g_hdrProgram) { glDeleteProgram(g_hdrProgram);         g_hdrProgram = 0; }
+	if (iblIrradianceMap) { glDeleteTextures(1, &iblIrradianceMap); iblIrradianceMap = 0; }
+	if (iblPrefilterMap) { glDeleteTextures(1, &iblPrefilterMap); iblPrefilterMap = 0; }
+	if (iblBrdfLUT) { glDeleteTextures(1, &iblBrdfLUT);      iblBrdfLUT = 0; }
+	iblReady = false;
+
 	glGenTextures(1, &g_hdrTex);
 	glBindTexture(GL_TEXTURE_2D, g_hdrTex);
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, w, h, 0, GL_RGB, GL_FLOAT, data);
@@ -179,15 +198,20 @@ bool FiscionX::Core::LoadHDR(const char* path)
 		 1.0f, -1.0f,  1.0f
 	};
 
-	glGenVertexArrays(1, &g_hdrVAO);
-	glGenBuffers(1, &g_hdrVBO);
-	glBindVertexArray(g_hdrVAO);
-	glBindBuffer(GL_ARRAY_BUFFER, g_hdrVBO);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(skyboxVertices), skyboxVertices, GL_STATIC_DRAW);
-	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
-	glBindVertexArray(0);
+	// O VAO/VBO do cubo skybox só precisa ser criado uma vez — os vértices
+	// nunca mudam entre diferentes HDRs. Reutilizar evita sobrescrever o ID
+	// com dados inválidos na segunda chamada a LoadHDR().
+	if (g_hdrVAO == 0) {
+		glGenVertexArrays(1, &g_hdrVAO);
+		glGenBuffers(1, &g_hdrVBO);
+		glBindVertexArray(g_hdrVAO);
+		glBindBuffer(GL_ARRAY_BUFFER, g_hdrVBO);
+		glBufferData(GL_ARRAY_BUFFER, sizeof(skyboxVertices), skyboxVertices, GL_STATIC_DRAW);
+		glEnableVertexAttribArray(0);
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+		glBindBuffer(GL_ARRAY_BUFFER, 0);
+		glBindVertexArray(0);
+	}
 	glBindTexture(GL_TEXTURE_2D, 0);
 
 	auto compileIBLShader = [](const char* vSrc, const char* fSrc) -> GLuint {
@@ -806,7 +830,15 @@ void FiscionX::UI::Image::draw(FiscionX::Vector2 position) {
 		s_locH = glGetUniformLocation(shader, "height");
 	}
 
-	glDisable(GL_DEPTH_TEST);
+	// Forca profundidade = 1.0 (far plane) nos pixels deste quad 2D.
+	// Assim o passe de SSAO (depth >= 0.9999) ignora esses pixels e nao
+	// aplica AO/GI da geometria 3D escondida atras da imagem 2D, e o
+	// composite final (godRaysFragment) deixa a imagem 2D intacta.
+	glEnable(GL_DEPTH_TEST);
+	glDepthFunc(GL_ALWAYS);
+	glDepthMask(GL_TRUE);
+	glDepthRange(1.0, 1.0);
+
 	glUseProgram(shader);
 	glBindVertexArray(VAO);
 	glActiveTexture(GL_TEXTURE0);
@@ -831,6 +863,10 @@ void FiscionX::UI::Image::draw(FiscionX::Vector2 position) {
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 	glDisable(GL_BLEND);
+
+	// Restaura o estado normal de profundidade para os proximos draws (3D)
+	glDepthRange(0.0, 1.0);
+	glDepthFunc(GL_LESS);
 	glEnable(GL_DEPTH_TEST);
 }
 
@@ -952,7 +988,7 @@ void FiscionX::UI::DrawText(Font* font, const char* text, FiscionX::Vector2 posi
 	glBindTexture(GL_TEXTURE_2D, font->textureAtlas);
 
 	glEnable(GL_BLEND);
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ZERO);
 	glDisable(GL_DEPTH_TEST);
 
 	size_t len = strlen(text);
@@ -4852,7 +4888,7 @@ void FiscionX::Core::NewWindow(int width, int height, const char* window_label) 
 	// Textura de Cor
 	glGenTextures(1, &mainColorBuffer);
 	glBindTexture(GL_TEXTURE_2D, mainColorBuffer);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, w, h, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, mainColorBuffer, 0);
@@ -4886,7 +4922,62 @@ void FiscionX::Core::NewWindow(int width, int height, const char* window_label) 
 	);
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-	// Quad para cobrir a tela no post-processing
+	glGenFramebuffers(1, &ssaoFBO);
+	glBindFramebuffer(GL_FRAMEBUFFER, ssaoFBO);
+
+	glGenTextures(1, &ssaoColorBuffer);
+	glBindTexture(GL_TEXTURE_2D, ssaoColorBuffer);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, NULL);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ssaoColorBuffer, 0);
+
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	glGenFramebuffers(1, &ssaoBlurFBO);
+	glBindFramebuffer(GL_FRAMEBUFFER, ssaoBlurFBO);
+
+	glGenTextures(1, &ssaoBlurColorBuffer);
+	glBindTexture(GL_TEXTURE_2D, ssaoBlurColorBuffer);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, NULL);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ssaoBlurColorBuffer, 0);
+
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+
+	std::mt19937 ssaoRng(12345);
+	std::uniform_real_distribution<float> ssaoDist(-1.0f, 1.0f);
+	std::vector<glm::vec3> ssaoNoise;
+	for (int i = 0; i < 16; i++) {
+		glm::vec3 noise(ssaoDist(ssaoRng), ssaoDist(ssaoRng), 0.0f);
+		ssaoNoise.push_back(noise);
+	}
+	glGenTextures(1, &ssaoNoiseTex);
+	glBindTexture(GL_TEXTURE_2D, ssaoNoiseTex);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, 4, 4, 0, GL_RGB, GL_FLOAT, &ssaoNoise[0]);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
+	ssaoShader = LoadShader(postProcessVertex, ssaoFragment);
+	ssaoBlurShader = LoadShader(postProcessVertex, ssaoBlurFragment);
+
+	for (int i = 0; i < 16; i++) {
+		glm::vec3 sample(ssaoDist(ssaoRng), ssaoDist(ssaoRng), (ssaoDist(ssaoRng) + 1.0f) * 0.5f);
+		sample = glm::normalize(sample);
+		float scale = (float)i / 16.0f;
+		scale = 0.1f + scale * scale * 0.9f;
+		sample *= scale;
+		ssaoKernel.push_back(sample);
+	}
+
 	float quadVertices[] = {
 		// posições   // texCoords
 		-1.0f,  1.0f,  0.0f, 1.0f,
@@ -5052,6 +5143,19 @@ void FiscionX::Core::DrawTransparentPass(FiscionX::Mat4 view, FiscionX::Mat4 pro
 	std::sort(entries.begin(), entries.end(),
 		[](const BlendEntry& a, const BlendEntry& b) { return a.dist > b.dist; });
 
+	// Renderiza transparentes DEPOIS do composite (PostProcessing já escreveu no FB 0).
+	// Vincula o FB 0 explicitamente: assim o SSAO/GI já aplicado não escurece as malhas
+	// BLEND, e o depth buffer do mainFBO é copiado para o FB 0 para manter oclusão correta.
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, FiscionX::Core::mainFBO);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+	glBlitFramebuffer(
+		0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT,
+		0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT,
+		GL_DEPTH_BUFFER_BIT, GL_NEAREST
+	);
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glViewport(0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
+
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	glDepthMask(GL_FALSE);
@@ -5185,6 +5289,66 @@ void FiscionX::Core::Draw::SwapBuffers() {
 }
 
 void FiscionX::Core::Draw::PostProcessing(FiscionX::Mat4 viewProj, FiscionX::Light* dirLight) {
+	float aspectForProj = (float)FiscionX::Core::SCREEN_WIDTH / FiscionX::Core::SCREEN_HEIGHT;
+	glm::mat4 projection = glm::mat4(FiscionX::Mat4::perspective(
+		glm::radians(FiscionX::Core::Camera.fov), aspectForProj,
+		FiscionX::Core::NEAR_PLANE, FiscionX::Core::FAR_PLANE));
+	glm::mat4 invProjection = glm::inverse(projection);
+
+	glBindFramebuffer(GL_FRAMEBUFFER, FiscionX::Core::ssaoFBO);
+	glViewport(0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
+	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+	glClear(GL_COLOR_BUFFER_BIT);
+	glDisable(GL_DEPTH_TEST);
+
+	glUseProgram(FiscionX::Core::ssaoShader);
+	glUniformMatrix4fv(glGetUniformLocation(FiscionX::Core::ssaoShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+	glUniformMatrix4fv(glGetUniformLocation(FiscionX::Core::ssaoShader, "invProjection"), 1, GL_FALSE, glm::value_ptr(invProjection));
+	glUniform2f(glGetUniformLocation(FiscionX::Core::ssaoShader, "screenSize"), (float)FiscionX::Core::SCREEN_WIDTH, (float)FiscionX::Core::SCREEN_HEIGHT);
+	glUniform1f(glGetUniformLocation(FiscionX::Core::ssaoShader, "nearPlane"), FiscionX::Core::NEAR_PLANE);
+	glUniform1f(glGetUniformLocation(FiscionX::Core::ssaoShader, "farPlane"), FiscionX::Core::FAR_PLANE);
+	glUniform1f(glGetUniformLocation(FiscionX::Core::ssaoShader, "radius"), 0.5f);
+	glUniform1f(glGetUniformLocation(FiscionX::Core::ssaoShader, "bias"), 0.025f);
+	glUniform1f(glGetUniformLocation(FiscionX::Core::ssaoShader, "intensity"), 1.5f);
+	glUniform1f(glGetUniformLocation(FiscionX::Core::ssaoShader, "giStrength"), 0.6f);
+
+	for (int i = 0; i < (int)FiscionX::Core::ssaoKernel.size(); i++) {
+		std::string name = "samples[" + std::to_string(i) + "]";
+		glUniform3f(glGetUniformLocation(FiscionX::Core::ssaoShader, name.c_str()),
+			FiscionX::Core::ssaoKernel[i].x, FiscionX::Core::ssaoKernel[i].y, FiscionX::Core::ssaoKernel[i].z);
+	}
+
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainDepthBuffer);
+	glUniform1i(glGetUniformLocation(FiscionX::Core::ssaoShader, "depthTexture"), 0);
+
+	glActiveTexture(GL_TEXTURE1);
+	glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainColorBuffer);
+	glUniform1i(glGetUniformLocation(FiscionX::Core::ssaoShader, "colorTexture"), 1);
+
+	glActiveTexture(GL_TEXTURE2);
+	glBindTexture(GL_TEXTURE_2D, FiscionX::Core::ssaoNoiseTex);
+	glUniform1i(glGetUniformLocation(FiscionX::Core::ssaoShader, "noiseTex"), 2);
+
+	glBindVertexArray(FiscionX::Core::screenQuadVAO);
+	glDrawArrays(GL_TRIANGLES, 0, 6);
+	glBindVertexArray(0);
+
+	glBindFramebuffer(GL_FRAMEBUFFER, FiscionX::Core::ssaoBlurFBO);
+	glViewport(0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
+	glClear(GL_COLOR_BUFFER_BIT);
+
+	glUseProgram(FiscionX::Core::ssaoBlurShader);
+	glUniform2f(glGetUniformLocation(FiscionX::Core::ssaoBlurShader, "screenSize"), (float)FiscionX::Core::SCREEN_WIDTH, (float)FiscionX::Core::SCREEN_HEIGHT);
+
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, FiscionX::Core::ssaoColorBuffer);
+	glUniform1i(glGetUniformLocation(FiscionX::Core::ssaoBlurShader, "ssaoInput"), 0);
+
+	glBindVertexArray(FiscionX::Core::screenQuadVAO);
+	glDrawArrays(GL_TRIANGLES, 0, 6);
+	glBindVertexArray(0);
+
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	glViewport(0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
 
@@ -5244,6 +5408,10 @@ void FiscionX::Core::Draw::PostProcessing(FiscionX::Mat4 viewProj, FiscionX::Lig
 	glActiveTexture(GL_TEXTURE1);
 	glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainDepthBuffer);
 	glUniform1i(glGetUniformLocation(FiscionX::Core::godRaysShader, "depthTexture"), 1);
+
+	glActiveTexture(GL_TEXTURE2);
+	glBindTexture(GL_TEXTURE_2D, FiscionX::Core::ssaoBlurColorBuffer);
+	glUniform1i(glGetUniformLocation(FiscionX::Core::godRaysShader, "ssaoTexture"), 2);
 
 	glBindVertexArray(FiscionX::Core::screenQuadVAO);
 	glDrawArrays(GL_TRIANGLES, 0, 6);

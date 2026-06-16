@@ -1228,6 +1228,15 @@ namespace FiscionX {
 		static GLuint screenQuadVAO, screenQuadVBO;
 		static GLuint godRaysShader;
 
+		static GLuint ssaoFBO;
+		static GLuint ssaoColorBuffer;
+		static GLuint ssaoBlurFBO;
+		static GLuint ssaoBlurColorBuffer;
+		static GLuint ssaoShader;
+		static GLuint ssaoBlurShader;
+		static GLuint ssaoNoiseTex;
+		static std::vector<glm::vec3> ssaoKernel;
+
 		// --- IBL ---
 		static GLuint iblIrradianceMap;    // samplerCube — diffuse irradiance
 		static GLuint iblPrefilterMap;     // samplerCube — specular prefiltered (mip chain)

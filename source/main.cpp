@@ -146,15 +146,18 @@ void draw() {
             model->draw(FiscionX::Core::shaderSkinned, glm::mat4(1.0f), 0, false, view, projection);
         }
     }
-    FiscionX::Core::DrawTransparentPass(view, projection);
 
     img3D->draw(view, projection);
 
     img->draw(FiscionX::Vector2(300, 200));
 
     FiscionX::Core::Draw::PostProcessing(viewProj, dirLight); // No godray; Add Bloom
+
+    // Transparentes DEPOIS do composite: o SSAO já foi aplicado no FB 0,
+    // as malhas BLEND são desenhadas por cima sem serem escurecidas pelo AO.
+    FiscionX::Core::DrawTransparentPass(view, projection);
     //FiscionX::Physics::DrawDebugWorld(projection, view);
-    
+
     FiscionX::Core::Draw::SwapBuffers();
 }
 
@@ -229,7 +232,7 @@ int main() {
         FiscionX::Vector3(2.1f, 2.1f, 2.1f)
     );
     boxModel = new FiscionX::Model(
-        "assets/models/tree_scene2.glb"
+        "assets/models/factory.glb" // factory / tree_scene2
     );
     boxModel->addInstance(
         FiscionX::Vector3(0, 0.09f, 4.2f),
