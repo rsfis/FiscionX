@@ -267,18 +267,23 @@ bool FiscionX::Core::LoadHDR(const char* path)
 	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, captureRBO);
 
 	glUseProgram(shEquirect);
-	glUniform1i(glGetUniformLocation(shEquirect, "equirectangularMap"), 0);
-	glUniformMatrix4fv(glGetUniformLocation(shEquirect, "projection"), 1, GL_FALSE, glm::value_ptr(captureProjection));
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, g_hdrTex);
+	{
+		GLint locEquiMap = glGetUniformLocation(shEquirect, "equirectangularMap");
+		GLint locEquiProj = glGetUniformLocation(shEquirect, "projection");
+		GLint locEquiView = glGetUniformLocation(shEquirect, "view");
+		glUniform1i(locEquiMap, 0);
+		glUniformMatrix4fv(locEquiProj, 1, GL_FALSE, glm::value_ptr(captureProjection));
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, g_hdrTex);
 
-	glViewport(0, 0, ENV_SIZE, ENV_SIZE);
-	for (int i = 0; i < 6; ++i) {
-		glUniformMatrix4fv(glGetUniformLocation(shEquirect, "view"), 1, GL_FALSE, glm::value_ptr(captureViews[i]));
-		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, envCubemap, 0);
-		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-		glBindVertexArray(g_hdrVAO);
-		glDrawArrays(GL_TRIANGLES, 0, 36);
+		glViewport(0, 0, ENV_SIZE, ENV_SIZE);
+		for (int i = 0; i < 6; ++i) {
+			glUniformMatrix4fv(locEquiView, 1, GL_FALSE, glm::value_ptr(captureViews[i]));
+			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, envCubemap, 0);
+			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+			glBindVertexArray(g_hdrVAO);
+			glDrawArrays(GL_TRIANGLES, 0, 36);
+		}
 	}
 	glBindTexture(GL_TEXTURE_CUBE_MAP, envCubemap);
 	glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
@@ -300,18 +305,23 @@ bool FiscionX::Core::LoadHDR(const char* path)
 	glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, IRR_SIZE, IRR_SIZE);
 
 	glUseProgram(shIrradiance);
-	glUniform1i(glGetUniformLocation(shIrradiance, "environmentMap"), 0);
-	glUniformMatrix4fv(glGetUniformLocation(shIrradiance, "projection"), 1, GL_FALSE, glm::value_ptr(captureProjection));
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_CUBE_MAP, envCubemap);
+	{
+		GLint locIrrMap = glGetUniformLocation(shIrradiance, "environmentMap");
+		GLint locIrrProj = glGetUniformLocation(shIrradiance, "projection");
+		GLint locIrrView = glGetUniformLocation(shIrradiance, "view");
+		glUniform1i(locIrrMap, 0);
+		glUniformMatrix4fv(locIrrProj, 1, GL_FALSE, glm::value_ptr(captureProjection));
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_CUBE_MAP, envCubemap);
 
-	glViewport(0, 0, IRR_SIZE, IRR_SIZE);
-	for (int i = 0; i < 6; ++i) {
-		glUniformMatrix4fv(glGetUniformLocation(shIrradiance, "view"), 1, GL_FALSE, glm::value_ptr(captureViews[i]));
-		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, iblIrradianceMap, 0);
-		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-		glBindVertexArray(g_hdrVAO);
-		glDrawArrays(GL_TRIANGLES, 0, 36);
+		glViewport(0, 0, IRR_SIZE, IRR_SIZE);
+		for (int i = 0; i < 6; ++i) {
+			glUniformMatrix4fv(locIrrView, 1, GL_FALSE, glm::value_ptr(captureViews[i]));
+			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, iblIrradianceMap, 0);
+			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+			glBindVertexArray(g_hdrVAO);
+			glDrawArrays(GL_TRIANGLES, 0, 36);
+		}
 	}
 
 	const int PRE_SIZE = 128;
@@ -329,29 +339,35 @@ bool FiscionX::Core::LoadHDR(const char* path)
 	glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
 
 	glUseProgram(shPrefilter);
-	glUniform1i(glGetUniformLocation(shPrefilter, "environmentMap"), 0);
-	glUniformMatrix4fv(glGetUniformLocation(shPrefilter, "projection"), 1, GL_FALSE, glm::value_ptr(captureProjection));
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_CUBE_MAP, envCubemap);
+	{
+		GLint locPfMap = glGetUniformLocation(shPrefilter, "environmentMap");
+		GLint locPfProj = glGetUniformLocation(shPrefilter, "projection");
+		GLint locPfRough = glGetUniformLocation(shPrefilter, "roughness");
+		GLint locPfView = glGetUniformLocation(shPrefilter, "view");
+		glUniform1i(locPfMap, 0);
+		glUniformMatrix4fv(locPfProj, 1, GL_FALSE, glm::value_ptr(captureProjection));
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_CUBE_MAP, envCubemap);
 
-	glBindFramebuffer(GL_FRAMEBUFFER, captureFBO);
-	for (int mip = 0; mip < MAX_MIP_LEVELS; ++mip) {
-		int mipW = (int)(PRE_SIZE * std::pow(0.5f, mip));
-		int mipH = mipW;
-		glBindRenderbuffer(GL_RENDERBUFFER, captureRBO);
-		glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, mipW, mipH);
-		glViewport(0, 0, mipW, mipH);
+		glBindFramebuffer(GL_FRAMEBUFFER, captureFBO);
+		for (int mip = 0; mip < MAX_MIP_LEVELS; ++mip) {
+			int mipW = (int)(PRE_SIZE * std::pow(0.5f, mip));
+			int mipH = mipW;
+			glBindRenderbuffer(GL_RENDERBUFFER, captureRBO);
+			glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, mipW, mipH);
+			glViewport(0, 0, mipW, mipH);
 
-		float roughness = (float)mip / (float)(MAX_MIP_LEVELS - 1);
-		glUniform1f(glGetUniformLocation(shPrefilter, "roughness"), roughness);
+			float roughness = (float)mip / (float)(MAX_MIP_LEVELS - 1);
+			glUniform1f(locPfRough, roughness);
 
-		for (int i = 0; i < 6; ++i) {
-			glUniformMatrix4fv(glGetUniformLocation(shPrefilter, "view"), 1, GL_FALSE, glm::value_ptr(captureViews[i]));
-			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-				GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, iblPrefilterMap, mip);
-			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-			glBindVertexArray(g_hdrVAO);
-			glDrawArrays(GL_TRIANGLES, 0, 36);
+			for (int i = 0; i < 6; ++i) {
+				glUniformMatrix4fv(locPfView, 1, GL_FALSE, glm::value_ptr(captureViews[i]));
+				glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+					GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, iblPrefilterMap, mip);
+				glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+				glBindVertexArray(g_hdrVAO);
+				glDrawArrays(GL_TRIANGLES, 0, 36);
+			}
 		}
 	}
 
@@ -421,15 +437,26 @@ void FiscionX::Core::Draw::HDR(FiscionX::Mat4 view, FiscionX::Mat4 projection)
 
 	glUseProgram(g_hdrProgram);
 
+	// OPTIM: cache uniform locations for g_hdrProgram (queried once per program handle)
+	static GLuint s_hdrCachedProg = 0;
+	static GLint  s_hdrLocView = -1, s_hdrLocProj = -1, s_hdrLocExposure = -1, s_hdrLocTex = -1;
+	if (s_hdrCachedProg != g_hdrProgram) {
+		s_hdrCachedProg = g_hdrProgram;
+		s_hdrLocView = glGetUniformLocation(g_hdrProgram, "view");
+		s_hdrLocProj = glGetUniformLocation(g_hdrProgram, "projection");
+		s_hdrLocExposure = glGetUniformLocation(g_hdrProgram, "exposure");
+		s_hdrLocTex = glGetUniformLocation(g_hdrProgram, "hdrTex");
+	}
+
 	glm::mat4 viewNoTranslate = glm::mat4(glm::mat3((glm::mat4)view));
 
-	glUniformMatrix4fv(glGetUniformLocation(g_hdrProgram, "view"), 1, GL_FALSE, glm::value_ptr(viewNoTranslate));
-	glUniformMatrix4fv(glGetUniformLocation(g_hdrProgram, "projection"), 1, GL_FALSE, glm::value_ptr((glm::mat4)projection));
-	glUniform1f(glGetUniformLocation(g_hdrProgram, "exposure"), FiscionX::Core::HDR_EXPOSURE);
+	glUniformMatrix4fv(s_hdrLocView, 1, GL_FALSE, glm::value_ptr(viewNoTranslate));
+	glUniformMatrix4fv(s_hdrLocProj, 1, GL_FALSE, glm::value_ptr((glm::mat4)projection));
+	glUniform1f(s_hdrLocExposure, FiscionX::Core::HDR_EXPOSURE);
 
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, g_hdrTex);
-	glUniform1i(glGetUniformLocation(g_hdrProgram, "hdrTex"), 0);
+	glUniform1i(s_hdrLocTex, 0);
 
 	glBindVertexArray(g_hdrVAO);
 	glDrawArrays(GL_TRIANGLES, 0, 36);
@@ -1217,30 +1244,35 @@ void FiscionX::UI::Video::draw(FiscionX::Vector2 position) {
 	glUseProgram(shaderProgram);
 	glBindVertexArray(VAO);
 
+	// OPTIM: cache uniform locations for Video shader (queried once per shader handle)
+	static GLuint s_vidCachedProg = 0;
+	static GLint  s_vidLocTex = -1, s_vidLocProj = -1, s_vidLocScale = -1;
+	static GLint  s_vidLocPos = -1, s_vidLocRot = -1, s_vidLocAlpha = -1;
+	if (s_vidCachedProg != shaderProgram) {
+		s_vidCachedProg = shaderProgram;
+		s_vidLocTex = glGetUniformLocation(shaderProgram, "videoTex");
+		s_vidLocProj = glGetUniformLocation(shaderProgram, "projection");
+		s_vidLocScale = glGetUniformLocation(shaderProgram, "scale");
+		s_vidLocPos = glGetUniformLocation(shaderProgram, "position");
+		s_vidLocRot = glGetUniformLocation(shaderProgram, "rotation");
+		s_vidLocAlpha = glGetUniformLocation(shaderProgram, "alpha");
+	}
+
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, texture);
-	GLint locTex = glGetUniformLocation(shaderProgram, "videoTex");
-	if (locTex >= 0) glUniform1i(locTex, 0);
+	if (s_vidLocTex >= 0) glUniform1i(s_vidLocTex, 0);
 
 	float halfW = (float)FiscionX::Core::SCREEN_WIDTH * 0.5f;
 	float halfH = (float)FiscionX::Core::SCREEN_HEIGHT * 0.5f;
 	glm::mat4 projection = glm::ortho(-halfW, halfW, -halfH, halfH);
-	GLint locProj = glGetUniformLocation(shaderProgram, "projection");
-	if (locProj >= 0) glUniformMatrix4fv(locProj, 1, GL_FALSE, glm::value_ptr(projection));
+	if (s_vidLocProj >= 0) glUniformMatrix4fv(s_vidLocProj, 1, GL_FALSE, glm::value_ptr(projection));
 
 	float sizeX = (float)width * scale.x * 2;
 	float sizeY = (float)height * scale.y * 2;
-	GLint locScale = glGetUniformLocation(shaderProgram, "scale");
-	if (locScale >= 0) glUniform2f(locScale, sizeX, sizeY);
-
-	GLint locPos = glGetUniformLocation(shaderProgram, "position");
-	if (locPos >= 0) glUniform2f(locPos, position.x, position.y);
-
-	GLint locRot = glGetUniformLocation(shaderProgram, "rotation");
-	if (locRot >= 0) glUniform1f(locRot, rotation);
-
-	GLint locA = glGetUniformLocation(shaderProgram, "alpha");
-	if (locA >= 0) glUniform1f(locA, alpha);
+	if (s_vidLocScale >= 0) glUniform2f(s_vidLocScale, sizeX, sizeY);
+	if (s_vidLocPos >= 0) glUniform2f(s_vidLocPos, position.x, position.y);
+	if (s_vidLocRot >= 0) glUniform1f(s_vidLocRot, rotation);
+	if (s_vidLocAlpha >= 0) glUniform1f(s_vidLocAlpha, alpha);
 
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -1420,14 +1452,28 @@ void FiscionX::Image3D::draw(glm::mat4 view, glm::mat4 projection) {
 	glCullFace(GL_NONE);
 	glUseProgram(shader);
 	glBindVertexArray(VAO);
+
+	// OPTIM: cache uniform locations for Image3D shader (queried once per shader handle)
+	static GLuint s_img3dCachedShader = 0;
+	static GLint  s_img3dLocTex = -1, s_img3dLocView = -1, s_img3dLocProj = -1;
+	static GLint  s_img3dLocModel = -1, s_img3dLocAlpha = -1;
+	if (s_img3dCachedShader != shader) {
+		s_img3dCachedShader = shader;
+		s_img3dLocTex = glGetUniformLocation(shader, "tex");
+		s_img3dLocView = glGetUniformLocation(shader, "view");
+		s_img3dLocProj = glGetUniformLocation(shader, "projection");
+		s_img3dLocModel = glGetUniformLocation(shader, "model");
+		s_img3dLocAlpha = glGetUniformLocation(shader, "alpha");
+	}
+
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, texture);
-	glUniform1i(glGetUniformLocation(shader, "tex"), 0);
+	glUniform1i(s_img3dLocTex, 0);
 
-	glUniformMatrix4fv(glGetUniformLocation(shader, "view"), 1, GL_FALSE, glm::value_ptr(view));
-	glUniformMatrix4fv(glGetUniformLocation(shader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-	glUniformMatrix4fv(glGetUniformLocation(shader, "model"), 1, GL_FALSE, glm::value_ptr(model));
-	glUniform1f(glGetUniformLocation(shader, "alpha"), alpha);
+	glUniformMatrix4fv(s_img3dLocView, 1, GL_FALSE, glm::value_ptr(view));
+	glUniformMatrix4fv(s_img3dLocProj, 1, GL_FALSE, glm::value_ptr(projection));
+	glUniformMatrix4fv(s_img3dLocModel, 1, GL_FALSE, glm::value_ptr(model));
+	glUniform1f(s_img3dLocAlpha, alpha);
 
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -3353,10 +3399,21 @@ void FiscionX::Model::drawSubMesh(
 		if (mesh.alphaMode == "MASK")  depthAlphaMode = 1;
 		else if (mesh.alphaMode == "BLEND") depthAlphaMode = 2;
 
-		GLint locAlphaMode = glGetUniformLocation(shader, "alphaMode");
-		GLint locAlphaCutoff = glGetUniformLocation(shader, "alphaCutoff");
-		GLint locBaseTex = glGetUniformLocation(shader, "baseColorTex");
-		GLint locTransFactor = glGetUniformLocation(shader, "transmissionFactor");
+		// OPTIM: cache depth-pass uniform locations (queried once per shader handle)
+		static GLuint s_dpCachedShader = 0;
+		static GLint  s_dpLocAlphaMode = -1, s_dpLocAlphaCutoff = -1;
+		static GLint  s_dpLocBaseTex = -1, s_dpLocTransFactor = -1;
+		if (s_dpCachedShader != shader) {
+			s_dpCachedShader = shader;
+			s_dpLocAlphaMode = glGetUniformLocation(shader, "alphaMode");
+			s_dpLocAlphaCutoff = glGetUniformLocation(shader, "alphaCutoff");
+			s_dpLocBaseTex = glGetUniformLocation(shader, "baseColorTex");
+			s_dpLocTransFactor = glGetUniformLocation(shader, "transmissionFactor");
+		}
+		GLint locAlphaMode = s_dpLocAlphaMode;
+		GLint locAlphaCutoff = s_dpLocAlphaCutoff;
+		GLint locBaseTex = s_dpLocBaseTex;
+		GLint locTransFactor = s_dpLocTransFactor;
 
 		if (locAlphaMode != -1) glUniform1i(locAlphaMode, depthAlphaMode);
 		if (locAlphaCutoff != -1) glUniform1f(locAlphaCutoff, mesh.alphaCutoff);
@@ -3935,7 +3992,15 @@ void FiscionX::Physics::DrawDebugWorld(glm::mat4 projection, glm::mat4 view) {
 
 		glUseProgram(debugShader);
 		glm::mat4 vp = projection * view;
-		glUniformMatrix4fv(glGetUniformLocation(debugShader, "viewProj"), 1, GL_FALSE, glm::value_ptr(vp));
+
+		// OPTIM: cache uniform location for debugShader (queried once per shader handle)
+		static GLuint s_dbgCachedShader = 0;
+		static GLint  s_dbgLocViewProj = -1;
+		if (s_dbgCachedShader != debugShader) {
+			s_dbgCachedShader = debugShader;
+			s_dbgLocViewProj = glGetUniformLocation(debugShader, "viewProj");
+		}
+		glUniformMatrix4fv(s_dbgLocViewProj, 1, GL_FALSE, glm::value_ptr(vp));
 
 		glDrawArrays(GL_LINES, 0, debugLines.size() / 6);
 
@@ -5428,8 +5493,18 @@ void RenderPrimitive(const std::vector<glm::vec2>& vertices,
 	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(glm::vec2), (void*)0);
 
 	glUseProgram(FiscionX::Core::shaderUI);
-	glUniformMatrix4fv(glGetUniformLocation(FiscionX::Core::shaderUI, "uMVP"), 1, GL_FALSE, glm::value_ptr(ortho));
-	glUniform4f(glGetUniformLocation(FiscionX::Core::shaderUI, "uColor"), color.x, color.y, color.z, color.w);
+
+	// OPTIM: cache uniform locations for shaderUI (queried once per shader handle)
+	static GLuint s_uiCachedProg = 0;
+	static GLint  s_uiLocMVP = -1, s_uiLocColor = -1;
+	if (s_uiCachedProg != FiscionX::Core::shaderUI) {
+		s_uiCachedProg = FiscionX::Core::shaderUI;
+		s_uiLocMVP = glGetUniformLocation(FiscionX::Core::shaderUI, "uMVP");
+		s_uiLocColor = glGetUniformLocation(FiscionX::Core::shaderUI, "uColor");
+	}
+
+	glUniformMatrix4fv(s_uiLocMVP, 1, GL_FALSE, glm::value_ptr(ortho));
+	glUniform4f(s_uiLocColor, color.x, color.y, color.z, color.w);
 
 	glDrawArrays(mode, 0, (GLsizei)vertices.size());
 
@@ -5457,6 +5532,77 @@ void FiscionX::Core::Draw::PostProcessing(FiscionX::Mat4 viewProj, FiscionX::Lig
 		FiscionX::Core::NEAR_PLANE, FiscionX::Core::FAR_PLANE));
 	glm::mat4 invProjection = glm::inverse(projection);
 
+	// OPTIM: cache uniform locations for ssaoShader (queried once per shader handle).
+	// This avoids dozens of glGetUniformLocation driver calls every frame, including
+	// the per-sample loop that previously used std::to_string() + string concatenation.
+	static GLuint s_ssaoCachedShader = 0;
+	static GLint  s_ssaoLocProj = -1, s_ssaoLocInvProj = -1, s_ssaoLocScreenSize = -1;
+	static GLint  s_ssaoLocNear = -1, s_ssaoLocFar = -1, s_ssaoLocRadius = -1;
+	static GLint  s_ssaoLocBias = -1, s_ssaoLocIntensity = -1, s_ssaoLocGiStrength = -1;
+	static GLint  s_ssaoLocDepthTex = -1, s_ssaoLocColorTex = -1, s_ssaoLocNoiseTex = -1;
+	static constexpr int MAX_SSAO_SAMPLES = 64;
+	static GLint  s_ssaoLocSamples[MAX_SSAO_SAMPLES];
+
+	if (s_ssaoCachedShader != FiscionX::Core::ssaoShader) {
+		s_ssaoCachedShader = FiscionX::Core::ssaoShader;
+		s_ssaoLocProj = glGetUniformLocation(FiscionX::Core::ssaoShader, "projection");
+		s_ssaoLocInvProj = glGetUniformLocation(FiscionX::Core::ssaoShader, "invProjection");
+		s_ssaoLocScreenSize = glGetUniformLocation(FiscionX::Core::ssaoShader, "screenSize");
+		s_ssaoLocNear = glGetUniformLocation(FiscionX::Core::ssaoShader, "nearPlane");
+		s_ssaoLocFar = glGetUniformLocation(FiscionX::Core::ssaoShader, "farPlane");
+		s_ssaoLocRadius = glGetUniformLocation(FiscionX::Core::ssaoShader, "radius");
+		s_ssaoLocBias = glGetUniformLocation(FiscionX::Core::ssaoShader, "bias");
+		s_ssaoLocIntensity = glGetUniformLocation(FiscionX::Core::ssaoShader, "intensity");
+		s_ssaoLocGiStrength = glGetUniformLocation(FiscionX::Core::ssaoShader, "giStrength");
+		s_ssaoLocDepthTex = glGetUniformLocation(FiscionX::Core::ssaoShader, "depthTexture");
+		s_ssaoLocColorTex = glGetUniformLocation(FiscionX::Core::ssaoShader, "colorTexture");
+		s_ssaoLocNoiseTex = glGetUniformLocation(FiscionX::Core::ssaoShader, "noiseTex");
+		char buf[32];
+		for (int i = 0; i < MAX_SSAO_SAMPLES; ++i) {
+			snprintf(buf, sizeof(buf), "samples[%d]", i);
+			s_ssaoLocSamples[i] = glGetUniformLocation(FiscionX::Core::ssaoShader, buf);
+		}
+	}
+
+	// OPTIM: cache uniform locations for ssaoBlurShader (queried once per shader handle)
+	static GLuint s_ssaoBlurCachedShader = 0;
+	static GLint  s_ssaoBlurLocScreenSize = -1, s_ssaoBlurLocInput = -1;
+	if (s_ssaoBlurCachedShader != FiscionX::Core::ssaoBlurShader) {
+		s_ssaoBlurCachedShader = FiscionX::Core::ssaoBlurShader;
+		s_ssaoBlurLocScreenSize = glGetUniformLocation(FiscionX::Core::ssaoBlurShader, "screenSize");
+		s_ssaoBlurLocInput = glGetUniformLocation(FiscionX::Core::ssaoBlurShader, "ssaoInput");
+	}
+
+	// OPTIM: cache uniform locations for godRaysShader (queried once per shader handle)
+	static GLuint s_grCachedShader = 0;
+	static GLint  s_grLocAspect = -1, s_grLocLightPos = -1, s_grLocSunVis = -1, s_grLocTime = -1;
+	static GLint  s_grLocSunDisk = -1, s_grLocSunHalo = -1, s_grLocSunColor = -1;
+	static GLint  s_grLocDensity = -1, s_grLocWeight = -1, s_grLocDecay = -1;
+	static GLint  s_grLocExposure = -1, s_grLocNumSamples = -1, s_grLocColorCorr = -1;
+	static GLint  s_grLocScreenTex = -1, s_grLocNear = -1, s_grLocFar = -1;
+	static GLint  s_grLocDepthTex = -1, s_grLocSsaoTex = -1;
+	if (s_grCachedShader != FiscionX::Core::godRaysShader) {
+		s_grCachedShader = FiscionX::Core::godRaysShader;
+		s_grLocAspect = glGetUniformLocation(FiscionX::Core::godRaysShader, "aspect");
+		s_grLocLightPos = glGetUniformLocation(FiscionX::Core::godRaysShader, "lightPosOnScreen");
+		s_grLocSunVis = glGetUniformLocation(FiscionX::Core::godRaysShader, "sunVisibility");
+		s_grLocTime = glGetUniformLocation(FiscionX::Core::godRaysShader, "time");
+		s_grLocSunDisk = glGetUniformLocation(FiscionX::Core::godRaysShader, "sunDiskSize");
+		s_grLocSunHalo = glGetUniformLocation(FiscionX::Core::godRaysShader, "sunHaloSize");
+		s_grLocSunColor = glGetUniformLocation(FiscionX::Core::godRaysShader, "sunColor");
+		s_grLocDensity = glGetUniformLocation(FiscionX::Core::godRaysShader, "rayDensity");
+		s_grLocWeight = glGetUniformLocation(FiscionX::Core::godRaysShader, "rayWeight");
+		s_grLocDecay = glGetUniformLocation(FiscionX::Core::godRaysShader, "rayDecay");
+		s_grLocExposure = glGetUniformLocation(FiscionX::Core::godRaysShader, "rayExposure");
+		s_grLocNumSamples = glGetUniformLocation(FiscionX::Core::godRaysShader, "NUM_SAMPLES");
+		s_grLocColorCorr = glGetUniformLocation(FiscionX::Core::godRaysShader, "colorCorrection");
+		s_grLocScreenTex = glGetUniformLocation(FiscionX::Core::godRaysShader, "screenTexture");
+		s_grLocNear = glGetUniformLocation(FiscionX::Core::godRaysShader, "nearPlane");
+		s_grLocFar = glGetUniformLocation(FiscionX::Core::godRaysShader, "farPlane");
+		s_grLocDepthTex = glGetUniformLocation(FiscionX::Core::godRaysShader, "depthTexture");
+		s_grLocSsaoTex = glGetUniformLocation(FiscionX::Core::godRaysShader, "ssaoTexture");
+	}
+
 	glBindFramebuffer(GL_FRAMEBUFFER, FiscionX::Core::ssaoFBO);
 	glViewport(0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
 	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -5464,33 +5610,33 @@ void FiscionX::Core::Draw::PostProcessing(FiscionX::Mat4 viewProj, FiscionX::Lig
 	glDisable(GL_DEPTH_TEST);
 
 	glUseProgram(FiscionX::Core::ssaoShader);
-	glUniformMatrix4fv(glGetUniformLocation(FiscionX::Core::ssaoShader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-	glUniformMatrix4fv(glGetUniformLocation(FiscionX::Core::ssaoShader, "invProjection"), 1, GL_FALSE, glm::value_ptr(invProjection));
-	glUniform2f(glGetUniformLocation(FiscionX::Core::ssaoShader, "screenSize"), (float)FiscionX::Core::SCREEN_WIDTH, (float)FiscionX::Core::SCREEN_HEIGHT);
-	glUniform1f(glGetUniformLocation(FiscionX::Core::ssaoShader, "nearPlane"), FiscionX::Core::NEAR_PLANE);
-	glUniform1f(glGetUniformLocation(FiscionX::Core::ssaoShader, "farPlane"), FiscionX::Core::FAR_PLANE);
-	glUniform1f(glGetUniformLocation(FiscionX::Core::ssaoShader, "radius"), 0.5f);
-	glUniform1f(glGetUniformLocation(FiscionX::Core::ssaoShader, "bias"), 0.025f);
-	glUniform1f(glGetUniformLocation(FiscionX::Core::ssaoShader, "intensity"), 1.5f);
-	glUniform1f(glGetUniformLocation(FiscionX::Core::ssaoShader, "giStrength"), 0.6f);
+	glUniformMatrix4fv(s_ssaoLocProj, 1, GL_FALSE, glm::value_ptr(projection));
+	glUniformMatrix4fv(s_ssaoLocInvProj, 1, GL_FALSE, glm::value_ptr(invProjection));
+	glUniform2f(s_ssaoLocScreenSize, (float)FiscionX::Core::SCREEN_WIDTH, (float)FiscionX::Core::SCREEN_HEIGHT);
+	glUniform1f(s_ssaoLocNear, FiscionX::Core::NEAR_PLANE);
+	glUniform1f(s_ssaoLocFar, FiscionX::Core::FAR_PLANE);
+	glUniform1f(s_ssaoLocRadius, 0.5f);
+	glUniform1f(s_ssaoLocBias, 0.025f);
+	glUniform1f(s_ssaoLocIntensity, 1.5f);
+	glUniform1f(s_ssaoLocGiStrength, 0.6f);
 
 	for (int i = 0; i < (int)FiscionX::Core::ssaoKernel.size(); i++) {
-		std::string name = "samples[" + std::to_string(i) + "]";
-		glUniform3f(glGetUniformLocation(FiscionX::Core::ssaoShader, name.c_str()),
-			FiscionX::Core::ssaoKernel[i].x, FiscionX::Core::ssaoKernel[i].y, FiscionX::Core::ssaoKernel[i].z);
+		if (s_ssaoLocSamples[i] >= 0)
+			glUniform3f(s_ssaoLocSamples[i],
+				FiscionX::Core::ssaoKernel[i].x, FiscionX::Core::ssaoKernel[i].y, FiscionX::Core::ssaoKernel[i].z);
 	}
 
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainDepthBuffer);
-	glUniform1i(glGetUniformLocation(FiscionX::Core::ssaoShader, "depthTexture"), 0);
+	glUniform1i(s_ssaoLocDepthTex, 0);
 
 	glActiveTexture(GL_TEXTURE1);
 	glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainColorBuffer);
-	glUniform1i(glGetUniformLocation(FiscionX::Core::ssaoShader, "colorTexture"), 1);
+	glUniform1i(s_ssaoLocColorTex, 1);
 
 	glActiveTexture(GL_TEXTURE2);
 	glBindTexture(GL_TEXTURE_2D, FiscionX::Core::ssaoNoiseTex);
-	glUniform1i(glGetUniformLocation(FiscionX::Core::ssaoShader, "noiseTex"), 2);
+	glUniform1i(s_ssaoLocNoiseTex, 2);
 
 	glBindVertexArray(FiscionX::Core::screenQuadVAO);
 	glDrawArrays(GL_TRIANGLES, 0, 6);
@@ -5501,11 +5647,11 @@ void FiscionX::Core::Draw::PostProcessing(FiscionX::Mat4 viewProj, FiscionX::Lig
 	glClear(GL_COLOR_BUFFER_BIT);
 
 	glUseProgram(FiscionX::Core::ssaoBlurShader);
-	glUniform2f(glGetUniformLocation(FiscionX::Core::ssaoBlurShader, "screenSize"), (float)FiscionX::Core::SCREEN_WIDTH, (float)FiscionX::Core::SCREEN_HEIGHT);
+	glUniform2f(s_ssaoBlurLocScreenSize, (float)FiscionX::Core::SCREEN_WIDTH, (float)FiscionX::Core::SCREEN_HEIGHT);
 
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, FiscionX::Core::ssaoColorBuffer);
-	glUniform1i(glGetUniformLocation(FiscionX::Core::ssaoBlurShader, "ssaoInput"), 0);
+	glUniform1i(s_ssaoBlurLocInput, 0);
 
 	glBindVertexArray(FiscionX::Core::screenQuadVAO);
 	glDrawArrays(GL_TRIANGLES, 0, 6);
@@ -5520,7 +5666,7 @@ void FiscionX::Core::Draw::PostProcessing(FiscionX::Mat4 viewProj, FiscionX::Lig
 
 	glUseProgram(FiscionX::Core::godRaysShader);
 	float aspectRatio = (float)FiscionX::Core::SCREEN_WIDTH / FiscionX::Core::SCREEN_HEIGHT;
-	glUniform1f(glGetUniformLocation(FiscionX::Core::godRaysShader, "aspect"), aspectRatio);
+	glUniform1f(s_grLocAspect, aspectRatio);
 
 	glm::vec3 sunDir = -glm::normalize(glm::vec3(dirLight->direction.x, dirLight->direction.y, dirLight->direction.z));
 	glm::vec4 sunPosWorld = glm::vec4(glm::vec3(FiscionX::Core::Camera.position.x, FiscionX::Core::Camera.position.y, FiscionX::Core::Camera.position.z) + (sunDir * 1000.0f), 1.0f);
@@ -5542,38 +5688,39 @@ void FiscionX::Core::Draw::PostProcessing(FiscionX::Mat4 viewProj, FiscionX::Lig
 		}
 	}
 
-	glUniform2f(glGetUniformLocation(FiscionX::Core::godRaysShader, "lightPosOnScreen"), sunScreen.x, sunScreen.y);
-	glUniform1f(glGetUniformLocation(FiscionX::Core::godRaysShader, "sunVisibility"), finalVisibility);
-	glUniform1f(glGetUniformLocation(FiscionX::Core::godRaysShader, "time"), (float)glfwGetTime());
+	glUniform2f(s_grLocLightPos, sunScreen.x, sunScreen.y);
+	glUniform1f(s_grLocSunVis, finalVisibility);
+	glUniform1f(s_grLocTime, (float)glfwGetTime());
 
-	glUniform1f(glGetUniformLocation(FiscionX::Core::godRaysShader, "sunDiskSize"), FiscionX::Core::sunDiskSize);
-	glUniform1f(glGetUniformLocation(FiscionX::Core::godRaysShader, "sunHaloSize"), FiscionX::Core::sunHaloSize);
-	glUniform3f(glGetUniformLocation(FiscionX::Core::godRaysShader, "sunColor"), sunColor.x, sunColor.y, sunColor.z);
+	glUniform1f(s_grLocSunDisk, FiscionX::Core::sunDiskSize);
+	glUniform1f(s_grLocSunHalo, FiscionX::Core::sunHaloSize);
+	glm::vec3 sunColor = glm::vec3(FiscionX::Core::sunColor.x, FiscionX::Core::sunColor.y, FiscionX::Core::sunColor.z);
+	glUniform3f(s_grLocSunColor, sunColor.x, sunColor.y, sunColor.z);
 
-	glUniform1f(glGetUniformLocation(FiscionX::Core::godRaysShader, "rayDensity"), FiscionX::Core::godRaysDensity);
-	glUniform1f(glGetUniformLocation(FiscionX::Core::godRaysShader, "rayWeight"), FiscionX::Core::godRaysWeight);
-	glUniform1f(glGetUniformLocation(FiscionX::Core::godRaysShader, "rayDecay"), FiscionX::Core::godRaysDecay);
-	glUniform1f(glGetUniformLocation(FiscionX::Core::godRaysShader, "rayExposure"), FiscionX::Core::godRaysExposure);
-	glUniform1f(glGetUniformLocation(FiscionX::Core::godRaysShader, "NUM_SAMPLES"), FiscionX::Core::godRaysNumOfSamples);
+	glUniform1f(s_grLocDensity, FiscionX::Core::godRaysDensity);
+	glUniform1f(s_grLocWeight, FiscionX::Core::godRaysWeight);
+	glUniform1f(s_grLocDecay, FiscionX::Core::godRaysDecay);
+	glUniform1f(s_grLocExposure, FiscionX::Core::godRaysExposure);
+	glUniform1f(s_grLocNumSamples, FiscionX::Core::godRaysNumOfSamples);
 
-	glUniform3f(glGetUniformLocation(FiscionX::Core::godRaysShader, "colorCorrection"), FiscionX::Core::colorCorrection.x, FiscionX::Core::colorCorrection.y, FiscionX::Core::colorCorrection.z);
+	glUniform3f(s_grLocColorCorr, FiscionX::Core::colorCorrection.x, FiscionX::Core::colorCorrection.y, FiscionX::Core::colorCorrection.z);
 
 	glm::vec3 camDir = glm::vec3(FiscionX::Core::Camera.front.x, FiscionX::Core::Camera.front.y, FiscionX::Core::Camera.front.z);
 
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainColorBuffer);
-	glUniform1i(glGetUniformLocation(FiscionX::Core::godRaysShader, "screenTexture"), 0);
+	glUniform1i(s_grLocScreenTex, 0);
 
-	glUniform1f(glGetUniformLocation(FiscionX::Core::godRaysShader, "nearPlane"), FiscionX::Core::NEAR_PLANE);
-	glUniform1f(glGetUniformLocation(FiscionX::Core::godRaysShader, "farPlane"), FiscionX::Core::FAR_PLANE);
+	glUniform1f(s_grLocNear, FiscionX::Core::NEAR_PLANE);
+	glUniform1f(s_grLocFar, FiscionX::Core::FAR_PLANE);
 
 	glActiveTexture(GL_TEXTURE1);
 	glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainDepthBuffer);
-	glUniform1i(glGetUniformLocation(FiscionX::Core::godRaysShader, "depthTexture"), 1);
+	glUniform1i(s_grLocDepthTex, 1);
 
 	glActiveTexture(GL_TEXTURE2);
 	glBindTexture(GL_TEXTURE_2D, FiscionX::Core::ssaoBlurColorBuffer);
-	glUniform1i(glGetUniformLocation(FiscionX::Core::godRaysShader, "ssaoTexture"), 2);
+	glUniform1i(s_grLocSsaoTex, 2);
 
 	glBindVertexArray(FiscionX::Core::screenQuadVAO);
 	glDrawArrays(GL_TRIANGLES, 0, 6);
