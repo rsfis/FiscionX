@@ -948,6 +948,10 @@ namespace FiscionX {
 		glm::vec3 aabbMin = glm::vec3(1e30f);
 		glm::vec3 aabbMax = glm::vec3(-1e30f);
 
+		// OPTIM (per-submesh LOD): centro local do AABB, usado para medir a distância
+		// câmera→submesh individualmente, em vez da posição única do Instance inteiro.
+		glm::vec3 aabbCenter() const { return (aabbMin + aabbMax) * 0.5f; }
+
 		// CPU-side copies of pos+indices+uvs+skinning kept for LOD generation (cleared after buildLODs)
 		std::vector<glm::vec3>          cpuPositions;  // one per vertex
 		std::vector<uint32_t>           cpuIndices;    // triangle list
@@ -1125,6 +1129,22 @@ namespace FiscionX {
 			GLuint cachedShader = 0;
 		};
 		mutable UniformCache uniformCache;
+
+		// OPTIM: cache de uniforms usados uma vez por frame em Model::draw()
+		// (view/projection/viewPos/numLights/reflectionsStrength/sombra direcional/sombras por luz).
+		// Evita glGetUniformLocation + std::string/std::to_string a cada frame por modelo.
+		struct FrameUniformCache {
+			GLuint cachedShader = 0;
+			GLint view = -1, projection = -1, viewPos = -1, numLights = -1, reflectionsStrength = -1;
+			GLint shadowMapDir = -1, cascadeCount = -1;
+			static constexpr int MAX_CASCADES = 16;
+			GLint cascadePlaneDistances[MAX_CASCADES];
+			GLint cascadeLightSpaceMatrices[MAX_CASCADES];
+			// Locations para amostras de sombra por luz (até 10 luzes, igual UniformCache::lights)
+			GLint pointShadowMap[10];  // samplerCube, luzes do tipo POINT
+			GLint spotShadowMap[10];   // sampler2D,   luzes do tipo SPOT
+		};
+		mutable FrameUniformCache frameUniformCache;
 
 		const std::vector<glm::mat4>& getBoneTransforms() const;
 		Model(const std::string& path);

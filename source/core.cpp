@@ -3213,14 +3213,22 @@ void FiscionX::Model::Instance::updateOcclusion(const glm::mat4& viewProj) {
 		FiscionX::Core::Camera.position.x,
 		FiscionX::Core::Camera.position.y,
 		FiscionX::Core::Camera.position.z);
-	glm::vec3 modelPos(position.x, position.y, position.z);
-	float dSq = glm::dot(camPos - modelPos, camPos - modelPos);
-	int occLOD = model->lodDistances.empty() ? -1 : model->selectLOD(dSq);
 
 	for (size_t i = 0; i < model->meshes.size(); ++i) {
 		const auto& mesh = model->meshes[i];
 		glm::mat4 modelMatrix = baseMatrix * (model->isSkinned ? glm::mat4(1.0f) : mesh.transform);
 		glm::mat4 mvp = viewProj * modelMatrix;
+
+		// OPTIM: LOD por submesh, igual à seleção usada em draw() — usa o centro
+		// do AABB local desta submesh (não a posição única do Instance) para medir
+		// a distância até a câmera, então a query de oclusão usa o mesmo nível de
+		// detalhe que será efetivamente desenhado para essa parte do modelo.
+		int occLOD = -1;
+		if (!model->lodDistances.empty()) {
+			glm::vec3 subCenterWorld = glm::vec3(modelMatrix * glm::vec4(mesh.aabbCenter(), 1.0f));
+			float dSq = glm::dot(camPos - subCenterWorld, camPos - subCenterWorld);
+			occLOD = model->selectLOD(dSq);
+		}
 
 		// Escolhe VAO/indexCount do LOD ativo (se disponível), senão usa base mesh.
 		GLuint queryVAO = mesh.vao;
@@ -3512,11 +3520,43 @@ void FiscionX::Model::drawSubMesh(
 void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLuint depthMap, bool depthPass, FiscionX::Mat4 view, FiscionX::Mat4 projection) {
 	int numLights = static_cast<int>(FiscionX::Core::AllLights.size());	glUseProgram(shader);
 
-	glUniformMatrix4fv(glGetUniformLocation(shader, "view"), 1, GL_FALSE, glm::value_ptr(glm::mat4(view)));
-	glUniformMatrix4fv(glGetUniformLocation(shader, "projection"), 1, GL_FALSE, glm::value_ptr(glm::mat4(projection)));
-	glUniform3fv(glGetUniformLocation(shader, "viewPos"), 1, glm::value_ptr(glm::vec3(FiscionX::Core::Camera.position.x, FiscionX::Core::Camera.position.y, FiscionX::Core::Camera.position.z)));
-	glUniform1i(glGetUniformLocation(shader, "numLights"), numLights);
-	glUniform1f(glGetUniformLocation(shader, "reflectionsStrength"), FiscionX::Core::REFLECTIONS_STRENGTH);
+	// ── OPTIM: reconstrói o cache de locations apenas quando o shader muda ──
+	// Antes: ~6 glGetUniformLocation fixos + até 16+16 lookups com std::to_string()
+	// concatenado por chamada de Model::draw (ou seja, por modelo, todo frame).
+	// std::to_string + concatenação de std::string alocam heap e o lookup de uniform
+	// por nome é uma chamada ao driver — ambos extremamente caros para algo que
+	// só muda quando o programa de shader muda.
+	if (frameUniformCache.cachedShader != shader) {
+		frameUniformCache.cachedShader = shader;
+		frameUniformCache.view = glGetUniformLocation(shader, "view");
+		frameUniformCache.projection = glGetUniformLocation(shader, "projection");
+		frameUniformCache.viewPos = glGetUniformLocation(shader, "viewPos");
+		frameUniformCache.numLights = glGetUniformLocation(shader, "numLights");
+		frameUniformCache.reflectionsStrength = glGetUniformLocation(shader, "reflectionsStrength");
+		frameUniformCache.shadowMapDir = glGetUniformLocation(shader, "shadowMapDir");
+		frameUniformCache.cascadeCount = glGetUniformLocation(shader, "cascadeCount");
+
+		char buf[64];
+		for (int i = 0; i < FrameUniformCache::MAX_CASCADES; ++i) {
+			snprintf(buf, sizeof(buf), "cascadePlaneDistances[%d]", i);
+			frameUniformCache.cascadePlaneDistances[i] = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "cascadeLightSpaceMatrices[%d]", i);
+			frameUniformCache.cascadeLightSpaceMatrices[i] = glGetUniformLocation(shader, buf);
+		}
+		for (int i = 0; i < 10; ++i) {
+			snprintf(buf, sizeof(buf), "shadowMapPoint[%d]", i);
+			frameUniformCache.pointShadowMap[i] = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "shadowMapSpot[%d]", i);
+			frameUniformCache.spotShadowMap[i] = glGetUniformLocation(shader, buf);
+		}
+	}
+	const FrameUniformCache& fc = frameUniformCache;
+
+	glUniformMatrix4fv(fc.view, 1, GL_FALSE, glm::value_ptr(glm::mat4(view)));
+	glUniformMatrix4fv(fc.projection, 1, GL_FALSE, glm::value_ptr(glm::mat4(projection)));
+	glUniform3fv(fc.viewPos, 1, glm::value_ptr(glm::vec3(FiscionX::Core::Camera.position.x, FiscionX::Core::Camera.position.y, FiscionX::Core::Camera.position.z)));
+	glUniform1i(fc.numLights, numLights);
+	glUniform1f(fc.reflectionsStrength, FiscionX::Core::REFLECTIONS_STRENGTH);
 
 	// Procura a primeira luz direcional (nosso Sol)
 	int dirLightIndex = -1;
@@ -3533,23 +3573,24 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 		// Slot 30 pra garantir que não bate com as outras sombras
 		glActiveTexture(GL_TEXTURE30);
 		glBindTexture(GL_TEXTURE_2D_ARRAY, sm.depthMap);
-		glUniform1i(glGetUniformLocation(shader, "shadowMapDir"), 30);
+		glUniform1i(fc.shadowMapDir, 30);
 
 		// Envia distâncias de corte
-		glUniform1i(glGetUniformLocation(shader, "cascadeCount"), (int)FiscionX::Core::shadowCascadeLevels.size());
-		for (size_t i = 0; i < FiscionX::Core::shadowCascadeLevels.size(); ++i) {
-			glUniform1f(glGetUniformLocation(shader, ("cascadePlaneDistances[" + std::to_string(i) + "]").c_str()), FiscionX::Core::shadowCascadeLevels[i]);
+		glUniform1i(fc.cascadeCount, (int)FiscionX::Core::shadowCascadeLevels.size());
+		int cascadeN = std::min((int)FiscionX::Core::shadowCascadeLevels.size(), FrameUniformCache::MAX_CASCADES);
+		for (int i = 0; i < cascadeN; ++i) {
+			glUniform1f(fc.cascadePlaneDistances[i], FiscionX::Core::shadowCascadeLevels[i]);
 		}
 
 		// Envia as matrizes das cascatas
-		for (size_t i = 0; i < sm.cascadeLightSpaceMatrices.size(); ++i) {
-			glUniformMatrix4fv(glGetUniformLocation(shader, ("cascadeLightSpaceMatrices[" + std::to_string(i) + "]").c_str()), 1, GL_FALSE, glm::value_ptr(sm.cascadeLightSpaceMatrices[i]));
+		int matN = std::min((int)sm.cascadeLightSpaceMatrices.size(), FrameUniformCache::MAX_CASCADES);
+		for (int i = 0; i < matN; ++i) {
+			glUniformMatrix4fv(fc.cascadeLightSpaceMatrices[i], 1, GL_FALSE, glm::value_ptr(sm.cascadeLightSpaceMatrices[i]));
 		}
 	}
 	for (int i = 0; i < numLights; ++i) {
 		const Light& L = *FiscionX::Core::AllLights[i];
 		const ShadowMap& sm = FiscionX::Core::AllShadowMaps[i];
-		std::string idx = std::to_string(i);
 
 		if (L.type == 1) { // LIGHT_POINT
 			glActiveTexture(GL_TEXTURE20 + i);
@@ -3581,17 +3622,18 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 			subMeshVisible.assign(meshes.size(), true); // sombra: nunca cullar
 		}
 
-		int activeLOD = -1; // -1 = full-resolution base mesh
-		if (!lodDistances.empty()) {
-			glm::vec3 camPos(
-				FiscionX::Core::Camera.position.x,
-				FiscionX::Core::Camera.position.y,
-				FiscionX::Core::Camera.position.z);
-			glm::vec3 modelPos(inst.position.x, inst.position.y, inst.position.z);
-			float dSq = glm::dot(camPos - modelPos, camPos - modelPos);
-			activeLOD = selectLOD(dSq);
-			if (activeLOD == INT_MAX) return; // beyond last LOD → cull by distance
-		}
+		// OPTIM: LOD agora é calculado por SubMesh, não mais uma única vez pra
+		// a instância inteira. Antes, toda a malha trocava de LOD junto, baseada
+		// só na posição/origem do Instance — em modelos grandes (ex: um prédio,
+		// um veículo com partes longas) isso fazia partes próximas da câmera
+		// perderem detalhe junto com partes distantes, e vice-versa.
+		// Agora cada SubMesh mede sua própria distância via o centro do seu AABB
+		// local transformado para o mundo, então cada parte do modelo escolhe
+		// seu LOD de forma independente.
+		glm::vec3 camPos(
+			FiscionX::Core::Camera.position.x,
+			FiscionX::Core::Camera.position.y,
+			FiscionX::Core::Camera.position.z);
 
 		if (inst.visible == true) {
 			glm::mat4 instBase =
@@ -3624,6 +3666,15 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 				if (!depthPass && isBlend) continue;  // BLEND vai para DrawTransparentPass
 				if (!instSubVisible[i]) continue;      // frustum culling por submesh
 				glm::mat4 modelMatrix = instBase * (isSkinned ? glm::mat4(1.0f) : mesh.transform);
+
+				int activeLOD = -1; // -1 = full-resolution base submesh
+				if (!lodDistances.empty()) {
+					glm::vec3 subCenterWorld = glm::vec3(modelMatrix * glm::vec4(mesh.aabbCenter(), 1.0f));
+					float dSq = glm::dot(camPos - subCenterWorld, camPos - subCenterWorld);
+					activeLOD = selectLOD(dSq);
+					if (activeLOD == INT_MAX) continue; // essa submesh está além do último LOD → cull por distância (só ela, não o modelo inteiro)
+				}
+
 				if (activeLOD >= 0 && activeLOD < (int)mesh.lodLevels.size()) {
 					const SubMesh::LODLevel& lod = mesh.lodLevels[activeLOD];
 					drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass, &inst,
