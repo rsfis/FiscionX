@@ -1035,6 +1035,13 @@ namespace FiscionX {
 
 		float alpha = 1.0f;
 
+		// OPTIM: calculado uma única vez em init(), depois que meshes é montado.
+		// Antes, DrawTransparentPass calculava `base` (translate*eulerAngleXYZ*scale)
+		// para TODA instância de TODO modelo, todo frame, e só depois de montar a
+		// matriz é que descobria (dentro do loop de submeshes) que o modelo nem tinha
+		// nenhuma submesh BLEND. Com a flag, modelos 100% opacos são pulados de cara.
+		bool hasBlendSubMesh = false;
+
 		struct Instance {
 			FiscionX::Vector3 position;
 			FiscionX::Vector3 rotation;
@@ -1145,6 +1152,30 @@ namespace FiscionX {
 			GLint spotShadowMap[10];   // sampler2D,   luzes do tipo SPOT
 		};
 		mutable FrameUniformCache frameUniformCache;
+
+		// OPTIM: mesma ideia do FrameUniformCache, só que para bindShaderForTransparency().
+		// Antes: até 14 glGetUniformLocation com std::to_string()+concatenação POR LUZ
+		// (até 10 luzes = até 140 lookups ao driver), refeitos sempre que
+		// `shader != lastShader || model != lastModel` na passagem transparente —
+		// ou seja, potencialmente todo objeto transparente, todo frame.
+		struct TransparencyUniformCache {
+			GLuint cachedShader = 0;
+			GLint view = -1, projection = -1, viewPos = -1, numLights = -1, reflectionsStrength = -1;
+			GLint shadowMapDir = -1, cascadeCount = -1;
+			static constexpr int MAX_CASCADES = 16;
+			GLint cascadePlaneDistances[MAX_CASCADES];
+			GLint cascadeLightSpaceMatrices[MAX_CASCADES];
+			struct LightUniforms {
+				GLint type = -1, pos = -1, dir = -1, color = -1, intensity = -1;
+				GLint maxDist = -1, cutOff = -1, outerCutOff = -1;
+				GLint constant = -1, linear = -1, quadratic = -1;
+				GLint hasGlow = -1, glowColor = -1, glowRadius = -1;
+				GLint shadowCubeMap = -1;     // POINT
+				GLint shadowMap2D = -1;       // SPOT
+				GLint lightSpaceMatrix = -1;  // SPOT
+			} lights[10];
+		};
+		mutable TransparencyUniformCache transparencyUniformCache;
 
 		const std::vector<glm::mat4>& getBoneTransforms() const;
 		Model(const std::string& path);

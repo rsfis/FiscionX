@@ -2759,6 +2759,11 @@ void FiscionX::Model::init(const std::string& path) {
 	isVisible.resize(meshes.size(), true);
 	glGenQueries((GLsizei)meshes.size(), occlusionQueries.data());
 
+	// OPTIM: calculado uma única vez aqui em vez de redescoberto implicitamente
+	// todo frame dentro de DrawTransparentPass (ver comentário lá).
+	hasBlendSubMesh = std::any_of(meshes.begin(), meshes.end(),
+		[](const SubMesh& m) { return m.alphaMode == "BLEND"; });
+
 	FiscionX::Core::AllModels.push_back(this);
 }
 
@@ -3603,11 +3608,26 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 		// DIRECTIONAL ja foi tratado lá em cima com Array Texture
 	}
 
+	// OPTIM: viewProj era recalculado (projection*view) até 3x por instância, dentro do
+	// loop abaixo (updateOcclusion, computeSubMeshVisibility, frustum culling) — mas só
+	// depende de view/projection, que são os MESMOS para todas as instâncias desta
+	// chamada de draw(). Calcula uma única vez aqui e reusa.
+	const glm::mat4 viewProjMat = glm::mat4(projection) * glm::mat4(view);
+
+	// OPTIM: extractFrustumPlanes(viewProj, planes) também só depende de viewProj —
+	// estava sendo recalculado por instância (sempre que inst.enableFrustumCulling
+	// estava ativo) mesmo sendo idêntico para todas elas. Calcula uma única vez
+	// por chamada de draw() em vez de uma vez por instância.
+	glm::vec4 frustumPlanes[6];
+	if (!depthPass) {
+		extractFrustumPlanes(viewProjMat, frustumPlanes);
+	}
+
 	for (Instance& inst : instances) {
 		glm::mat4 baseMatrix = glm::mat4(1.0f);
 
 		if (!depthPass) {
-			inst.updateOcclusion(glm::mat4(projection) * glm::mat4(view));
+			inst.updateOcclusion(viewProjMat);
 		}
 		if (inst.physicsSyncTransformMatrix != glm::mat4(1.0f)) {
 			baseMatrix = glm::scale(inst.physicsSyncTransformMatrix, glm::vec3(inst.scale.x, inst.scale.y, inst.scale.z));
@@ -3615,8 +3635,7 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 
 		std::vector<bool> subMeshVisible;
 		if (!depthPass) {
-			glm::mat4 viewProj = glm::mat4(projection) * glm::mat4(view);
-			inst.computeSubMeshVisibility(viewProj, subMeshVisible);
+			inst.computeSubMeshVisibility(viewProjMat, subMeshVisible);
 		}
 		else {
 			subMeshVisible.assign(meshes.size(), true); // sombra: nunca cullar
@@ -3643,13 +3662,10 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 
 			std::vector<bool> instSubVisible;
 			if (inst.enableFrustumCulling && !depthPass) {
-				glm::mat4 viewProj = glm::mat4(projection) * glm::mat4(view);
-				glm::vec4 planes[6];
-				extractFrustumPlanes(viewProj, planes);
 				instSubVisible.resize(meshes.size());
 				for (int i = 0; i < (int)meshes.size(); ++i) {
 					glm::mat4 M = instBase * (isSkinned ? glm::mat4(1.0f) : meshes[i].transform);
-					instSubVisible[i] = inst.isSubMeshInFrustum(meshes[i], M, planes);
+					instSubVisible[i] = inst.isSubMeshInFrustum(meshes[i], M, frustumPlanes);
 				}
 			}
 			else {
@@ -3690,15 +3706,62 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 }
 
 void FiscionX::Model::bindShaderForTransparency(GLuint shader, FiscionX::Mat4 view, FiscionX::Mat4 projection) {
-	int numLights = static_cast<int>(FiscionX::Core::AllLights.size());
+	int numLights = std::min((int)FiscionX::Core::AllLights.size(), 10);
 
 	glUseProgram(shader);
-	glUniformMatrix4fv(glGetUniformLocation(shader, "view"), 1, GL_FALSE, glm::value_ptr(glm::mat4(view)));
-	glUniformMatrix4fv(glGetUniformLocation(shader, "projection"), 1, GL_FALSE, glm::value_ptr(glm::mat4(projection)));
-	glUniform3fv(glGetUniformLocation(shader, "viewPos"), 1, glm::value_ptr(
+
+	// OPTIM: mesmo remédio do FrameUniformCache/UniformCache aplicado aqui.
+	// Antes: até 14 glGetUniformLocation com std::to_string()+concatenação POR LUZ
+	// (até 10 luzes => até 140 lookups ao driver), refeitos a cada chamada — e essa
+	// função é chamada por objeto transparente sempre que `shader != lastShader ||
+	// model != lastModel` na passagem transparente. Agora só reconstrói o cache de
+	// locations quando o shader realmente muda.
+	if (transparencyUniformCache.cachedShader != shader) {
+		transparencyUniformCache.cachedShader = shader;
+		transparencyUniformCache.view = glGetUniformLocation(shader, "view");
+		transparencyUniformCache.projection = glGetUniformLocation(shader, "projection");
+		transparencyUniformCache.viewPos = glGetUniformLocation(shader, "viewPos");
+		transparencyUniformCache.numLights = glGetUniformLocation(shader, "numLights");
+		transparencyUniformCache.reflectionsStrength = glGetUniformLocation(shader, "reflectionsStrength");
+		transparencyUniformCache.shadowMapDir = glGetUniformLocation(shader, "shadowMapDir");
+		transparencyUniformCache.cascadeCount = glGetUniformLocation(shader, "cascadeCount");
+
+		char buf[64];
+		for (int i = 0; i < TransparencyUniformCache::MAX_CASCADES; ++i) {
+			snprintf(buf, sizeof(buf), "cascadePlaneDistances[%d]", i);
+			transparencyUniformCache.cascadePlaneDistances[i] = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "cascadeLightSpaceMatrices[%d]", i);
+			transparencyUniformCache.cascadeLightSpaceMatrices[i] = glGetUniformLocation(shader, buf);
+		}
+		for (int i = 0; i < 10; ++i) {
+			auto& Lu = transparencyUniformCache.lights[i];
+			snprintf(buf, sizeof(buf), "lightType[%d]", i);            Lu.type = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightPos[%d]", i);             Lu.pos = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightDir[%d]", i);             Lu.dir = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightColor[%d]", i);           Lu.color = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightIntensity[%d]", i);       Lu.intensity = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightMaxDistance[%d]", i);     Lu.maxDist = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightCutOff[%d]", i);          Lu.cutOff = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightOuterCutOff[%d]", i);     Lu.outerCutOff = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightConstant[%d]", i);        Lu.constant = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightLinear[%d]", i);          Lu.linear = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightQuadratic[%d]", i);       Lu.quadratic = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightHasGlow[%d]", i);         Lu.hasGlow = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightGlowColor[%d]", i);       Lu.glowColor = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightGlowRadius[%d]", i);      Lu.glowRadius = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "shadowCubeMaps[%d]", i);       Lu.shadowCubeMap = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "shadowMaps[%d]", i);           Lu.shadowMap2D = glGetUniformLocation(shader, buf);
+			snprintf(buf, sizeof(buf), "lightSpaceMatrices[%d]", i);   Lu.lightSpaceMatrix = glGetUniformLocation(shader, buf);
+		}
+	}
+	const TransparencyUniformCache& tc = transparencyUniformCache;
+
+	glUniformMatrix4fv(tc.view, 1, GL_FALSE, glm::value_ptr(glm::mat4(view)));
+	glUniformMatrix4fv(tc.projection, 1, GL_FALSE, glm::value_ptr(glm::mat4(projection)));
+	glUniform3fv(tc.viewPos, 1, glm::value_ptr(
 		glm::vec3(FiscionX::Core::Camera.position.x, FiscionX::Core::Camera.position.y, FiscionX::Core::Camera.position.z)));
-	glUniform1i(glGetUniformLocation(shader, "numLights"), numLights);
-	glUniform1f(glGetUniformLocation(shader, "reflectionsStrength"), FiscionX::Core::REFLECTIONS_STRENGTH);
+	glUniform1i(tc.numLights, numLights);
+	glUniform1f(tc.reflectionsStrength, FiscionX::Core::REFLECTIONS_STRENGTH);
 
 	// CSM para luz direcional
 	int dirLightIndex = -1;
@@ -3709,42 +3772,44 @@ void FiscionX::Model::bindShaderForTransparency(GLuint shader, FiscionX::Mat4 vi
 		const FiscionX::ShadowMap& sm = FiscionX::Core::AllShadowMaps[dirLightIndex];
 		glActiveTexture(GL_TEXTURE30);
 		glBindTexture(GL_TEXTURE_2D_ARRAY, sm.depthMap);
-		glUniform1i(glGetUniformLocation(shader, "shadowMapDir"), 30);
-		glUniform1i(glGetUniformLocation(shader, "cascadeCount"), (int)FiscionX::Core::shadowCascadeLevels.size());
-		for (size_t i = 0; i < FiscionX::Core::shadowCascadeLevels.size(); ++i)
-			glUniform1f(glGetUniformLocation(shader, ("cascadePlaneDistances[" + std::to_string(i) + "]").c_str()), FiscionX::Core::shadowCascadeLevels[i]);
-		for (size_t i = 0; i < sm.cascadeLightSpaceMatrices.size(); ++i)
-			glUniformMatrix4fv(glGetUniformLocation(shader, ("cascadeLightSpaceMatrices[" + std::to_string(i) + "]").c_str()), 1, GL_FALSE, glm::value_ptr(sm.cascadeLightSpaceMatrices[i]));
+		glUniform1i(tc.shadowMapDir, 30);
+		glUniform1i(tc.cascadeCount, (int)FiscionX::Core::shadowCascadeLevels.size());
+		int cascadeN = std::min((int)FiscionX::Core::shadowCascadeLevels.size(), TransparencyUniformCache::MAX_CASCADES);
+		for (int i = 0; i < cascadeN; ++i)
+			glUniform1f(tc.cascadePlaneDistances[i], FiscionX::Core::shadowCascadeLevels[i]);
+		int matN = std::min((int)sm.cascadeLightSpaceMatrices.size(), TransparencyUniformCache::MAX_CASCADES);
+		for (int i = 0; i < matN; ++i)
+			glUniformMatrix4fv(tc.cascadeLightSpaceMatrices[i], 1, GL_FALSE, glm::value_ptr(sm.cascadeLightSpaceMatrices[i]));
 	}
 
 	for (int i = 0; i < numLights; ++i) {
 		const Light& L = *FiscionX::Core::AllLights[i];
 		const ShadowMap& sm = FiscionX::Core::AllShadowMaps[i];
-		std::string idx = std::to_string(i);
-		glUniform1i(glGetUniformLocation(shader, ("lightType[" + idx + "]").c_str()), L.type);
-		glUniform3fv(glGetUniformLocation(shader, ("lightPos[" + idx + "]").c_str()), 1, glm::value_ptr(glm::vec3(L.position.x, L.position.y, L.position.z)));
-		glUniform3fv(glGetUniformLocation(shader, ("lightDir[" + idx + "]").c_str()), 1, glm::value_ptr(glm::vec3(L.direction.x, L.direction.y, L.direction.z)));
-		glUniform3fv(glGetUniformLocation(shader, ("lightColor[" + idx + "]").c_str()), 1, glm::value_ptr(glm::vec3(L.color.x, L.color.y, L.color.z)));
-		glUniform1f(glGetUniformLocation(shader, ("lightIntensity[" + idx + "]").c_str()), L.intensity);
-		glUniform1f(glGetUniformLocation(shader, ("lightMaxDistance[" + idx + "]").c_str()), L.maxDistance);
-		glUniform1f(glGetUniformLocation(shader, ("lightCutOff[" + idx + "]").c_str()), L.cutOff);
-		glUniform1f(glGetUniformLocation(shader, ("lightOuterCutOff[" + idx + "]").c_str()), L.outerCutOff);
-		glUniform1f(glGetUniformLocation(shader, ("lightConstant[" + idx + "]").c_str()), L.constant);
-		glUniform1f(glGetUniformLocation(shader, ("lightLinear[" + idx + "]").c_str()), L.linear);
-		glUniform1f(glGetUniformLocation(shader, ("lightQuadratic[" + idx + "]").c_str()), L.quadratic);
-		glUniform1i(glGetUniformLocation(shader, ("lightHasGlow[" + idx + "]").c_str()), L.hasGlow);
-		glUniform3fv(glGetUniformLocation(shader, ("lightGlowColor[" + idx + "]").c_str()), 1, glm::value_ptr(glm::vec3(L.glowColor.x, L.glowColor.y, L.glowColor.z)));
-		glUniform1f(glGetUniformLocation(shader, ("lightGlowRadius[" + idx + "]").c_str()), L.glowRadius);
+		const auto& Lu = tc.lights[i];
+		glUniform1i(Lu.type, L.type);
+		glUniform3fv(Lu.pos, 1, glm::value_ptr(glm::vec3(L.position.x, L.position.y, L.position.z)));
+		glUniform3fv(Lu.dir, 1, glm::value_ptr(glm::vec3(L.direction.x, L.direction.y, L.direction.z)));
+		glUniform3fv(Lu.color, 1, glm::value_ptr(glm::vec3(L.color.x, L.color.y, L.color.z)));
+		glUniform1f(Lu.intensity, L.intensity);
+		glUniform1f(Lu.maxDist, L.maxDistance);
+		glUniform1f(Lu.cutOff, L.cutOff);
+		glUniform1f(Lu.outerCutOff, L.outerCutOff);
+		glUniform1f(Lu.constant, L.constant);
+		glUniform1f(Lu.linear, L.linear);
+		glUniform1f(Lu.quadratic, L.quadratic);
+		glUniform1i(Lu.hasGlow, L.hasGlow);
+		glUniform3fv(Lu.glowColor, 1, glm::value_ptr(glm::vec3(L.glowColor.x, L.glowColor.y, L.glowColor.z)));
+		glUniform1f(Lu.glowRadius, L.glowRadius);
 		if (L.type == 1) {
 			glActiveTexture(GL_TEXTURE20 + i);
 			glBindTexture(GL_TEXTURE_CUBE_MAP, sm.depthMap);
-			glUniform1i(glGetUniformLocation(shader, ("shadowCubeMaps[" + idx + "]").c_str()), 20 + i);
+			glUniform1i(Lu.shadowCubeMap, 20 + i);
 		}
 		else if (L.type == 2) {
 			glActiveTexture(GL_TEXTURE10 + i);
 			glBindTexture(GL_TEXTURE_2D, sm.depthMap);
-			glUniform1i(glGetUniformLocation(shader, ("shadowMaps[" + idx + "]").c_str()), 10 + i);
-			glUniformMatrix4fv(glGetUniformLocation(shader, ("lightSpaceMatrices[" + idx + "]").c_str()), 1, GL_FALSE, glm::value_ptr(sm.lightSpaceMatrix));
+			glUniform1i(Lu.shadowMap2D, 10 + i);
+			glUniformMatrix4fv(Lu.lightSpaceMatrix, 1, GL_FALSE, glm::value_ptr(sm.lightSpaceMatrix));
 		}
 	}
 }
@@ -4682,6 +4747,37 @@ glm::mat4 FiscionX::Core::getLightSpaceMatrix(FiscionX::Light& L, const float ne
 	return lightProjection * lightView;
 }
 
+// OPTIM: as passagens de sombra usam só 4 shaders fixos (depthShaderStatic/Skinned/
+// CubeStatic/CubeSkinned), mas glGetUniformLocation(shader, "lightSpaceMatrix"/"farPlane"/
+// "lightPos"/"shadowMatrices[0]") era resolvido a cada modelo, a cada camada/face, a cada
+// luz, todo frame — dentro de loops aninhados (cascata × modelo, face × modelo). Com poucos
+// shaders distintos, um cache pequeno (cresce até o nº de shaders realmente usados) elimina
+// essa repetição quase por completo: cada shader só paga os 4 lookups uma única vez.
+namespace {
+	struct DepthShaderUniformLocs {
+		GLuint shader = 0;
+		GLint lightSpaceMatrix = -1; // depthShaderStatic / depthShaderSkinned
+		GLint farPlane = -1;         // depthShaderCubeStatic / depthShaderCubeSkinned
+		GLint lightPos = -1;         // depthShaderCubeStatic / depthShaderCubeSkinned
+		GLint shadowMatrices0 = -1;  // depthShaderCubeStatic / depthShaderCubeSkinned
+	};
+
+	DepthShaderUniformLocs& getDepthShaderUniformLocs(GLuint shader) {
+		static std::vector<DepthShaderUniformLocs> cache;
+		for (auto& c : cache) {
+			if (c.shader == shader) return c;
+		}
+		DepthShaderUniformLocs c;
+		c.shader = shader;
+		c.lightSpaceMatrix = glGetUniformLocation(shader, "lightSpaceMatrix");
+		c.farPlane = glGetUniformLocation(shader, "farPlane");
+		c.lightPos = glGetUniformLocation(shader, "lightPos");
+		c.shadowMatrices0 = glGetUniformLocation(shader, "shadowMatrices[0]");
+		cache.push_back(c);
+		return cache.back();
+	}
+}
+
 void FiscionX::Core::RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 projection, FiscionX::Mat4 viewProj) {
 	float now = static_cast<float>(glfwGetTime());
 
@@ -4740,7 +4836,8 @@ void FiscionX::Core::RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 p
 				for (auto& m : AllModels) {
 					GLuint shader = m->isSkinned ? depthShaderSkinned : depthShaderStatic;
 					glUseProgram(shader);
-					glUniformMatrix4fv(glGetUniformLocation(shader, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(sm.cascadeLightSpaceMatrices[layer]));
+					const DepthShaderUniformLocs& dc = getDepthShaderUniformLocs(shader);
+					glUniformMatrix4fv(dc.lightSpaceMatrix, 1, GL_FALSE, glm::value_ptr(sm.cascadeLightSpaceMatrices[layer]));
 
 					m->draw(shader, sm.cascadeLightSpaceMatrices[layer], 0, true, view, projection);
 				}
@@ -4771,9 +4868,10 @@ void FiscionX::Core::RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 p
 				for (auto& m : AllModels) {
 					GLuint shader = m->isSkinned ? depthShaderCubeSkinned : depthShaderCubeStatic;
 					glUseProgram(shader);
-					glUniform1f(glGetUniformLocation(shader, "farPlane"), zFar);
-					glUniform3fv(glGetUniformLocation(shader, "lightPos"), 1, glm::value_ptr(lPos));
-					glUniformMatrix4fv(glGetUniformLocation(shader, "shadowMatrices[0]"), 1, GL_FALSE, glm::value_ptr(shadowMatrices[face]));
+					const DepthShaderUniformLocs& dc = getDepthShaderUniformLocs(shader);
+					glUniform1f(dc.farPlane, zFar);
+					glUniform3fv(dc.lightPos, 1, glm::value_ptr(lPos));
+					glUniformMatrix4fv(dc.shadowMatrices0, 1, GL_FALSE, glm::value_ptr(shadowMatrices[face]));
 
 					m->draw(shader, shadowMatrices[face], 0, true, view, projection);
 				}
@@ -4794,7 +4892,8 @@ void FiscionX::Core::RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 p
 			for (auto& m : AllModels) {
 				GLuint shader = m->isSkinned ? depthShaderSkinned : depthShaderStatic;
 				glUseProgram(shader);
-				glUniformMatrix4fv(glGetUniformLocation(shader, "lightSpaceMatrix"), 1, GL_FALSE, glm::value_ptr(sm.lightSpaceMatrix));
+				const DepthShaderUniformLocs& dc = getDepthShaderUniformLocs(shader);
+				glUniformMatrix4fv(dc.lightSpaceMatrix, 1, GL_FALSE, glm::value_ptr(sm.lightSpaceMatrix));
 
 
 				m->draw(shader, sm.lightSpaceMatrix, 0, true, view, projection);
@@ -5165,9 +5264,21 @@ void FiscionX::Core::DrawTransparentPass(FiscionX::Mat4 view, FiscionX::Mat4 pro
 	};
 
 	glm::vec3 camPos(Camera.position.x, Camera.position.y, Camera.position.z);
-	std::vector<BlendEntry> entries;
+
+	// OPTIM: vetor `static` reaproveitado entre frames — depois do warm-up das primeiras
+	// chamadas, a capacity já comporta o número típico de entradas e clear() não libera
+	// a memória, então o loop abaixo deixa de fazer realocação de heap todo frame.
+	static std::vector<BlendEntry> entries;
+	entries.clear();
 
 	for (FiscionX::Model* model : AllModels) {
+		// OPTIM: pula o modelo inteiro antes de tocar em qualquer instância se ele não
+		// tem NENHUMA submesh BLEND. Antes, a matriz `base` (translate*eulerAngleXYZ*scale)
+		// era montada para toda instância de todo modelo, e só DEPOIS disso, dentro do
+		// loop de submeshes, é que se descobria que não havia nada para desenhar — ou
+		// seja, trabalho recalculado todo frame para modelos 100% opacos.
+		if (!model->hasBlendSubMesh) continue;
+
 		for (auto& inst : model->instances) {
 			if (!inst.visible) continue;
 
