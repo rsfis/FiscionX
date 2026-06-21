@@ -33,6 +33,12 @@ GLuint FiscionX::Core::ssaoBlurShader;
 GLuint FiscionX::Core::ssaoNoiseTex;
 std::vector<glm::vec3> FiscionX::Core::ssaoKernel;
 
+bool  FiscionX::Core::SSAO_ENABLED = true;
+float FiscionX::Core::SSAO_RADIUS = 0.5f;
+float FiscionX::Core::SSAO_BIAS = 0.025f;
+float FiscionX::Core::SSAO_INTENSITY = 1.5f;
+float FiscionX::Core::SSAO_GI_STRENGTH = 0.6f;
+
 GLuint FiscionX::Core::ssrFBO;
 GLuint FiscionX::Core::ssrColorBuffer;
 GLuint FiscionX::Core::ssrBlurFBO;
@@ -6008,59 +6014,70 @@ void FiscionX::Core::Draw::PostProcessing(FiscionX::Mat4 viewProj, FiscionX::Lig
 		s_grLocSsaoTex = glGetUniformLocation(FiscionX::Core::godRaysShader, "ssaoTexture");
 	}
 
-	glBindFramebuffer(GL_FRAMEBUFFER, FiscionX::Core::ssaoFBO);
-	glViewport(0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
-	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-	glClear(GL_COLOR_BUFFER_BIT);
-	glDisable(GL_DEPTH_TEST);
+	if (FiscionX::Core::SSAO_ENABLED) {
+		glBindFramebuffer(GL_FRAMEBUFFER, FiscionX::Core::ssaoFBO);
+		glViewport(0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
+		glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+		glClear(GL_COLOR_BUFFER_BIT);
+		glDisable(GL_DEPTH_TEST);
 
-	glUseProgram(FiscionX::Core::ssaoShader);
-	glUniformMatrix4fv(s_ssaoLocProj, 1, GL_FALSE, glm::value_ptr(projection));
-	glUniformMatrix4fv(s_ssaoLocInvProj, 1, GL_FALSE, glm::value_ptr(invProjection));
-	glUniform2f(s_ssaoLocScreenSize, (float)FiscionX::Core::SCREEN_WIDTH, (float)FiscionX::Core::SCREEN_HEIGHT);
-	glUniform1f(s_ssaoLocNear, FiscionX::Core::NEAR_PLANE);
-	glUniform1f(s_ssaoLocFar, FiscionX::Core::FAR_PLANE);
-	glUniform1f(s_ssaoLocRadius, 0.5f);
-	glUniform1f(s_ssaoLocBias, 0.025f);
-	glUniform1f(s_ssaoLocIntensity, 1.5f);
-	glUniform1f(s_ssaoLocGiStrength, 0.6f);
+		glUseProgram(FiscionX::Core::ssaoShader);
+		glUniformMatrix4fv(s_ssaoLocProj, 1, GL_FALSE, glm::value_ptr(projection));
+		glUniformMatrix4fv(s_ssaoLocInvProj, 1, GL_FALSE, glm::value_ptr(invProjection));
+		glUniform2f(s_ssaoLocScreenSize, (float)FiscionX::Core::SCREEN_WIDTH, (float)FiscionX::Core::SCREEN_HEIGHT);
+		glUniform1f(s_ssaoLocNear, FiscionX::Core::NEAR_PLANE);
+		glUniform1f(s_ssaoLocFar, FiscionX::Core::FAR_PLANE);
+		glUniform1f(s_ssaoLocRadius, FiscionX::Core::SSAO_RADIUS);
+		glUniform1f(s_ssaoLocBias, FiscionX::Core::SSAO_BIAS);
+		glUniform1f(s_ssaoLocIntensity, FiscionX::Core::SSAO_INTENSITY);
+		glUniform1f(s_ssaoLocGiStrength, FiscionX::Core::SSAO_GI_STRENGTH);
 
-	for (int i = 0; i < (int)FiscionX::Core::ssaoKernel.size(); i++) {
-		if (s_ssaoLocSamples[i] >= 0)
-			glUniform3f(s_ssaoLocSamples[i],
-				FiscionX::Core::ssaoKernel[i].x, FiscionX::Core::ssaoKernel[i].y, FiscionX::Core::ssaoKernel[i].z);
+		for (int i = 0; i < (int)FiscionX::Core::ssaoKernel.size(); i++) {
+			if (s_ssaoLocSamples[i] >= 0)
+				glUniform3f(s_ssaoLocSamples[i],
+					FiscionX::Core::ssaoKernel[i].x, FiscionX::Core::ssaoKernel[i].y, FiscionX::Core::ssaoKernel[i].z);
+		}
+
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainDepthBuffer);
+		glUniform1i(s_ssaoLocDepthTex, 0);
+
+		glActiveTexture(GL_TEXTURE1);
+		glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainColorBuffer);
+		glUniform1i(s_ssaoLocColorTex, 1);
+
+		glActiveTexture(GL_TEXTURE2);
+		glBindTexture(GL_TEXTURE_2D, FiscionX::Core::ssaoNoiseTex);
+		glUniform1i(s_ssaoLocNoiseTex, 2);
+
+		glBindVertexArray(FiscionX::Core::screenQuadVAO);
+		glDrawArrays(GL_TRIANGLES, 0, 6);
+		glBindVertexArray(0);
+
+		glBindFramebuffer(GL_FRAMEBUFFER, FiscionX::Core::ssaoBlurFBO);
+		glViewport(0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
+		glClear(GL_COLOR_BUFFER_BIT);
+
+		glUseProgram(FiscionX::Core::ssaoBlurShader);
+		glUniform2f(s_ssaoBlurLocScreenSize, (float)FiscionX::Core::SCREEN_WIDTH, (float)FiscionX::Core::SCREEN_HEIGHT);
+
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, FiscionX::Core::ssaoColorBuffer);
+		glUniform1i(s_ssaoBlurLocInput, 0);
+
+		glBindVertexArray(FiscionX::Core::screenQuadVAO);
+		glDrawArrays(GL_TRIANGLES, 0, 6);
+		glBindVertexArray(0);
 	}
-
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainDepthBuffer);
-	glUniform1i(s_ssaoLocDepthTex, 0);
-
-	glActiveTexture(GL_TEXTURE1);
-	glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainColorBuffer);
-	glUniform1i(s_ssaoLocColorTex, 1);
-
-	glActiveTexture(GL_TEXTURE2);
-	glBindTexture(GL_TEXTURE_2D, FiscionX::Core::ssaoNoiseTex);
-	glUniform1i(s_ssaoLocNoiseTex, 2);
-
-	glBindVertexArray(FiscionX::Core::screenQuadVAO);
-	glDrawArrays(GL_TRIANGLES, 0, 6);
-	glBindVertexArray(0);
-
-	glBindFramebuffer(GL_FRAMEBUFFER, FiscionX::Core::ssaoBlurFBO);
-	glViewport(0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
-	glClear(GL_COLOR_BUFFER_BIT);
-
-	glUseProgram(FiscionX::Core::ssaoBlurShader);
-	glUniform2f(s_ssaoBlurLocScreenSize, (float)FiscionX::Core::SCREEN_WIDTH, (float)FiscionX::Core::SCREEN_HEIGHT);
-
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, FiscionX::Core::ssaoColorBuffer);
-	glUniform1i(s_ssaoBlurLocInput, 0);
-
-	glBindVertexArray(FiscionX::Core::screenQuadVAO);
-	glDrawArrays(GL_TRIANGLES, 0, 6);
-	glBindVertexArray(0);
+	else {
+		// SSAO desligado: zera ssaoBlurColorBuffer para o valor neutro (rgb=0, a=1) lido
+		// pelo composite (godRays / etc) como "sem oclusão, sem GI" — ver FiscionShaders.h,
+		// onde sceneColor = sceneColor * ssaoSample.a + ssaoSample.rgb.
+		glBindFramebuffer(GL_FRAMEBUFFER, FiscionX::Core::ssaoBlurFBO);
+		glViewport(0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
+		glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+		glClear(GL_COLOR_BUFFER_BIT);
+	}
 
 	// === SSR (Screen Space Reflections) ===
 	// Roda depois do SSAO (não depende dele) e antes do God Rays (que lê mainColorBuffer

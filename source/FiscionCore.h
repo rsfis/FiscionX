@@ -1291,6 +1291,13 @@ namespace FiscionX {
 		static GLuint ssaoNoiseTex;
 		static std::vector<glm::vec3> ssaoKernel;
 
+		// --- SSAO config ---
+		static bool  SSAO_ENABLED;      // liga/desliga o passe inteiro (incl. blur); quando false, ssaoTexture fica neutro (sem AO/GI)
+		static float SSAO_RADIUS;       // raio de amostragem em unidades de view-space
+		static float SSAO_BIAS;         // bias contra acne/self-occlusion
+		static float SSAO_INTENSITY;    // multiplicador de força da oclusão
+		static float SSAO_GI_STRENGTH;  // contribuição de GI aproximado embutido no mesmo passe
+
 		// --- SSR (Screen Space Reflections) ---
 		static GLuint ssrFBO;
 		static GLuint ssrColorBuffer;       // rgb = reflection color, a = hit confidence/mask
