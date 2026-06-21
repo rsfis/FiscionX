@@ -55,32 +55,32 @@ void DrawSettingsPanel() {
     ImGui::Separator();
 
     // ---------------- JANELA ----------------
-    if (ImGui::CollapsingHeader("Janela", ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::Text("Resolucao: %d x %d", FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
+    if (ImGui::CollapsingHeader("Window", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Text("Resolution: %d x %d", FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
 
         static int newWidth = FiscionX::Core::SCREEN_WIDTH;
         static int newHeight = FiscionX::Core::SCREEN_HEIGHT;
-        ImGui::InputInt("Largura", &newWidth);
-        ImGui::InputInt("Altura", &newHeight);
-        if (ImGui::Button("Aplicar resolucao")) {
+        ImGui::InputInt("Width", &newWidth);
+        ImGui::InputInt("Height", &newHeight);
+        if (ImGui::Button("Apply Resolution")) {
             FiscionX::Core::SetWindowSize(newWidth, newHeight);
         }
 
         static int monitorIndex = 0;
-        ImGui::InputInt("Indice do monitor", &monitorIndex);
+        ImGui::InputInt("Selected Monitor", &monitorIndex);
         ImGui::SameLine();
         if (ImGui::Button("Fullscreen")) {
             FiscionX::Core::SetWindowFullscreen(true, monitorIndex);
         }
         ImGui::SameLine();
-        if (ImGui::Button("Modo Janela")) {
+        if (ImGui::Button("Windowed")) {
             FiscionX::Core::SetWindowFullscreen(false, monitorIndex);
         }
 
         static char iconPath[256] = "assets/icons/fiscionx_logo_big_512.png";
-        ImGui::InputText("Icone (path)", iconPath, IM_ARRAYSIZE(iconPath));
+        ImGui::InputText("Icon (path)", iconPath, IM_ARRAYSIZE(iconPath));
         ImGui::SameLine();
-        if (ImGui::Button("Definir icone")) {
+        if (ImGui::Button("Define icon")) {
             FiscionX::Core::SetWindowIcon(iconPath);
         }
     }
@@ -93,7 +93,7 @@ void DrawSettingsPanel() {
             FISCIONX_CURSOR_NORMAL, FISCIONX_CURSOR_HIDDEN, FISCIONX_CURSOR_DISABLED,
             FISCIONX_CURSOR_CAPTURED, FISCIONX_CURSOR_LOCKED
         };
-        if (ImGui::Combo("Modo do cursor", &cursorMode, cursorLabels, IM_ARRAYSIZE(cursorLabels))) {
+        if (ImGui::Combo("Cursor Mode", &cursorMode, cursorLabels, IM_ARRAYSIZE(cursorLabels))) {
             FiscionX::Core::SetCursorMode(cursorValues[cursorMode]);
         }
     }
@@ -108,56 +108,56 @@ void DrawSettingsPanel() {
         if (changed) {
             FiscionX::Core::SetCacheSettings(shaderCache, modelCache);
         }
-        ImGui::Checkbox("Comprimir texturas automaticamente", &FiscionX::Core::compressTexturesAutomatically);
+        ImGui::Checkbox("Compress textures automatically", &FiscionX::Core::compressTexturesAutomatically);
     }
 
     // ---------------- CAMERA ----------------
     if (ImGui::CollapsingHeader("Camera")) {
-        ImGui::DragFloat3("Posicao", &FiscionX::Core::Camera.position.x, 0.05f);
+        ImGui::DragFloat3("Position", &FiscionX::Core::Camera.position.x, 0.05f);
         ImGui::DragFloat3("Front", &FiscionX::Core::Camera.front.x, 0.01f, -1.0f, 1.0f);
         ImGui::DragFloat("Yaw", &FiscionX::Core::Camera.yaw, 0.5f);
         ImGui::DragFloat("Pitch", &FiscionX::Core::Camera.pitch, 0.5f, -89.0f, 89.0f);
-        ImGui::DragFloat("Velocidade", &FiscionX::Core::Camera.speed, 0.05f, 0.0f, 100.0f);
-        ImGui::DragFloat("Sensibilidade", &FiscionX::Core::Camera.sensitivity, 0.01f, 0.0f, 5.0f);
+        ImGui::DragFloat("Velocity", &FiscionX::Core::Camera.speed, 0.05f, 0.0f, 100.0f);
+        ImGui::DragFloat("Sensibility", &FiscionX::Core::Camera.sensitivity, 0.01f, 0.0f, 5.0f);
         ImGui::DragFloat("FOV", &FiscionX::Core::Camera.fov, 0.5f, 1.0f, 179.0f);
-        ImGui::Checkbox("Pode olhar (canLook)", &FiscionX::Core::Camera.canLook);
+        ImGui::Checkbox("Can Look", &FiscionX::Core::Camera.canLook);
     }
 
     // ---------------- SSAO ----------------
     if (ImGui::CollapsingHeader("SSAO")) {
-        ImGui::Checkbox("SSAO ativado", &FiscionX::Core::SSAO_ENABLED);
+        ImGui::Checkbox("SSAO enabled", &FiscionX::Core::SSAO_ENABLED);
         ImGui::BeginDisabled(!FiscionX::Core::SSAO_ENABLED);
-        ImGui::DragFloat("Raio", &FiscionX::Core::SSAO_RADIUS, 0.01f, 0.0f, 5.0f);
+        ImGui::DragFloat("Rau", &FiscionX::Core::SSAO_RADIUS, 0.01f, 0.0f, 5.0f);
         ImGui::DragFloat("Bias", &FiscionX::Core::SSAO_BIAS, 0.001f, 0.0f, 1.0f);
-        ImGui::DragFloat("Intensidade", &FiscionX::Core::SSAO_INTENSITY, 0.01f, 0.0f, 10.0f);
-        ImGui::DragFloat("Forca GI", &FiscionX::Core::SSAO_GI_STRENGTH, 0.01f, 0.0f, 5.0f);
+        ImGui::DragFloat("Intensity", &FiscionX::Core::SSAO_INTENSITY, 0.01f, 0.0f, 10.0f);
+        ImGui::DragFloat("GI Force", &FiscionX::Core::SSAO_GI_STRENGTH, 0.01f, 0.0f, 5.0f);
         ImGui::EndDisabled();
     }
 
     // ---------------- SSR ----------------
-    if (ImGui::CollapsingHeader("SSR (Screen Space Reflections)")) {
-        ImGui::Checkbox("SSR ativado", &FiscionX::Core::SSR_ENABLED);
+    if (ImGui::CollapsingHeader("SSR")) {
+        ImGui::Checkbox("SSR enabled", &FiscionX::Core::SSR_ENABLED);
         ImGui::BeginDisabled(!FiscionX::Core::SSR_ENABLED);
-        ImGui::DragFloat("Distancia maxima", &FiscionX::Core::SSR_MAX_DISTANCE, 0.5f, 0.0f, 500.0f);
-        ImGui::DragFloat("Espessura (thickness)", &FiscionX::Core::SSR_THICKNESS, 0.01f, 0.0f, 20.0f);
+        ImGui::DragFloat("Max Distance", &FiscionX::Core::SSR_MAX_DISTANCE, 0.5f, 0.0f, 500.0f);
+        ImGui::DragFloat("Thickness", &FiscionX::Core::SSR_THICKNESS, 0.01f, 0.0f, 20.0f);
         ImGui::SliderInt("Max steps", &FiscionX::Core::SSR_MAX_STEPS, 1, 256);
         ImGui::SliderInt("Binary steps", &FiscionX::Core::SSR_BINARY_STEPS, 0, 16);
-        ImGui::DragFloat("Fade na borda da tela", &FiscionX::Core::SSR_FADE_SCREEN_EDGE, 0.01f, 0.0f, 1.0f);
+        ImGui::DragFloat("Fade", &FiscionX::Core::SSR_FADE_SCREEN_EDGE, 0.01f, 0.0f, 1.0f);
         ImGui::DragFloat("Stride", &FiscionX::Core::SSR_STRIDE, 0.01f, 0.0f, 10.0f);
-        ImGui::DragFloat("Raio max. de blur (px)", &FiscionX::Core::SSR_MAX_BLUR_RADIUS, 0.1f, 0.0f, 64.0f);
+        ImGui::DragFloat("Blur (px)", &FiscionX::Core::SSR_MAX_BLUR_RADIUS, 0.1f, 0.0f, 64.0f);
         ImGui::EndDisabled();
     }
 
     // ---------------- IBL / HDR ----------------
     if (ImGui::CollapsingHeader("IBL / HDR")) {
-        ImGui::Text("IBL pronto: %s", FiscionX::Core::iblReady ? "sim" : "nao");
-        ImGui::DragFloat("Exposicao HDR", &FiscionX::Core::HDR_EXPOSURE, 0.01f, 0.0f, 10.0f);
-        ImGui::DragFloat("Escala HDR do IBL", &FiscionX::Core::IBL_HDR_SCALE, 0.001f, 0.0f, 2.0f);
-        ImGui::TextWrapped("Obs: a escala do IBL so tem efeito no proximo LoadHDR().");
+        ImGui::Text("IBL ready: %s", FiscionX::Core::iblReady ? "yes" : "no");
+        ImGui::DragFloat("Exposition HDR", &FiscionX::Core::HDR_EXPOSURE, 0.01f, 0.0f, 10.0f);
+        ImGui::DragFloat("Scale HDR IBL", &FiscionX::Core::IBL_HDR_SCALE, 0.001f, 0.0f, 2.0f);
+        ImGui::TextWrapped("*All of this will only be applied on the next HDR load.");
 
         static char hdrPath[256] = "assets/environment/gardens.hdr";
         ImGui::InputText("HDR (path)", hdrPath, IM_ARRAYSIZE(hdrPath));
-        if (ImGui::Button("Carregar HDR")) {
+        if (ImGui::Button("Load HDR")) {
             FiscionX::Core::LoadHDR(hdrPath);
         }
 
@@ -169,14 +169,14 @@ void DrawSettingsPanel() {
     }
 
     // ---------------- SOMBRAS ----------------
-    if (ImGui::CollapsingHeader("Sombras")) {
-        ImGui::Text("Tamanhos definidos via Set3DSettings (read-only aqui):");
+    if (ImGui::CollapsingHeader("Shadows")) {
+        ImGui::Text("Defined using Set3DSettings on setup (read-only):");
         ImGui::Text("Directional: %d  |  Spot: %d  |  Point: %d",
             FiscionX::Core::DIR_SHADOW_SIZE, FiscionX::Core::SPOT_SHADOW_SIZE, FiscionX::Core::POINT_SHADOW_SIZE);
 
         ImGui::DragFloat("Near plane", &FiscionX::Core::NEAR_PLANE, 0.01f, 0.001f, 100.0f);
         ImGui::DragFloat("Far plane", &FiscionX::Core::FAR_PLANE, 1.0f, 1.0f, 10000.0f);
-        ImGui::DragFloat("Raio de visualizacao da sombra", &FiscionX::Core::SHADOW_VIEW_RADIUS, 0.5f, 0.0f, 1000.0f);
+        ImGui::DragFloat("Shadow View Radius", &FiscionX::Core::SHADOW_VIEW_RADIUS, 0.5f, 0.0f, 1000.0f);
 
         ImGui::Text("Cascade levels:");
         for (size_t i = 0; i < FiscionX::Core::shadowCascadeLevels.size(); i++) {
@@ -185,16 +185,16 @@ void DrawSettingsPanel() {
             ImGui::PopID();
         }
 
-        if (ImGui::Button("Recriar todos os shadow maps")) {
+        if (ImGui::Button("Recreate shadow maps")) {
             FiscionX::Core::CreateAllShadowMaps();
         }
     }
 
     // ---------------- SOL / GOD RAYS ----------------
-    if (ImGui::CollapsingHeader("Sol e God Rays")) {
-        ImGui::DragFloat("Tamanho do disco solar", &FiscionX::Core::sunDiskSize, 0.001f, 0.0f, 1.0f);
-        ImGui::DragFloat("Tamanho do halo solar", &FiscionX::Core::sunHaloSize, 0.001f, 0.0f, 1.0f);
-        ImGui::ColorEdit3("Cor do sol", &FiscionX::Core::sunColor.x);
+    if (ImGui::CollapsingHeader("Sun e God Rays")) {
+        ImGui::DragFloat("Sun Disk Size", &FiscionX::Core::sunDiskSize, 0.001f, 0.0f, 1.0f);
+        ImGui::DragFloat("Sun Halo Size", &FiscionX::Core::sunHaloSize, 0.001f, 0.0f, 1.0f);
+        ImGui::ColorEdit3("Sun Color", &FiscionX::Core::sunColor.x);
 
         ImGui::Separator();
         ImGui::DragFloat("God rays density", &FiscionX::Core::godRaysDensity, 0.01f, 0.0f, 5.0f);
@@ -210,15 +210,15 @@ void DrawSettingsPanel() {
     }
 
     // ---------------- MODELOS DA CENA (uma aba por instancia) ----------------
-    if (ImGui::CollapsingHeader("Modelos da cena", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (ImGui::CollapsingHeader("All Models", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Text("Total de modelos: %d", (int)FiscionX::Core::AllModels.size());
-        
+
         for (size_t m = 0; m < FiscionX::Core::AllModels.size(); m++) {
             FiscionX::Model* model = FiscionX::Core::AllModels[m];
             if (!model) continue;
 
             ImGui::PushID((int)m);
-            std::string modelLabel = "Modelo " + std::to_string(m) +
+            std::string modelLabel = "Model " + std::to_string(m) +
                 (model->isSkinned ? " (Skinned)" : " (Static)") +
                 " - " + std::to_string(model->instances.size()) + " instancia(s)";
 
@@ -235,27 +235,27 @@ void DrawSettingsPanel() {
                             ImGui::PushID((int)i);
                             if (ImGui::BeginTabItem(tabLabel.c_str())) {
 
-                                ImGui::Checkbox("Visivel", &inst.visible);
+                                ImGui::Checkbox("Visible", &inst.visible);
                                 ImGui::SameLine();
-                                ImGui::Checkbox("Afetada por luz", &inst.isAffectedByLight);
+                                ImGui::Checkbox("Affected by light", &inst.isAffectedByLight);
 
-                                ImGui::DragFloat3("Posicao", &inst.position.x, 0.05f);
-                                ImGui::DragFloat3("Rotacao", &inst.rotation.x, 0.5f);
-                                ImGui::DragFloat3("Escala", &inst.scale.x, 0.01f, 0.0001f, 1000.0f);
+                                ImGui::DragFloat3("Position", &inst.position.x, 0.05f);
+                                ImGui::DragFloat3("Rotation", &inst.rotation.x, 0.5f);
+                                ImGui::DragFloat3("Scale", &inst.scale.x, 0.01f, 0.0001f, 1000.0f);
                                 ImGui::DragFloat("Alpha", &inst.alpha, 0.01f, 0.0f, 1.0f);
 
                                 ImGui::Separator();
-                                ImGui::Checkbox("Projeta sombras", &inst.castsShadows);
+                                ImGui::Checkbox("Cast Shadows", &inst.castsShadows);
                                 ImGui::SameLine();
-                                ImGui::Checkbox("Recebe sombras", &inst.acceptsShadows);
-                                ImGui::Checkbox("Frustum culling", &inst.enableFrustumCulling);
+                                ImGui::Checkbox("Accepts Shadows", &inst.acceptsShadows);
+                                ImGui::Checkbox("Enable Frustum culling", &inst.enableFrustumCulling);
 
                                 if (model->isSkinned) {
                                     ImGui::Separator();
-                                    ImGui::Text("Animacao atual: %s",
-                                        inst.currentAnim.name.empty() ? "(nenhuma)" : inst.currentAnim.name.c_str());
-                                    ImGui::Text("Repete: %s | Tempo: %.2f",
-                                        inst.currentAnim.repeat ? "sim" : "nao", inst.currentAnim.time);
+                                    ImGui::Text("Current Animation: %s",
+                                        inst.currentAnim.name.empty() ? "(none)" : inst.currentAnim.name.c_str());
+                                    ImGui::Text("Repeats: %s | Time: %.2f",
+                                        inst.currentAnim.repeat ? "yes" : "no", inst.currentAnim.time);
 
                                     if (!inst.animations.empty()) {
                                         static std::map<std::string, int> selectedAnimIndex;
@@ -267,7 +267,7 @@ void DrawSettingsPanel() {
                                         int& selIdx = selectedAnimIndex[key];
                                         if (selIdx >= (int)animNames.size()) selIdx = 0;
 
-                                        if (ImGui::BeginCombo("Animacoes disponiveis",
+                                        if (ImGui::BeginCombo("Animations",
                                             animNames.empty() ? "" : animNames[selIdx].c_str())) {
                                             for (int a = 0; a < (int)animNames.size(); a++) {
                                                 bool isSelected = (a == selIdx);
@@ -280,9 +280,9 @@ void DrawSettingsPanel() {
                                         }
 
                                         static bool repeatAnim = true;
-                                        ImGui::Checkbox("Repetir", &repeatAnim);
+                                        ImGui::Checkbox("Repeat", &repeatAnim);
                                         ImGui::SameLine();
-                                        if (ImGui::Button("Tocar animacao") && !animNames.empty()) {
+                                        if (ImGui::Button("Play Anim") && !animNames.empty()) {
                                             inst.playAnim(animNames[selIdx], repeatAnim);
                                         }
                                     }
@@ -290,7 +290,7 @@ void DrawSettingsPanel() {
 
                                 if (model->cameraNodeIndex >= 0) {
                                     ImGui::Separator();
-                                    ImGui::Checkbox("Controla a camera (drivesCamera)", &inst.drivesCamera);
+                                    ImGui::Checkbox("Controls Camera (drivesCamera)", &inst.drivesCamera);
                                 }
 
                                 ImGui::EndTabItem();
@@ -301,7 +301,7 @@ void DrawSettingsPanel() {
                     }
                 }
                 else {
-                    ImGui::TextDisabled("Este modelo nao possui instancias.");
+                    ImGui::TextDisabled("This model doesn't have instances.");
                 }
 
                 ImGui::TreePop();
@@ -311,35 +311,35 @@ void DrawSettingsPanel() {
     }
 
     // ---------------- LUZES (se existirem na cena) ----------------
-    if (ImGui::CollapsingHeader("Luzes da cena")) {
-        ImGui::Text("Total de luzes: %d", (int)FiscionX::Core::AllLights.size());
+    if (ImGui::CollapsingHeader("All Lights")) {
+        ImGui::Text("Lights on Scene: %d", (int)FiscionX::Core::AllLights.size());
         for (size_t i = 0; i < FiscionX::Core::AllLights.size(); i++) {
             FiscionX::Light* L = FiscionX::Core::AllLights[i];
             if (!L) continue;
             ImGui::PushID((int)i);
-            std::string label = "Luz " + std::to_string(i) +
+            std::string label = "Light " + std::to_string(i) +
                 (L->type == FiscionX::LIGHT_DIRECTIONAL ? " (Directional)" :
                     L->type == FiscionX::LIGHT_POINT ? " (Point)" : " (Spot)");
             if (ImGui::TreeNode(label.c_str())) {
-                ImGui::DragFloat3("Posicao", &L->position.x, 0.05f);
-                ImGui::DragFloat3("Direcao", &L->direction.x, 0.01f);
+                ImGui::DragFloat3("Position", &L->position.x, 0.05f);
+                ImGui::DragFloat3("Direction", &L->direction.x, 0.01f);
                 ImGui::DragFloat("Yaw", &L->yaw, 0.5f);
                 ImGui::DragFloat("Pitch", &L->pitch, 0.5f);
-                ImGui::ColorEdit3("Cor", &L->color.x);
-                ImGui::DragFloat("Intensidade", &L->intensity, 0.05f, 0.0f, 100.0f);
-                ImGui::DragFloat("Distancia maxima", &L->maxDistance, 0.5f, 0.0f, 2000.0f);
+                ImGui::ColorEdit3("Color", &L->color.x);
+                ImGui::DragFloat("Intensity", &L->intensity, 0.05f, 0.0f, 100.0f);
+                ImGui::DragFloat("Max Distance", &L->maxDistance, 0.5f, 0.0f, 2000.0f);
                 ImGui::DragFloat("Cut off", &L->cutOff, 0.001f, 0.0f, 1.0f);
                 ImGui::DragFloat("Outer cut off", &L->outerCutOff, 0.001f, 0.0f, 1.0f);
                 ImGui::DragFloat("Constant", &L->constant, 0.01f, 0.0f, 5.0f);
                 ImGui::DragFloat("Linear", &L->linear, 0.001f, 0.0f, 1.0f);
                 ImGui::DragFloat("Quadratic", &L->quadratic, 0.001f, 0.0f, 1.0f);
-                ImGui::Checkbox("Tem glow", &L->hasGlow);
+                ImGui::Checkbox("Has glow", &L->hasGlow);
                 if (L->hasGlow) {
-                    ImGui::ColorEdit3("Cor do glow", &L->glowColor.x);
-                    ImGui::DragFloat("Raio do glow", &L->glowRadius, 0.05f, 0.0f, 50.0f);
+                    ImGui::ColorEdit3("Glow Color", &L->glowColor.x);
+                    ImGui::DragFloat("Glow Ray", &L->glowRadius, 0.05f, 0.0f, 50.0f);
                 }
-                ImGui::Checkbox("Sombras ativadas", &L->enableShadows);
-                ImGui::DragFloat("Periodo de atualizacao da sombra (s)", &L->shadowUpdatePeriod, 0.001f, 0.0f, 1.0f);
+                ImGui::Checkbox("Enable Shadows", &L->enableShadows);
+                ImGui::DragFloat("Shadows Update Period", &L->shadowUpdatePeriod, 0.001f, 0.0f, 1.0f);
                 ImGui::TreePop();
             }
             ImGui::PopID();
@@ -347,7 +347,7 @@ void DrawSettingsPanel() {
     }
 
     ImGui::Separator();
-    ImGui::TextDisabled("Pressione F1 para mostrar/esconder este painel.");
+    ImGui::TextDisabled("Press F1 to open/close this panel.");
 
     ImGui::End();
 }
