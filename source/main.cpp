@@ -1,6 +1,9 @@
 ﻿#include "FiscionCore.h"
-//#include <Windows.h>
-//#include <psapi.h>
+
+#include <imgui/imgui.h>
+#include <imgui/backends/imgui_impl_glfw.h>
+#include <imgui/backends/imgui_impl_opengl3.h>
+
 #define PROJECT_VERSION "1.0.0"
 
 FiscionX::Light* dirLight;
@@ -20,19 +23,334 @@ FiscionX::Physics::Vehicle* vehicle;
 FiscionX::UI::Image* img;
 FiscionX::Image3D* img3D;
 
-/*
-void PrintRAMUsage() {
-    PROCESS_MEMORY_COUNTERS_EX pmc;
+bool showSettingsPanel = true;
+bool settingsPanelHasCursor = false;
 
-    if (GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc))) {
+void InitImGui() {
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
-        SIZE_T ramBytes = pmc.WorkingSetSize; // RAM real usada
-        SIZE_T ramMB = ramBytes / (1024 * 1024);
+    ImGui::StyleColorsDark();
 
-        std::cout << "RAM usada: " << ramMB << " MB\n";
-    }
+    ImGui_ImplGlfw_InitForOpenGL(FiscionX::Core::Window, true);
+    ImGui_ImplOpenGL3_Init("#version 330");
 }
-*/
+
+void ShutdownImGui() {
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+}
+
+void DrawSettingsPanel() {
+    if (!showSettingsPanel) return;
+
+    ImGui::SetNextWindowSize(ImVec2(420, 680), ImGuiCond_FirstUseEver);
+    ImGui::Begin("FiscionX :: Core Settings", &showSettingsPanel);
+
+    ImGui::TextDisabled("Project version %s", PROJECT_VERSION);
+    ImGui::Text("FPS: %d", FiscionX::Core::FPS);
+    ImGui::Separator();
+
+    // ---------------- JANELA ----------------
+    if (ImGui::CollapsingHeader("Janela", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Text("Resolucao: %d x %d", FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
+
+        static int newWidth = FiscionX::Core::SCREEN_WIDTH;
+        static int newHeight = FiscionX::Core::SCREEN_HEIGHT;
+        ImGui::InputInt("Largura", &newWidth);
+        ImGui::InputInt("Altura", &newHeight);
+        if (ImGui::Button("Aplicar resolucao")) {
+            FiscionX::Core::SetWindowSize(newWidth, newHeight);
+        }
+
+        static int monitorIndex = 0;
+        ImGui::InputInt("Indice do monitor", &monitorIndex);
+        ImGui::SameLine();
+        if (ImGui::Button("Fullscreen")) {
+            FiscionX::Core::SetWindowFullscreen(true, monitorIndex);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Modo Janela")) {
+            FiscionX::Core::SetWindowFullscreen(false, monitorIndex);
+        }
+
+        static char iconPath[256] = "assets/icons/fiscionx_logo_big_512.png";
+        ImGui::InputText("Icone (path)", iconPath, IM_ARRAYSIZE(iconPath));
+        ImGui::SameLine();
+        if (ImGui::Button("Definir icone")) {
+            FiscionX::Core::SetWindowIcon(iconPath);
+        }
+    }
+
+    // ---------------- CURSOR / INPUT ----------------
+    if (ImGui::CollapsingHeader("Cursor")) {
+        static int cursorMode = 0; // 0 normal, 1 hidden, 2 disabled, 3 captured, 4 locked
+        const char* cursorLabels[] = { "Normal", "Hidden", "Disabled", "Captured", "Locked" };
+        const int cursorValues[] = {
+            FISCIONX_CURSOR_NORMAL, FISCIONX_CURSOR_HIDDEN, FISCIONX_CURSOR_DISABLED,
+            FISCIONX_CURSOR_CAPTURED, FISCIONX_CURSOR_LOCKED
+        };
+        if (ImGui::Combo("Modo do cursor", &cursorMode, cursorLabels, IM_ARRAYSIZE(cursorLabels))) {
+            FiscionX::Core::SetCursorMode(cursorValues[cursorMode]);
+        }
+    }
+
+    // ---------------- CACHE ----------------
+    if (ImGui::CollapsingHeader("Cache")) {
+        static bool shaderCache = FiscionX::Core::enableShaderCache;
+        static bool modelCache = FiscionX::Core::enableModelCache;
+        bool changed = false;
+        changed |= ImGui::Checkbox("Shader cache", &shaderCache);
+        changed |= ImGui::Checkbox("Model cache", &modelCache);
+        if (changed) {
+            FiscionX::Core::SetCacheSettings(shaderCache, modelCache);
+        }
+        ImGui::Checkbox("Comprimir texturas automaticamente", &FiscionX::Core::compressTexturesAutomatically);
+    }
+
+    // ---------------- CAMERA ----------------
+    if (ImGui::CollapsingHeader("Camera")) {
+        ImGui::DragFloat3("Posicao", &FiscionX::Core::Camera.position.x, 0.05f);
+        ImGui::DragFloat3("Front", &FiscionX::Core::Camera.front.x, 0.01f, -1.0f, 1.0f);
+        ImGui::DragFloat("Yaw", &FiscionX::Core::Camera.yaw, 0.5f);
+        ImGui::DragFloat("Pitch", &FiscionX::Core::Camera.pitch, 0.5f, -89.0f, 89.0f);
+        ImGui::DragFloat("Velocidade", &FiscionX::Core::Camera.speed, 0.05f, 0.0f, 100.0f);
+        ImGui::DragFloat("Sensibilidade", &FiscionX::Core::Camera.sensitivity, 0.01f, 0.0f, 5.0f);
+        ImGui::DragFloat("FOV", &FiscionX::Core::Camera.fov, 0.5f, 1.0f, 179.0f);
+        ImGui::Checkbox("Pode olhar (canLook)", &FiscionX::Core::Camera.canLook);
+    }
+
+    // ---------------- SSAO ----------------
+    if (ImGui::CollapsingHeader("SSAO")) {
+        ImGui::Checkbox("SSAO ativado", &FiscionX::Core::SSAO_ENABLED);
+        ImGui::BeginDisabled(!FiscionX::Core::SSAO_ENABLED);
+        ImGui::DragFloat("Raio", &FiscionX::Core::SSAO_RADIUS, 0.01f, 0.0f, 5.0f);
+        ImGui::DragFloat("Bias", &FiscionX::Core::SSAO_BIAS, 0.001f, 0.0f, 1.0f);
+        ImGui::DragFloat("Intensidade", &FiscionX::Core::SSAO_INTENSITY, 0.01f, 0.0f, 10.0f);
+        ImGui::DragFloat("Forca GI", &FiscionX::Core::SSAO_GI_STRENGTH, 0.01f, 0.0f, 5.0f);
+        ImGui::EndDisabled();
+    }
+
+    // ---------------- SSR ----------------
+    if (ImGui::CollapsingHeader("SSR (Screen Space Reflections)")) {
+        ImGui::Checkbox("SSR ativado", &FiscionX::Core::SSR_ENABLED);
+        ImGui::BeginDisabled(!FiscionX::Core::SSR_ENABLED);
+        ImGui::DragFloat("Distancia maxima", &FiscionX::Core::SSR_MAX_DISTANCE, 0.5f, 0.0f, 500.0f);
+        ImGui::DragFloat("Espessura (thickness)", &FiscionX::Core::SSR_THICKNESS, 0.01f, 0.0f, 20.0f);
+        ImGui::SliderInt("Max steps", &FiscionX::Core::SSR_MAX_STEPS, 1, 256);
+        ImGui::SliderInt("Binary steps", &FiscionX::Core::SSR_BINARY_STEPS, 0, 16);
+        ImGui::DragFloat("Fade na borda da tela", &FiscionX::Core::SSR_FADE_SCREEN_EDGE, 0.01f, 0.0f, 1.0f);
+        ImGui::DragFloat("Stride", &FiscionX::Core::SSR_STRIDE, 0.01f, 0.0f, 10.0f);
+        ImGui::DragFloat("Raio max. de blur (px)", &FiscionX::Core::SSR_MAX_BLUR_RADIUS, 0.1f, 0.0f, 64.0f);
+        ImGui::EndDisabled();
+    }
+
+    // ---------------- IBL / HDR ----------------
+    if (ImGui::CollapsingHeader("IBL / HDR")) {
+        ImGui::Text("IBL pronto: %s", FiscionX::Core::iblReady ? "sim" : "nao");
+        ImGui::DragFloat("Exposicao HDR", &FiscionX::Core::HDR_EXPOSURE, 0.01f, 0.0f, 10.0f);
+        ImGui::DragFloat("Escala HDR do IBL", &FiscionX::Core::IBL_HDR_SCALE, 0.001f, 0.0f, 2.0f);
+        ImGui::TextWrapped("Obs: a escala do IBL so tem efeito no proximo LoadHDR().");
+
+        static char hdrPath[256] = "assets/environment/gardens.hdr";
+        ImGui::InputText("HDR (path)", hdrPath, IM_ARRAYSIZE(hdrPath));
+        if (ImGui::Button("Carregar HDR")) {
+            FiscionX::Core::LoadHDR(hdrPath);
+        }
+
+        ImGui::Separator();
+        ImGui::DragFloat("Reflections strength", &FiscionX::Core::REFLECTIONS_STRENGTH, 0.01f, 0.0f, 5.0f);
+        ImGui::DragFloat("Ambient intensity", &FiscionX::Core::AMBIENT_LIGHT_INTENSITY, 0.01f, 0.0f, 5.0f);
+        ImGui::ColorEdit3("Ambient sky color", &FiscionX::Core::AMBIENT_LIGHT_SKYCOLOR.x);
+        ImGui::ColorEdit3("Ambient ground color", &FiscionX::Core::AMBIENT_LIGHT_GROUNDCOLOR.x);
+    }
+
+    // ---------------- SOMBRAS ----------------
+    if (ImGui::CollapsingHeader("Sombras")) {
+        ImGui::Text("Tamanhos definidos via Set3DSettings (read-only aqui):");
+        ImGui::Text("Directional: %d  |  Spot: %d  |  Point: %d",
+            FiscionX::Core::DIR_SHADOW_SIZE, FiscionX::Core::SPOT_SHADOW_SIZE, FiscionX::Core::POINT_SHADOW_SIZE);
+
+        ImGui::DragFloat("Near plane", &FiscionX::Core::NEAR_PLANE, 0.01f, 0.001f, 100.0f);
+        ImGui::DragFloat("Far plane", &FiscionX::Core::FAR_PLANE, 1.0f, 1.0f, 10000.0f);
+        ImGui::DragFloat("Raio de visualizacao da sombra", &FiscionX::Core::SHADOW_VIEW_RADIUS, 0.5f, 0.0f, 1000.0f);
+
+        ImGui::Text("Cascade levels:");
+        for (size_t i = 0; i < FiscionX::Core::shadowCascadeLevels.size(); i++) {
+            ImGui::PushID((int)i);
+            ImGui::DragFloat("##cascade", &FiscionX::Core::shadowCascadeLevels[i], 0.5f, 0.0f, 2000.0f);
+            ImGui::PopID();
+        }
+
+        if (ImGui::Button("Recriar todos os shadow maps")) {
+            FiscionX::Core::CreateAllShadowMaps();
+        }
+    }
+
+    // ---------------- SOL / GOD RAYS ----------------
+    if (ImGui::CollapsingHeader("Sol e God Rays")) {
+        ImGui::DragFloat("Tamanho do disco solar", &FiscionX::Core::sunDiskSize, 0.001f, 0.0f, 1.0f);
+        ImGui::DragFloat("Tamanho do halo solar", &FiscionX::Core::sunHaloSize, 0.001f, 0.0f, 1.0f);
+        ImGui::ColorEdit3("Cor do sol", &FiscionX::Core::sunColor.x);
+
+        ImGui::Separator();
+        ImGui::DragFloat("God rays density", &FiscionX::Core::godRaysDensity, 0.01f, 0.0f, 5.0f);
+        ImGui::DragFloat("God rays weight", &FiscionX::Core::godRaysWeight, 0.01f, 0.0f, 5.0f);
+        ImGui::DragFloat("God rays decay", &FiscionX::Core::godRaysDecay, 0.001f, 0.0f, 1.0f);
+        ImGui::DragFloat("God rays exposure", &FiscionX::Core::godRaysExposure, 0.01f, 0.0f, 5.0f);
+        ImGui::SliderInt("God rays samples", &FiscionX::Core::godRaysNumOfSamples, 1, 256);
+    }
+
+    // ---------------- COLOR CORRECTION ----------------
+    if (ImGui::CollapsingHeader("Color Correction")) {
+        ImGui::ColorEdit3("Color correction", &FiscionX::Core::colorCorrection.x);
+    }
+
+    // ---------------- MODELOS DA CENA (uma aba por instancia) ----------------
+    if (ImGui::CollapsingHeader("Modelos da cena", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Text("Total de modelos: %d", (int)FiscionX::Core::AllModels.size());
+        
+        for (size_t m = 0; m < FiscionX::Core::AllModels.size(); m++) {
+            FiscionX::Model* model = FiscionX::Core::AllModels[m];
+            if (!model) continue;
+
+            ImGui::PushID((int)m);
+            std::string modelLabel = "Modelo " + std::to_string(m) +
+                (model->isSkinned ? " (Skinned)" : " (Static)") +
+                " - " + std::to_string(model->instances.size()) + " instancia(s)";
+
+            if (ImGui::TreeNodeEx(modelLabel.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::DragFloat("Alpha do modelo", &model->alpha, 0.01f, 0.0f, 1.0f);
+
+                if (!model->instances.empty()) {
+                    std::string tabBarId = "InstanceTabs_" + std::to_string(m);
+                    if (ImGui::BeginTabBar(tabBarId.c_str(), ImGuiTabBarFlags_FittingPolicyScroll)) {
+                        for (size_t i = 0; i < model->instances.size(); i++) {
+                            FiscionX::Model::Instance& inst = model->instances[i];
+                            std::string tabLabel = "Instancia " + std::to_string(i);
+
+                            ImGui::PushID((int)i);
+                            if (ImGui::BeginTabItem(tabLabel.c_str())) {
+
+                                ImGui::Checkbox("Visivel", &inst.visible);
+                                ImGui::SameLine();
+                                ImGui::Checkbox("Afetada por luz", &inst.isAffectedByLight);
+
+                                ImGui::DragFloat3("Posicao", &inst.position.x, 0.05f);
+                                ImGui::DragFloat3("Rotacao", &inst.rotation.x, 0.5f);
+                                ImGui::DragFloat3("Escala", &inst.scale.x, 0.01f, 0.0001f, 1000.0f);
+                                ImGui::DragFloat("Alpha", &inst.alpha, 0.01f, 0.0f, 1.0f);
+
+                                ImGui::Separator();
+                                ImGui::Checkbox("Projeta sombras", &inst.castsShadows);
+                                ImGui::SameLine();
+                                ImGui::Checkbox("Recebe sombras", &inst.acceptsShadows);
+                                ImGui::Checkbox("Frustum culling", &inst.enableFrustumCulling);
+
+                                if (model->isSkinned) {
+                                    ImGui::Separator();
+                                    ImGui::Text("Animacao atual: %s",
+                                        inst.currentAnim.name.empty() ? "(nenhuma)" : inst.currentAnim.name.c_str());
+                                    ImGui::Text("Repete: %s | Tempo: %.2f",
+                                        inst.currentAnim.repeat ? "sim" : "nao", inst.currentAnim.time);
+
+                                    if (!inst.animations.empty()) {
+                                        static std::map<std::string, int> selectedAnimIndex;
+                                        std::string key = std::to_string(m) + "_" + std::to_string(i);
+
+                                        std::vector<std::string> animNames;
+                                        for (auto& kv : inst.animations) animNames.push_back(kv.first);
+
+                                        int& selIdx = selectedAnimIndex[key];
+                                        if (selIdx >= (int)animNames.size()) selIdx = 0;
+
+                                        if (ImGui::BeginCombo("Animacoes disponiveis",
+                                            animNames.empty() ? "" : animNames[selIdx].c_str())) {
+                                            for (int a = 0; a < (int)animNames.size(); a++) {
+                                                bool isSelected = (a == selIdx);
+                                                if (ImGui::Selectable(animNames[a].c_str(), isSelected)) {
+                                                    selIdx = a;
+                                                }
+                                                if (isSelected) ImGui::SetItemDefaultFocus();
+                                            }
+                                            ImGui::EndCombo();
+                                        }
+
+                                        static bool repeatAnim = true;
+                                        ImGui::Checkbox("Repetir", &repeatAnim);
+                                        ImGui::SameLine();
+                                        if (ImGui::Button("Tocar animacao") && !animNames.empty()) {
+                                            inst.playAnim(animNames[selIdx], repeatAnim);
+                                        }
+                                    }
+                                }
+
+                                if (model->cameraNodeIndex >= 0) {
+                                    ImGui::Separator();
+                                    ImGui::Checkbox("Controla a camera (drivesCamera)", &inst.drivesCamera);
+                                }
+
+                                ImGui::EndTabItem();
+                            }
+                            ImGui::PopID();
+                        }
+                        ImGui::EndTabBar();
+                    }
+                }
+                else {
+                    ImGui::TextDisabled("Este modelo nao possui instancias.");
+                }
+
+                ImGui::TreePop();
+            }
+            ImGui::PopID();
+        }
+    }
+
+    // ---------------- LUZES (se existirem na cena) ----------------
+    if (ImGui::CollapsingHeader("Luzes da cena")) {
+        ImGui::Text("Total de luzes: %d", (int)FiscionX::Core::AllLights.size());
+        for (size_t i = 0; i < FiscionX::Core::AllLights.size(); i++) {
+            FiscionX::Light* L = FiscionX::Core::AllLights[i];
+            if (!L) continue;
+            ImGui::PushID((int)i);
+            std::string label = "Luz " + std::to_string(i) +
+                (L->type == FiscionX::LIGHT_DIRECTIONAL ? " (Directional)" :
+                    L->type == FiscionX::LIGHT_POINT ? " (Point)" : " (Spot)");
+            if (ImGui::TreeNode(label.c_str())) {
+                ImGui::DragFloat3("Posicao", &L->position.x, 0.05f);
+                ImGui::DragFloat3("Direcao", &L->direction.x, 0.01f);
+                ImGui::DragFloat("Yaw", &L->yaw, 0.5f);
+                ImGui::DragFloat("Pitch", &L->pitch, 0.5f);
+                ImGui::ColorEdit3("Cor", &L->color.x);
+                ImGui::DragFloat("Intensidade", &L->intensity, 0.05f, 0.0f, 100.0f);
+                ImGui::DragFloat("Distancia maxima", &L->maxDistance, 0.5f, 0.0f, 2000.0f);
+                ImGui::DragFloat("Cut off", &L->cutOff, 0.001f, 0.0f, 1.0f);
+                ImGui::DragFloat("Outer cut off", &L->outerCutOff, 0.001f, 0.0f, 1.0f);
+                ImGui::DragFloat("Constant", &L->constant, 0.01f, 0.0f, 5.0f);
+                ImGui::DragFloat("Linear", &L->linear, 0.001f, 0.0f, 1.0f);
+                ImGui::DragFloat("Quadratic", &L->quadratic, 0.001f, 0.0f, 1.0f);
+                ImGui::Checkbox("Tem glow", &L->hasGlow);
+                if (L->hasGlow) {
+                    ImGui::ColorEdit3("Cor do glow", &L->glowColor.x);
+                    ImGui::DragFloat("Raio do glow", &L->glowRadius, 0.05f, 0.0f, 50.0f);
+                }
+                ImGui::Checkbox("Sombras ativadas", &L->enableShadows);
+                ImGui::DragFloat("Periodo de atualizacao da sombra (s)", &L->shadowUpdatePeriod, 0.001f, 0.0f, 1.0f);
+                ImGui::TreePop();
+            }
+            ImGui::PopID();
+        }
+    }
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Pressione F1 para mostrar/esconder este painel.");
+
+    ImGui::End();
+}
 
 void update() {
     FiscionX::Core::ClockTick();
@@ -46,80 +364,89 @@ void update() {
     }
 
     FiscionX::Physics::DynamicWorld->stepSimulation(FiscionX::Core::deltaTime, 10);
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_I)) {
-        vehicle->applyEngineForce(800, 0);
-        vehicle->applyEngineForce(800, 1);
 
-        dirLight->direction.y += 0.01f;
+    // Toggle do painel de configuracoes
+    static bool f1WasPressed = false;
+    bool f1IsPressed = FiscionX::Input::GetKeyPressed(FISCIONX_KEY_F1);
+    if (f1IsPressed && !f1WasPressed) {
+        showSettingsPanel = !showSettingsPanel;
     }
-    else {
-        vehicle->setBrake(2, 0);
-        vehicle->setBrake(2, 1);
-        vehicle->applyEngineForce(0, 0);
-        vehicle->applyEngineForce(0, 1);
-    }
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_K)) {
-        vehicle->setBrake(10, 0);
-        vehicle->setBrake(10, 1);
-        vehicle->applyEngineForce(-1000, 0);
-        vehicle->applyEngineForce(-1000, 1);
-        dirLight->direction.y -= 0.01f;
-    }
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_J)) {
-        vehicle->setSteeringValue(0.5f, 0);
-        vehicle->setSteeringValue(0.5f, 1);
-        dirLight->direction.x -= 0.01f;
-    }
-    else if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_L)) {
-        vehicle->setSteeringValue(-0.4f, 0);
-        vehicle->setSteeringValue(-0.4f, 1);
-        dirLight->direction.x += 0.01f;
-    }
-    else {
-        vehicle->setSteeringValue(0, 0);
-        vehicle->setSteeringValue(0, 1);
-    }
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_T)) {
-        FiscionX::Core::LoadHDR("assets/environment/parkinglot.hdr");
-        carChassiBody->setTransform(FiscionX::Vector3(3, 10, -4), FiscionX::Vector3(0, 0, 0));
+    f1WasPressed = f1IsPressed;
+
+    ImGuiIO& io = ImGui::GetIO();
+    bool wantsCursor = showSettingsPanel;
+    if (wantsCursor != settingsPanelHasCursor) {
+        settingsPanelHasCursor = wantsCursor;
+        FiscionX::Core::SetCursorMode(wantsCursor ? FISCIONX_CURSOR_NORMAL : FISCIONX_CURSOR_DISABLED);
     }
 
-    //FiscionX::Vector3 d = FiscionX::Math::lookAt3D(kratosStaticModel->position, FiscionX::Core::Camera.position - FiscionX::Vector3(0.0f, 1.0f, 0.0f));
-    //FiscionX::Vector3 eu = FiscionX::Math::toEulerAngles(d, FiscionX::Vector2(1.0f, 1.0f));
-    //kratosStaticModel->rotation = eu;
+    if (!io.WantCaptureKeyboard) {
+        if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_I)) {
+            vehicle->applyEngineForce(800, 0);
+            vehicle->applyEngineForce(800, 1);
+            dirLight->direction.y += 0.01f;
+        }
+        else {
+            vehicle->setBrake(2, 0);
+            vehicle->setBrake(2, 1);
+            vehicle->applyEngineForce(0, 0);
+            vehicle->applyEngineForce(0, 1);
+        }
+        if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_K)) {
+            vehicle->setBrake(10, 0);
+            vehicle->setBrake(10, 1);
+            vehicle->applyEngineForce(-1000, 0);
+            vehicle->applyEngineForce(-1000, 1);
+            dirLight->direction.y -= 0.01f;
+        }
+        if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_J)) {
+            vehicle->setSteeringValue(0.5f, 0);
+            vehicle->setSteeringValue(0.5f, 1);
+            dirLight->direction.x -= 0.01f;
+        }
+        else if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_L)) {
+            vehicle->setSteeringValue(-0.4f, 0);
+            vehicle->setSteeringValue(-0.4f, 1);
+            dirLight->direction.x += 0.01f;
+        }
+        else {
+            vehicle->setSteeringValue(0, 0);
+            vehicle->setSteeringValue(0, 1);
+        }
+        if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_T)) {
+            FiscionX::Core::LoadHDR("assets/environment/parkinglot.hdr");
+            carChassiBody->setTransform(FiscionX::Vector3(3, 10, -4), FiscionX::Vector3(0, 0, 0));
+        }
 
-    // CAPSULE & KRATOS
-    capsuleBody->activate();
-    //kratosStaticModel->syncTransformWithBody(capsuleBody, FiscionX::Vector3(0, -1.25f, 0), FiscionX::Vector3(0, 0, 0));
+        capsuleBody->activate();
 
-    // CAMERA
-    float camVel = FiscionX::Core::Camera.speed * FiscionX::Core::deltaTime;
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_W)) FiscionX::Core::Camera.position += FiscionX::Core::Camera.front * camVel;
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_S)) FiscionX::Core::Camera.position -= FiscionX::Core::Camera.front * camVel;
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_A)) FiscionX::Core::Camera.position -= FiscionX::Core::Camera.right * camVel;
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_D)) FiscionX::Core::Camera.position += FiscionX::Core::Camera.right * camVel;
+        float camVel = FiscionX::Core::Camera.speed * FiscionX::Core::deltaTime;
+        if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_W)) FiscionX::Core::Camera.position += FiscionX::Core::Camera.front * camVel;
+        if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_S)) FiscionX::Core::Camera.position -= FiscionX::Core::Camera.front * camVel;
+        if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_A)) FiscionX::Core::Camera.position -= FiscionX::Core::Camera.right * camVel;
+        if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_D)) FiscionX::Core::Camera.position += FiscionX::Core::Camera.right * camVel;
 
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_I)) dirLight->yaw += 0.04f;
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_K)) dirLight->yaw -= 0.04f;
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_J)) dirLight->pitch += 0.04f;
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_L)) dirLight->pitch -= 0.04f;
-    if (boxModel) {
-        if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_M)) {
-            boxModel->instances.empty();
-            boxModel->unload();
+        if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_I)) dirLight->yaw += 0.04f;
+        if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_K)) dirLight->yaw -= 0.04f;
+        if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_J)) dirLight->pitch += 0.04f;
+        if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_L)) dirLight->pitch -= 0.04f;
+
+        if (boxModel) {
+            if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_M)) {
+                boxModel->instances.empty();
+                boxModel->unload();
+            }
+        }
+        if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_ESCAPE)) FiscionX::Core::Terminate();
+        if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_Z)) {
+            skinnedModel->instances[0].playAnim("CameraAction", false);
+        }
+
+        if (skinnedModel) {
+            if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_SPACE)) skinnedModel->instances[0].position.y += 0.004f;
+            if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_B)) skinnedModel->instances[0].position.z += 0.004f;
         }
     }
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_ESCAPE)) FiscionX::Core::Terminate();
-    if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_Z)) {
-        skinnedModel->instances[0].playAnim("CameraAction", false);
-    }
-
-    if (skinnedModel) {
-        if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_SPACE)) skinnedModel->instances[0].position.y += 0.004f;
-        if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_B)) skinnedModel->instances[0].position.z += 0.004f;
-    }
-
-    //std::cout << FiscionX::Core::Camera.position.x << "  " << FiscionX::Core::Camera.position.y << "  " << FiscionX::Core::Camera.position.z << "\n";
 }
 
 void draw() {
@@ -153,12 +480,19 @@ void draw() {
 
     FiscionX::Core::Draw::PostProcessing(viewProj, dirLight); // No godray; Add Bloom
 
-    // Transparentes DEPOIS do composite: o SSAO já foi aplicado no FB 0,
-    // as malhas BLEND são desenhadas por cima sem serem escurecidas pelo AO.
     FiscionX::Core::DrawTransparentPass(view, projection);
-    //FiscionX::Physics::DrawDebugWorld(projection, view);
 
     img->draw(FiscionX::Vector2(300, 200));
+
+    // === ImGui: desenhado por cima de tudo, antes do SwapBuffers ===
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+
+    DrawSettingsPanel();
+
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
     FiscionX::Core::Draw::SwapBuffers();
 }
@@ -167,11 +501,13 @@ int main() {
     FiscionX::Core::Set3DSettings(3048, 1024, 512, { 15.0f, 70.0f, 150.0f }, 0.01f, 1000.0f, true);
     FiscionX::Core::SetCacheSettings(true, true);
     FiscionX::Core::NewWindow(1280, 720, "FiscionX");
-    //FiscionX::Core::SetWindowFullscreen(true, 0);
     FiscionX::Core::SetWindowIcon("assets/icons/fiscionx_logo_big_512.png");
     FiscionX::Core::SetCursorMode(FISCIONX_CURSOR_DISABLED);
     FiscionX::Physics::CreatePhysicsWorld(FiscionX::Vector3(0, -9.81f, 0), 10);
     FiscionX::Core::LoadHDR("assets/environment/gardens.hdr");
+
+    // ImGui precisa ser inicializado DEPOIS de NewWindow (contexto OpenGL/GLFW já existe)
+    InitImGui();
 
     FiscionX::Core::AMBIENT_LIGHT_INTENSITY = 0.4f;
     FiscionX::Core::HDR_EXPOSURE = 1.0f;
@@ -186,10 +522,10 @@ int main() {
     FiscionX::Core::SSR_MAX_BLUR_RADIUS = 10.0f;
 
     FiscionX::Core::SSAO_ENABLED = true;
-    FiscionX::Core::SSAO_RADIUS = 0.5f;             // raio de amostragem, em unidades de view-space (metros)
-    FiscionX::Core::SSAO_BIAS = 0.025f;             // bias contra acne/self-occlusion
-    FiscionX::Core::SSAO_INTENSITY = 1.5f;          // multiplicador de força da oclusão
-    FiscionX::Core::SSAO_GI_STRENGTH = 0.6f;        // contribuição de GI aproximado embutida no mesmo passe
+    FiscionX::Core::SSAO_RADIUS = 0.5f;
+    FiscionX::Core::SSAO_BIAS = 0.025f;
+    FiscionX::Core::SSAO_INTENSITY = 1.5f;
+    FiscionX::Core::SSAO_GI_STRENGTH = 0.6f;
 
     dirLight = new FiscionX::Light();
     dirLight->type = FiscionX::LIGHT_DIRECTIONAL;
@@ -206,26 +542,7 @@ int main() {
     dirLight->hasGlow = false;
     dirLight->enableShadows = true;
 
-    /*
-    spotLight = new FiscionX::Light();
-    spotLight->type = FiscionX::LIGHT_SPOT;
-    spotLight->position = FiscionX::Vector3(0.0f, 1.0f, -4.0f);
-    spotLight->direction = FiscionX::Vector3(0.0f, 0.0f, 0.0f);
-    spotLight->color = FiscionX::Vector3(1.0f, 0.0f, 0.0f);
-    spotLight->intensity = 15.0f;
-    spotLight->maxDistance = 30.0f;
-    spotLight->cutOff = FiscionX::Math::cos(FiscionX::Math::radians(25.0f));
-    spotLight->outerCutOff = FiscionX::Math::cos(FiscionX::Math::radians(30.0f));
-    spotLight->constant = 1.0f;
-    spotLight->linear = 0.09f;
-    spotLight->quadratic = 0.032f;
-    spotLight->hasGlow = true;
-    spotLight->enableShadows = true;
-    */
-
     FiscionX::Core::CreateAllShadowMaps();
-
-    // CONFIGURATIONS FOR SSAO; Alpha extracted from image; Shape Keys Animations; Displacement Map & SPOM; Emission Textures; Lights extracted from glb; Anim Blending; Draw halo and glow also for point lights and spot lights; Point lights are traversing walls/solid objects (Criação da textura está errada, computar está errado, renderizar está errado); Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Water
 
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb"
@@ -249,7 +566,7 @@ int main() {
         FiscionX::Vector3(2.1f, 2.1f, 2.1f)
     );
     boxModel = new FiscionX::Model(
-        "assets/models/seoul2.glb" // factory2 / tree_scene2 / seoul2
+        "assets/models/tree_scene2.glb"
     );
     boxModel->addInstance(
         FiscionX::Vector3(0, 0.09f, 4.2f),
@@ -257,33 +574,33 @@ int main() {
         FiscionX::Vector3(0.5f, 0.5f, 0.5f)
     );
     skinnedModel = new FiscionX::Model(
-        "assets/models/camel.glb" // camel.glb / camera_test_anim.glb
+        "assets/models/camel.glb"
     );
     skinnedModel->addInstance(
-        FiscionX::Vector3(0.0f, 0.0f, 3.0f), // 0.0f, 0.0f, 3.0f / 0.0f, 0.0f, 0.0f
-        FiscionX::Vector3(0, 0, 0), // 1, 0, 0 / 0, 0, 0
-        FiscionX::Vector3(1.0f, 1.0f, 1.0f) // 1.0f, 1.0f, 1.0f / 0.6f, 0.6f, 0.6f
+        FiscionX::Vector3(0.0f, 0.0f, 3.0f),
+        FiscionX::Vector3(0, 0, 0),
+        FiscionX::Vector3(1.0f, 1.0f, 1.0f)
     );
     skinnedModel->addInstance(
-        FiscionX::Vector3(0.0f, 3.0f, 3.0f), // 0.0f, 0.0f, 3.0f / 0.0f, 0.0f, 0.0f
-        FiscionX::Vector3(1.5f, 0, 0), // 1, 0, 0 / 0, 0, 0
-        FiscionX::Vector3(1.0f, 1.0f, 1.0f) // 1.0f, 1.0f, 1.0f / 0.6f, 0.6f, 0.6f
+        FiscionX::Vector3(0.0f, 3.0f, 3.0f),
+        FiscionX::Vector3(1.5f, 0, 0),
+        FiscionX::Vector3(1.0f, 1.0f, 1.0f)
     );
 
-    skinnedModel->instances[0].playAnim("Armature|Idle_01", true); // Armature|Idle_01 / CameraAction
-    skinnedModel->instances[1].playAnim("Armature|WalkCycle", true); // Armature|Idle_01 / CameraAction
+    skinnedModel->instances[0].playAnim("Armature|Idle_01", true);
+    skinnedModel->instances[1].playAnim("Armature|WalkCycle", true);
 
-    staticModel->buildLODs({ 0.5f, 0.25f, 0.1f }); // gera 3 LODs
-    staticModel->lodDistances = { 10.0f, 40.0f, 250.0f }; // distâncias de transição
+    staticModel->buildLODs({ 0.5f, 0.25f, 0.1f });
+    staticModel->lodDistances = { 10.0f, 40.0f, 250.0f };
 
-    kratosStaticModel->buildLODs({ 0.5f, 0.25f, 0.1f }); // gera 3 LODs
-    kratosStaticModel->lodDistances = { 10.0f, 40.0f, 250.0f }; // distâncias de transição
+    kratosStaticModel->buildLODs({ 0.5f, 0.25f, 0.1f });
+    kratosStaticModel->lodDistances = { 10.0f, 40.0f, 250.0f };
 
-    skinnedModel->buildLODs({ 0.5f, 0.25f, 0.1f }); // gera 3 LODs
-    skinnedModel->lodDistances = { 10.0f, 40.0f, 80.0f }; // distâncias de transição
+    skinnedModel->buildLODs({ 0.5f, 0.25f, 0.1f });
+    skinnedModel->lodDistances = { 10.0f, 40.0f, 80.0f };
 
-    boxModel->buildLODs({ 0.5f, 0.25f, 0.1f }); // gera 3 LODs
-    boxModel->lodDistances = { 10.0f, 40.0f, 80.0f }; // distâncias de transição
+    boxModel->buildLODs({ 0.5f, 0.25f, 0.1f });
+    boxModel->lodDistances = { 10.0f, 40.0f, 80.0f };
 
     img = new FiscionX::UI::Image("assets/images/didi.png");
 
@@ -335,7 +652,7 @@ int main() {
         suspensionRestLength, wheelRadius, true); // front left
 
     vehicle->addWheel(FiscionX::Vector3(-1.0, 0.00f, 1.5), wheelDirectionCS0, wheelAxleCS,
-        suspensionRestLength, wheelRadius, true); // frontt right
+        suspensionRestLength, wheelRadius, true); // front right
 
     vehicle->addWheel(FiscionX::Vector3(1.0, 0.00f, -1.5), wheelDirectionCS0, wheelAxleCS,
         suspensionRestLength, wheelRadius, false); // back left
@@ -348,40 +665,24 @@ int main() {
     for (int i = 0; i < vehicle->getNumWheels(); ++i) {
         FiscionX::Physics::Vehicle::WheelInfo& wheel = vehicle->getWheelInfo(i);
 
-        wheel.info->m_suspensionStiffness = 30.0f;             // holds well the weight
-        wheel.info->m_wheelsDampingCompression = 2.0f;         // absorves impacts
-        wheel.info->m_wheelsDampingRelaxation = 3.5f;          // relaxes smoothly
+        wheel.info->m_suspensionStiffness = 30.0f;
+        wheel.info->m_wheelsDampingCompression = 2.0f;
+        wheel.info->m_wheelsDampingRelaxation = 3.5f;
 
-        wheel.info->m_maxSuspensionTravelCm = 500.0f;          // vertical spacement for the wheel to move
-        wheel.info->m_maxSuspensionForce = 20000.0f;           // max suspension force
+        wheel.info->m_maxSuspensionTravelCm = 500.0f;
+        wheel.info->m_maxSuspensionForce = 20000.0f;
 
-        wheel.info->m_frictionSlip = 1500.0f;                  // great traction
-        wheel.info->m_rollInfluence = 0.1f;                    // great grip on the ground
-        wheel.info->m_bIsFrontWheel = (i < 2);                 // front
+        wheel.info->m_frictionSlip = 1500.0f;
+        wheel.info->m_rollInfluence = 0.1f;
+        wheel.info->m_bIsFrontWheel = (i < 2);
     }
-
-    // JOINTS
-    /*FiscionX::Physics::Joint j;
-    j.type = FiscionX::Physics::JointType::CONETWIST;
-    j.bodyA = carChassiBody->body;
-    j.bodyB = capsuleBody->body;
-
-    j.frameA.setOrigin(btVector3(0.0, 0.5, 0));
-    j.frameB.setOrigin(btVector3(0, -0.75, 0));
-
-    j.collideConnected = false;
-
-    j.swing1 = SIMD_PI * 0.7f;
-    j.swing2 = SIMD_PI * 0.7f;
-    j.twist = SIMD_PI * 0.5f;
-
-    FiscionX::Physics::CreateJoint(j);
-    */
 
     while (!glfwWindowShouldClose(FiscionX::Core::Window)) {
         update();
         draw();
     }
+
+    ShutdownImGui();
     FiscionX::Core::Terminate();
     return 0;
 }

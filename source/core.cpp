@@ -77,6 +77,7 @@ static GLuint g_hdrProgram = 0;
 GLuint FiscionX::Core::iblIrradianceMap = 0;
 GLuint FiscionX::Core::iblPrefilterMap = 0;
 GLuint FiscionX::Core::iblBrdfLUT = 0;
+float FiscionX::Core::IBL_HDR_SCALE = 1.0f;
 bool   FiscionX::Core::iblReady = false;
 
 int FiscionX::Core::DIR_SHADOW_SIZE = 3048;
@@ -5599,11 +5600,163 @@ void FiscionX::Core::ClockTick() {
 	glfwPollEvents();
 }
 
+// =================== RECREATE POST PROCESSING BUFFERS ===================
+// Todas as texturas/FBOs de post-processing (main G-buffer, SSAO, SSR) sao
+// alocadas com largura/altura FIXAS dentro de NewWindow(). SetWindowSize()
+// trocava SCREEN_WIDTH/SCREEN_HEIGHT e o glViewport, mas nunca realocava
+// essas texturas — o resultado e a engine renderizando dentro de um viewport
+// novo enquanto le/escreve em texturas com o tamanho antigo (esticamento /
+// "ghosting" visivel ao mudar a resolucao em runtime). Esta funcao deleta e
+// recria exatamente os mesmos buffers que NewWindow cria, agora com w/h
+// atuais. screenQuadVAO/VBO e ssaoNoiseTex ficam de fora pois nao dependem
+// da resolucao da tela (quad em NDC e ruido 4x4 fixo).
+static void RecreatePostProcessBuffers(int w, int h) {
+	if (w <= 0) w = 1;
+	if (h <= 0) h = 1;
+
+	using namespace FiscionX;
+
+	// --- libera os buffers antigos ---
+	if (Core::mainFBO)              glDeleteFramebuffers(1, &Core::mainFBO);
+	if (Core::mainColorBuffer)      glDeleteTextures(1, &Core::mainColorBuffer);
+	if (Core::mainNormalRoughBuffer)glDeleteTextures(1, &Core::mainNormalRoughBuffer);
+	if (Core::mainMetallicBuffer)   glDeleteTextures(1, &Core::mainMetallicBuffer);
+	if (Core::mainDepthBuffer)      glDeleteTextures(1, &Core::mainDepthBuffer);
+
+	if (Core::ssaoFBO)              glDeleteFramebuffers(1, &Core::ssaoFBO);
+	if (Core::ssaoColorBuffer)      glDeleteTextures(1, &Core::ssaoColorBuffer);
+	if (Core::ssaoBlurFBO)          glDeleteFramebuffers(1, &Core::ssaoBlurFBO);
+	if (Core::ssaoBlurColorBuffer)  glDeleteTextures(1, &Core::ssaoBlurColorBuffer);
+
+	if (Core::ssrFBO)               glDeleteFramebuffers(1, &Core::ssrFBO);
+	if (Core::ssrColorBuffer)       glDeleteTextures(1, &Core::ssrColorBuffer);
+	if (Core::ssrBlurFBO)           glDeleteFramebuffers(1, &Core::ssrBlurFBO);
+	if (Core::ssrBlurColorBuffer)   glDeleteTextures(1, &Core::ssrBlurColorBuffer);
+	if (Core::ssrCompositeFBO)      glDeleteFramebuffers(1, &Core::ssrCompositeFBO);
+	if (Core::ssrCompositeColorBuffer) glDeleteTextures(1, &Core::ssrCompositeColorBuffer);
+
+	// --- main FBO (color + normal/rough + metallic + depth-stencil) ---
+	glGenFramebuffers(1, &Core::mainFBO);
+	glBindFramebuffer(GL_FRAMEBUFFER, Core::mainFBO);
+
+	glGenTextures(1, &Core::mainColorBuffer);
+	glBindTexture(GL_TEXTURE_2D, Core::mainColorBuffer);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, Core::mainColorBuffer, 0);
+
+	glGenTextures(1, &Core::mainNormalRoughBuffer);
+	glBindTexture(GL_TEXTURE_2D, Core::mainNormalRoughBuffer);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, NULL);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, Core::mainNormalRoughBuffer, 0);
+
+	glGenTextures(1, &Core::mainMetallicBuffer);
+	glBindTexture(GL_TEXTURE_2D, Core::mainMetallicBuffer);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, w, h, 0, GL_RED, GL_FLOAT, NULL);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, Core::mainMetallicBuffer, 0);
+
+	{
+		GLenum mainDrawBuffers[3] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2 };
+		glDrawBuffers(3, mainDrawBuffers);
+	}
+
+	glGenTextures(1, &Core::mainDepthBuffer);
+	glBindTexture(GL_TEXTURE_2D, Core::mainDepthBuffer);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH24_STENCIL8, w, h, 0, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, nullptr);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, Core::mainDepthBuffer, 0);
+
+	if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+		std::cerr << "ERR 0x010 - mainFBO non complete apos resize\n";
+	}
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	// --- SSAO ---
+	glGenFramebuffers(1, &Core::ssaoFBO);
+	glBindFramebuffer(GL_FRAMEBUFFER, Core::ssaoFBO);
+	glGenTextures(1, &Core::ssaoColorBuffer);
+	glBindTexture(GL_TEXTURE_2D, Core::ssaoColorBuffer);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, NULL);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, Core::ssaoColorBuffer, 0);
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	glGenFramebuffers(1, &Core::ssaoBlurFBO);
+	glBindFramebuffer(GL_FRAMEBUFFER, Core::ssaoBlurFBO);
+	glGenTextures(1, &Core::ssaoBlurColorBuffer);
+	glBindTexture(GL_TEXTURE_2D, Core::ssaoBlurColorBuffer);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, NULL);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, Core::ssaoBlurColorBuffer, 0);
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	// --- SSR ---
+	glGenFramebuffers(1, &Core::ssrFBO);
+	glBindFramebuffer(GL_FRAMEBUFFER, Core::ssrFBO);
+	glGenTextures(1, &Core::ssrColorBuffer);
+	glBindTexture(GL_TEXTURE_2D, Core::ssrColorBuffer);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, NULL);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, Core::ssrColorBuffer, 0);
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	glGenFramebuffers(1, &Core::ssrBlurFBO);
+	glBindFramebuffer(GL_FRAMEBUFFER, Core::ssrBlurFBO);
+	glGenTextures(1, &Core::ssrBlurColorBuffer);
+	glBindTexture(GL_TEXTURE_2D, Core::ssrBlurColorBuffer);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, NULL);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, Core::ssrBlurColorBuffer, 0);
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	glGenFramebuffers(1, &Core::ssrCompositeFBO);
+	glBindFramebuffer(GL_FRAMEBUFFER, Core::ssrCompositeFBO);
+	glGenTextures(1, &Core::ssrCompositeColorBuffer);
+	glBindTexture(GL_TEXTURE_2D, Core::ssrCompositeColorBuffer);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, Core::ssrCompositeColorBuffer, 0);
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
 void FiscionX::Core::SetWindowSize(int width, int height) {
 	SCREEN_WIDTH = width;
 	SCREEN_HEIGHT = height;
 	glfwSetWindowSize(FiscionX::Core::Window, width, height);
 	glViewport(0, 0, width, height);
+
+	// Realoca todos os buffers de post-processing (main G-buffer, SSAO, SSR)
+	// no novo tamanho. Sem isso, a engine renderiza no viewport novo mas le/
+	// escreve em texturas com o tamanho antigo, causando o efeito de
+	// esticamento/"ghosting" visivel ao trocar a resolucao em runtime.
+	RecreatePostProcessBuffers(width, height);
 }
 
 void FiscionX::Core::SetWindowIcon(const char* iconPath) {
@@ -5661,7 +5814,14 @@ void FiscionX::Core::SetWindowFullscreen(bool fullscreen, int monitorIndex) {
 			chosenMode->refreshRate
 		);
 
+		// O modo escolhido pode ter resolucao diferente da SCREEN_WIDTH/HEIGHT
+		// atual (quando o modo exato nao existe no monitor). SCREEN_WIDTH/HEIGHT
+		// e os buffers de post-processing precisam refletir o tamanho real.
+		SCREEN_WIDTH = chosenMode->width;
+		SCREEN_HEIGHT = chosenMode->height;
+
 		glViewport(0, 0, chosenMode->width, chosenMode->height);
+		RecreatePostProcessBuffers(chosenMode->width, chosenMode->height);
 
 	}
 	else {
@@ -5674,6 +5834,7 @@ void FiscionX::Core::SetWindowFullscreen(bool fullscreen, int monitorIndex) {
 			0
 		);
 		glViewport(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+		RecreatePostProcessBuffers(SCREEN_WIDTH, SCREEN_HEIGHT);
 	}
 }
 

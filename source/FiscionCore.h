@@ -1355,10 +1355,7 @@ namespace FiscionX {
 		static std::vector<float> shadowCascadeLevels;
 		static float REFLECTIONS_STRENGTH;
 		static float HDR_EXPOSURE;
-		// Fator de escala aplicado ao HDR durante a pre-computacao IBL.
-		// Pure-sky HDRs: use 1.0. HDRs de cena real (florestas, ruas, jardins): use 0.03..0.1.
-		// Afeta irradiance map (difuso) e prefilter map (especular) de forma consistente.
-		// So tem efeito no proximo LoadHDR(); nao precisa recompilar shaders.
+
 		static float IBL_HDR_SCALE;
 
 		static GLuint textShader;
