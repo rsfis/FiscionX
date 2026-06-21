@@ -118,6 +118,8 @@ void update() {
         if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_SPACE)) skinnedModel->instances[0].position.y += 0.004f;
         if (FiscionX::Input::GetKeyPressed(FISCIONX_KEY_B)) skinnedModel->instances[0].position.z += 0.004f;
     }
+
+    std::cout << FiscionX::Core::Camera.position.x << "  " << FiscionX::Core::Camera.position.y << "  " << FiscionX::Core::Camera.position.z << "\n";
 }
 
 void draw() {
@@ -174,6 +176,18 @@ int main() {
     FiscionX::Core::AMBIENT_LIGHT_INTENSITY = 0.4f;
     FiscionX::Core::HDR_EXPOSURE = 1.0f;
 
+    // === SSR (Screen Space Reflections) ===
+    // Reflexões dinâmicas em tela, complementares ao HDR global (que continua
+    // sendo usado como fallback quando o raio sai da tela ou não acerta nada).
+    FiscionX::Core::SSR_ENABLED = true;
+    FiscionX::Core::SSR_MAX_DISTANCE = 25.0f;       // alcance do raio, em unidades de view-space (metros)
+    FiscionX::Core::SSR_THICKNESS = 0.5f;           // tolerância de profundidade ao aceitar um hit (escala com a distância da cena)
+    FiscionX::Core::SSR_MAX_STEPS = 48;             // passos do march linear
+    FiscionX::Core::SSR_BINARY_STEPS = 6;           // refinamento por busca binária
+    FiscionX::Core::SSR_STRIDE = 0.35f;             // tamanho de cada passo do march
+    FiscionX::Core::SSR_FADE_SCREEN_EDGE = 0.15f;   // fade perto das bordas da tela (0..1)
+    FiscionX::Core::SSR_MAX_BLUR_RADIUS = 10.0f;    // raio do blur (px) em roughness = 1.0; 0 desliga (reflexo sempre nítido)
+
     dirLight = new FiscionX::Light();
     dirLight->type = FiscionX::LIGHT_DIRECTIONAL;
     dirLight->yaw = 0;
@@ -208,7 +222,7 @@ int main() {
 
     FiscionX::Core::CreateAllShadowMaps();
 
-    // Alpha extracted from image; Shape Keys; Reflection Probes; Displacement Map & SPOM; Emission Textures; Lights extracted from glb; Contact Shadows; Anim Blending; Draw halo and glow also for point lights and spot lights; Point lights are traversing walls/solid objects (Criação da textura está errada, computar está errado, renderizar está errado); Sombras e Luz devem passar por malhas com transparência; Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Terrains; Water
+    // Alpha extracted from image; Shape Keys; Displacement Map & SPOM; Emission Textures; Lights extracted from glb; Contact Shadows; Anim Blending; Draw halo and glow also for point lights and spot lights; Point lights are traversing walls/solid objects (Criação da textura está errada, computar está errado, renderizar está errado); Sombras e Luz devem passar por malhas com transparência; Sliders; Viewports; UI Masks; Model Cache; Particles; Fog; Ambient Occlusion; Terrains; Water
 
     staticModel = new FiscionX::Model(
         "assets/models/car_scene.glb"
@@ -232,7 +246,7 @@ int main() {
         FiscionX::Vector3(2.1f, 2.1f, 2.1f)
     );
     boxModel = new FiscionX::Model(
-        "assets/models/tree_scene2.glb" // factory / tree_scene2
+        "assets/models/seoul2.glb" // factory / tree_scene2 / seoul2
     );
     boxModel->addInstance(
         FiscionX::Vector3(0, 0.09f, 4.2f),

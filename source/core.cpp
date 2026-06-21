@@ -18,6 +18,8 @@ GLuint FiscionX::Core::shaderUI;
 
 GLuint FiscionX::Core::mainFBO;
 GLuint FiscionX::Core::mainColorBuffer;
+GLuint FiscionX::Core::mainNormalRoughBuffer;
+GLuint FiscionX::Core::mainMetallicBuffer;
 GLuint FiscionX::Core::mainDepthBuffer;
 GLuint FiscionX::Core::screenQuadVAO;
 GLuint FiscionX::Core::screenQuadVBO;
@@ -30,6 +32,25 @@ GLuint FiscionX::Core::ssaoShader;
 GLuint FiscionX::Core::ssaoBlurShader;
 GLuint FiscionX::Core::ssaoNoiseTex;
 std::vector<glm::vec3> FiscionX::Core::ssaoKernel;
+
+GLuint FiscionX::Core::ssrFBO;
+GLuint FiscionX::Core::ssrColorBuffer;
+GLuint FiscionX::Core::ssrBlurFBO;
+GLuint FiscionX::Core::ssrBlurColorBuffer;
+GLuint FiscionX::Core::ssrCompositeFBO;
+GLuint FiscionX::Core::ssrCompositeColorBuffer;
+GLuint FiscionX::Core::ssrShader;
+GLuint FiscionX::Core::ssrBlurShader;
+GLuint FiscionX::Core::ssrCompositeShader;
+bool   FiscionX::Core::SSR_ENABLED = true;
+float  FiscionX::Core::SSR_MAX_DISTANCE = 25.0f;
+float  FiscionX::Core::SSR_THICKNESS = 0.5f;
+int    FiscionX::Core::SSR_MAX_STEPS = 48;
+int    FiscionX::Core::SSR_BINARY_STEPS = 6;
+float  FiscionX::Core::SSR_FADE_SCREEN_EDGE = 0.15f;
+float  FiscionX::Core::SSR_STRIDE = 0.35f;
+float  FiscionX::Core::SSR_MAX_BLUR_RADIUS = 10.0f;
+
 float FiscionX::Core::sunDiskSize = 0.030;
 float FiscionX::Core::sunHaloSize = 0.3;
 FiscionX::Vector3 FiscionX::Core::sunColor(1.0, 0.95, 0.8);
@@ -108,6 +129,188 @@ bool firstMouse = true;
 float deltaTime = 0.0f, lastFrame = 0;
 
 GLuint LoadShader(const char* vertexSrc, const char* fragmentSrc);
+
+// Used by LoadHDR() (global skybox IBL). Compiles a tiny vertex+fragment
+// program, used only to render the convolution passes.
+static GLuint CompileIBLShaderProgram(const char* vSrc, const char* fSrc) {
+	GLuint vs = glCreateShader(GL_VERTEX_SHADER);
+	glShaderSource(vs, 1, &vSrc, nullptr);
+	glCompileShader(vs);
+	GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
+	glShaderSource(fs, 1, &fSrc, nullptr);
+	glCompileShader(fs);
+	GLuint prog = glCreateProgram();
+	glAttachShader(prog, vs);
+	glAttachShader(prog, fs);
+	glLinkProgram(prog);
+	glDeleteShader(vs);
+	glDeleteShader(fs);
+	return prog;
+}
+
+// Convolves an already-captured HDR cubemap (`srcCubemap`, with mipmaps already
+// generated) into a diffuse irradiance cubemap and a roughness-mip prefiltered
+// specular cubemap. Exact same math used for the global HDR sky (see LoadHDR below).
+// Caller owns/deletes outIrradiance/outPrefilter when done with them.
+static void ConvolveCubemapToIBL(GLuint srcCubemap, int irrSize, int preSize, int maxMipLevels,
+	GLuint& outIrradiance, GLuint& outPrefilter) {
+
+	static GLuint s_cubeVAO = 0, s_cubeVBO = 0;
+	if (s_cubeVAO == 0) {
+		float skyboxVertices[] = {
+			-1.0f,  1.0f, -1.0f, -1.0f, -1.0f, -1.0f,  1.0f, -1.0f, -1.0f,
+			 1.0f, -1.0f, -1.0f,  1.0f,  1.0f, -1.0f, -1.0f,  1.0f, -1.0f,
+
+			-1.0f, -1.0f,  1.0f, -1.0f, -1.0f, -1.0f, -1.0f,  1.0f, -1.0f,
+			-1.0f,  1.0f, -1.0f, -1.0f,  1.0f,  1.0f, -1.0f, -1.0f,  1.0f,
+
+			 1.0f, -1.0f, -1.0f,  1.0f, -1.0f,  1.0f,  1.0f,  1.0f,  1.0f,
+			 1.0f,  1.0f,  1.0f,  1.0f,  1.0f, -1.0f,  1.0f, -1.0f, -1.0f,
+
+			-1.0f, -1.0f,  1.0f, -1.0f,  1.0f,  1.0f,  1.0f,  1.0f,  1.0f,
+			 1.0f,  1.0f,  1.0f,  1.0f, -1.0f,  1.0f, -1.0f, -1.0f,  1.0f,
+
+			-1.0f,  1.0f, -1.0f,  1.0f,  1.0f, -1.0f,  1.0f,  1.0f,  1.0f,
+			 1.0f,  1.0f,  1.0f, -1.0f,  1.0f,  1.0f, -1.0f,  1.0f, -1.0f,
+
+			-1.0f, -1.0f, -1.0f, -1.0f, -1.0f,  1.0f,  1.0f, -1.0f, -1.0f,
+			 1.0f, -1.0f, -1.0f, -1.0f, -1.0f,  1.0f,  1.0f, -1.0f,  1.0f
+		};
+		glGenVertexArrays(1, &s_cubeVAO);
+		glGenBuffers(1, &s_cubeVBO);
+		glBindVertexArray(s_cubeVAO);
+		glBindBuffer(GL_ARRAY_BUFFER, s_cubeVBO);
+		glBufferData(GL_ARRAY_BUFFER, sizeof(skyboxVertices), skyboxVertices, GL_STATIC_DRAW);
+		glEnableVertexAttribArray(0);
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+		glBindBuffer(GL_ARRAY_BUFFER, 0);
+		glBindVertexArray(0);
+	}
+
+	GLuint shIrradiance = CompileIBLShaderProgram(iblCubeVertex, iblIrradianceFragment);
+	GLuint shPrefilter = CompileIBLShaderProgram(iblCubeVertex, iblPrefilterFragment);
+
+	glm::mat4 captureProjection = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, 10.0f);
+	glm::mat4 captureViews[6] = {
+		glm::lookAt(glm::vec3(0), glm::vec3(1, 0, 0), glm::vec3(0,-1, 0)),
+		glm::lookAt(glm::vec3(0), glm::vec3(-1, 0, 0), glm::vec3(0,-1, 0)),
+		glm::lookAt(glm::vec3(0), glm::vec3(0, 1, 0), glm::vec3(0, 0, 1)),
+		glm::lookAt(glm::vec3(0), glm::vec3(0,-1, 0), glm::vec3(0, 0,-1)),
+		glm::lookAt(glm::vec3(0), glm::vec3(0, 0, 1), glm::vec3(0,-1, 0)),
+		glm::lookAt(glm::vec3(0), glm::vec3(0, 0,-1), glm::vec3(0,-1, 0)),
+	};
+
+	GLuint captureFBO, captureRBO;
+	glGenFramebuffers(1, &captureFBO);
+	glGenRenderbuffers(1, &captureRBO);
+	glBindFramebuffer(GL_FRAMEBUFFER, captureFBO);
+	glBindRenderbuffer(GL_RENDERBUFFER, captureRBO);
+	glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, irrSize, irrSize);
+	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, captureRBO);
+
+	// --- Irradiance (diffuse) ---
+	glGenTextures(1, &outIrradiance);
+	glBindTexture(GL_TEXTURE_CUBE_MAP, outIrradiance);
+	for (int i = 0; i < 6; ++i)
+		glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB16F,
+			irrSize, irrSize, 0, GL_RGB, GL_FLOAT, nullptr);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+	glBindFramebuffer(GL_FRAMEBUFFER, captureFBO);
+	glBindRenderbuffer(GL_RENDERBUFFER, captureRBO);
+	glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, irrSize, irrSize);
+
+	glUseProgram(shIrradiance);
+	{
+		GLint locIrrMap = glGetUniformLocation(shIrradiance, "environmentMap");
+		GLint locIrrProj = glGetUniformLocation(shIrradiance, "projection");
+		GLint locIrrView = glGetUniformLocation(shIrradiance, "view");
+		glUniform1i(locIrrMap, 0);
+		glUniformMatrix4fv(locIrrProj, 1, GL_FALSE, glm::value_ptr(captureProjection));
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_CUBE_MAP, srcCubemap);
+
+		glViewport(0, 0, irrSize, irrSize);
+		for (int i = 0; i < 6; ++i) {
+			glUniformMatrix4fv(locIrrView, 1, GL_FALSE, glm::value_ptr(captureViews[i]));
+			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, outIrradiance, 0);
+			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+			glBindVertexArray(s_cubeVAO);
+			glDrawArrays(GL_TRIANGLES, 0, 36);
+		}
+	}
+
+	// --- Prefiltered specular (roughness mip chain) ---
+	glGenTextures(1, &outPrefilter);
+	glBindTexture(GL_TEXTURE_CUBE_MAP, outPrefilter);
+	for (int i = 0; i < 6; ++i)
+		glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB16F,
+			preSize, preSize, 0, GL_RGB, GL_FLOAT, nullptr);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
+
+	glUseProgram(shPrefilter);
+	{
+		GLint locPfMap = glGetUniformLocation(shPrefilter, "environmentMap");
+		GLint locPfProj = glGetUniformLocation(shPrefilter, "projection");
+		GLint locPfRough = glGetUniformLocation(shPrefilter, "roughness");
+		GLint locPfView = glGetUniformLocation(shPrefilter, "view");
+		glUniform1i(locPfMap, 0);
+		glUniformMatrix4fv(locPfProj, 1, GL_FALSE, glm::value_ptr(captureProjection));
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_CUBE_MAP, srcCubemap);
+
+		glBindFramebuffer(GL_FRAMEBUFFER, captureFBO);
+		for (int mip = 0; mip < maxMipLevels; ++mip) {
+			int mipW = (int)(preSize * std::pow(0.5f, mip));
+			int mipH = mipW;
+			glBindRenderbuffer(GL_RENDERBUFFER, captureRBO);
+			glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, mipW, mipH);
+			glViewport(0, 0, mipW, mipH);
+
+			float roughness = (float)mip / (float)(maxMipLevels - 1);
+			glUniform1f(locPfRough, roughness);
+
+			for (int i = 0; i < 6; ++i) {
+				glUniformMatrix4fv(locPfView, 1, GL_FALSE, glm::value_ptr(captureViews[i]));
+				glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+					GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, outPrefilter, mip);
+				glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+				glBindVertexArray(s_cubeVAO);
+				glDrawArrays(GL_TRIANGLES, 0, 36);
+			}
+		}
+	}
+
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glViewport(0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
+
+	glDeleteFramebuffers(1, &captureFBO);
+	glDeleteRenderbuffers(1, &captureRBO);
+	glDeleteProgram(shIrradiance);
+	glDeleteProgram(shPrefilter);
+
+	// SAFETY: leave VAO/program/active-texture-unit in a known-good state.
+	// Without this, whatever was bound during the last draw call above (the
+	// IBL cube VAO, the prefilter program, GL_TEXTURE0 pointed at srcCubemap)
+	// stays bound when this function returns. Regular model draws explicitly
+	// rebind everything they need, but leaving stale bindings around after a
+	// bake is exactly the kind of state corruption that's hard to track down
+	// later — reset explicitly instead of relying on every future caller to
+	// rebind defensively.
+	glBindVertexArray(0);
+	glUseProgram(0);
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+}
 
 bool FiscionX::Core::LoadHDR(const char* path)
 {
@@ -423,6 +626,16 @@ bool FiscionX::Core::LoadHDR(const char* path)
 	glDeleteProgram(shIrradiance);
 	glDeleteProgram(shPrefilter);
 	glDeleteProgram(shBrdfLUT);
+
+	// SAFETY: reset VAO/program/active texture unit explicitly instead of leaving
+	// whatever the last IBL draw call bound. LoadHDR() can be called mid-game (see
+	// FISCIONX_KEY_T in main.cpp), so any state it leaves dangling here would
+	// otherwise corrupt the very next regular frame's rendering.
+	glBindVertexArray(0);
+	glUseProgram(0);
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
 
 	iblReady = true;
 	return true;
@@ -1978,6 +2191,35 @@ GLuint FiscionX::Model::getNormalMapTexture(const tinygltf::Model& model, int ma
 	glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY, g_maxAnisotropy);
 	textureCache[cacheKey] = texID;
 	return texID;
+}
+
+// Builds the world-space transform of a glTF node by walking up nodeParents,
+// the same way the camera-node extraction above does. Local helper, file-scope only.
+static glm::mat4 FiscionX_BuildNodeWorldTransform(
+	const std::vector<tinygltf::Node>& nodes,
+	const std::map<int, int>& nodeParents,
+	int nodeIndex)
+{
+	const tinygltf::Node& n = nodes[nodeIndex];
+	glm::mat4 local(1.0f);
+	if (!n.matrix.empty()) {
+		local = glm::make_mat4(n.matrix.data());
+	}
+	else {
+		glm::vec3 T(0.0f), S(1.0f);
+		glm::quat R(1, 0, 0, 0);
+		if (!n.translation.empty()) T = glm::make_vec3(n.translation.data());
+		if (!n.rotation.empty())    R = glm::make_quat(n.rotation.data());
+		if (!n.scale.empty())       S = glm::make_vec3(n.scale.data());
+		local = glm::translate(glm::mat4(1.0f), T) * glm::mat4_cast(R) * glm::scale(glm::mat4(1.0f), S);
+	}
+
+	auto it = nodeParents.find(nodeIndex);
+	int parent = (it != nodeParents.end()) ? it->second : -1;
+	if (parent >= 0) {
+		return FiscionX_BuildNodeWorldTransform(nodes, nodeParents, parent) * local;
+	}
+	return local;
 }
 
 void FiscionX::Model::init(const std::string& path) {
@@ -3579,7 +3821,8 @@ void FiscionX::Model::drawSubMesh(
 	glCullFace(GL_BACK);
 }
 
-void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLuint depthMap, bool depthPass, FiscionX::Mat4 view, FiscionX::Mat4 projection) {
+void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLuint depthMap, bool depthPass, FiscionX::Mat4 view, FiscionX::Mat4 projection,
+	bool skipOcclusionAndCulling) {
 	int numLights = static_cast<int>(FiscionX::Core::AllLights.size());	glUseProgram(shader);
 
 	// ── OPTIM: reconstrói o cache de locations apenas quando o shader muda ──
@@ -3683,7 +3926,16 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 	for (Instance& inst : instances) {
 		glm::mat4 baseMatrix = glm::mat4(1.0f);
 
-		if (!depthPass) {
+		// IMPORTANT: occlusion queries are async (glBeginQuery/glEndQuery, read back
+		// later in Instance::update()). Any caller that draws the same instances
+		// several times in a row with non-main-camera views (e.g. cubemap face
+		// captures), with no real frame boundary in between for the driver to
+		// resolve each query before the next glBeginQuery on the same query object,
+		// would corrupt/desync the occlusion state for the *real* camera's following
+		// frames (symptom: meshes vanish almost entirely right after such a capture).
+		// skipOcclusionAndCulling exists for exactly that case: skip occlusion
+		// querying entirely and just draw everything.
+		if (!depthPass && !skipOcclusionAndCulling) {
 			inst.updateOcclusion(viewProjMat);
 		}
 		if (inst.physicsSyncTransformMatrix != glm::mat4(1.0f)) {
@@ -3691,11 +3943,13 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 		}
 
 		std::vector<bool> subMeshVisible;
-		if (!depthPass) {
+		if (!depthPass && !skipOcclusionAndCulling) {
 			inst.computeSubMeshVisibility(viewProjMat, subMeshVisible);
 		}
 		else {
-			subMeshVisible.assign(meshes.size(), true); // sombra: nunca cullar
+			// shadow pass, or a probe bake: never cull — a probe bake's view is not
+			// the main camera's, so main-camera frustum/occlusion state doesn't apply.
+			subMeshVisible.assign(meshes.size(), true);
 		}
 
 		// OPTIM: LOD agora é calculado por SubMesh, não mais uma única vez pra
@@ -3718,7 +3972,7 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 				* glm::scale(glm::mat4(1.0f), glm::vec3(inst.scale.x, inst.scale.y, inst.scale.z));
 
 			std::vector<bool> instSubVisible;
-			if (inst.enableFrustumCulling && !depthPass) {
+			if (inst.enableFrustumCulling && !depthPass && !skipOcclusionAndCulling) {
 				instSubVisible.resize(meshes.size());
 				for (int i = 0; i < (int)meshes.size(); ++i) {
 					glm::mat4 M = instBase * (isSkinned ? glm::mat4(1.0f) : meshes[i].transform);
@@ -3741,7 +3995,7 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 				glm::mat4 modelMatrix = instBase * (isSkinned ? glm::mat4(1.0f) : mesh.transform);
 
 				int activeLOD = -1; // -1 = full-resolution base submesh
-				if (!lodDistances.empty()) {
+				if (!lodDistances.empty() && !skipOcclusionAndCulling) {
 					glm::vec3 subCenterWorld = glm::vec3(modelMatrix * glm::vec4(mesh.aabbCenter(), 1.0f));
 					float dSq = glm::dot(camPos - subCenterWorld, camPos - subCenterWorld);
 					activeLOD = selectLOD(dSq);
@@ -5108,6 +5362,38 @@ void FiscionX::Core::NewWindow(int width, int height, const char* window_label) 
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, mainColorBuffer, 0);
 
+	// Textura de Normal (view-space) + Roughness — usada pelo SSR (e disponível para outros efeitos
+	// futuros de screen-space). Só o passe opaco escreve aqui; malhas BLEND não escrevem (ver
+	// drawSubMesh), o que é o comportamento certo: SSR não deve refletir sobre transparências.
+	glGenTextures(1, &mainNormalRoughBuffer);
+	glBindTexture(GL_TEXTURE_2D, mainNormalRoughBuffer);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, NULL);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, mainNormalRoughBuffer, 0);
+
+	// Textura de Metallic (G-buffer-lite, canal único) — usada pelo SSR composite para calcular
+	// o F0 físico do reflexo (dielétrico ~0.04 vs condutor/metal, banda larga). Antes o composite
+	// usava F0 dielétrico fixo pra qualquer material, então metais refletiam com a mesma
+	// intensidade "fraca de frente, forte só de raspão" de um plástico — fisicamente errado:
+	// metal não tem termo difuso, então o reflexo precisa carregar praticamente toda a resposta
+	// visual do material, com intensidade alta mesmo de frente (NdotV alto).
+	glGenTextures(1, &mainMetallicBuffer);
+	glBindTexture(GL_TEXTURE_2D, mainMetallicBuffer);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, w, h, 0, GL_RED, GL_FLOAT, NULL);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, mainMetallicBuffer, 0);
+
+	{
+		GLenum mainDrawBuffers[3] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2 };
+		glDrawBuffers(3, mainDrawBuffers);
+	}
+
 	// Renderbuffer de Depth (VITAL!)
 	glGenTextures(1, &mainDepthBuffer);
 	glBindTexture(GL_TEXTURE_2D, mainDepthBuffer);
@@ -5164,6 +5450,72 @@ void FiscionX::Core::NewWindow(int width, int height, const char* window_label) 
 	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ssaoBlurColorBuffer, 0);
 
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	// === SSR FBO (resultado bruto do ray march: rgb = cor refletida, a = confiança do hit) ===
+	glGenFramebuffers(1, &ssrFBO);
+	glBindFramebuffer(GL_FRAMEBUFFER, ssrFBO);
+
+	glGenTextures(1, &ssrColorBuffer);
+	glBindTexture(GL_TEXTURE_2D, ssrColorBuffer);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, NULL);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ssrColorBuffer, 0);
+
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	// === SSR Blur FBO ===
+	// Borra ssrColorBuffer com um kernel cujo raio (em pixels) escala com a roughness do pixel
+	// central (lida de mainNormalRoughBuffer no shader) ANTES do composite. Sem isso, o ray
+	// march produz sempre uma reflexão de espelho perfeito (R = reflect(incident, N), sem
+	// nenhum espalhamento), e a única coisa que mudava com a roughness era o quanto o composite
+	// deixava essa imagem nítida APARECER (fade de opacidade) — a imagem refletida em si nunca
+	// ficava borrada. Resultado visual: qualquer superfície com roughness abaixo do começo da
+	// janela de fade (atualmente 0.55) reflete em alta nitidez, "como um espelho", mesmo
+	// materiais que deveriam ter um brilho difuso/glossy (lataria suja, plástico, etc.) em vez
+	// de reflexo especular nítido. Este passe aproxima o blur do lobo BRDF: barato (1 passe,
+	// mesmo padrão do ssaoBlur), não fisicamente exato (não é cone-tracing nem mip pré-filtrado),
+	// mas resolve o sintoma de "reflexo-espelho" em superfícies de roughness média.
+	glGenFramebuffers(1, &ssrBlurFBO);
+	glBindFramebuffer(GL_FRAMEBUFFER, ssrBlurFBO);
+
+	glGenTextures(1, &ssrBlurColorBuffer);
+	glBindTexture(GL_TEXTURE_2D, ssrBlurColorBuffer);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, NULL);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ssrBlurColorBuffer, 0);
+
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	// === SSR Composite FBO ===
+	// Textura de destino separada de mainColorBuffer e ssrBlurColorBuffer: o passe de composite
+	// LÊ as duas (cena + reflexo) e PRECISA escrever em uma terceira textura — escrever de
+	// volta diretamente em mainColorBuffer enquanto ele também está sendo lido como
+	// "sceneColorTexture" seria um feedback loop (read/write da mesma textura no mesmo draw
+	// call, comportamento indefinido em OpenGL). O resultado é copiado (blit) de volta para
+	// mainColorBuffer logo em seguida.
+	glGenFramebuffers(1, &ssrCompositeFBO);
+	glBindFramebuffer(GL_FRAMEBUFFER, ssrCompositeFBO);
+
+	glGenTextures(1, &ssrCompositeColorBuffer);
+	glBindTexture(GL_TEXTURE_2D, ssrCompositeColorBuffer);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ssrCompositeColorBuffer, 0);
+
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	ssrShader = LoadShader(postProcessVertex, ssrFragment);
+	ssrBlurShader = LoadShader(postProcessVertex, ssrBlurFragment);
+	ssrCompositeShader = LoadShader(postProcessVertex, ssrCompositeFragment);
 
 
 	std::mt19937 ssaoRng(12345);
@@ -5573,6 +5925,59 @@ void FiscionX::Core::Draw::PostProcessing(FiscionX::Mat4 viewProj, FiscionX::Lig
 		s_ssaoBlurLocInput = glGetUniformLocation(FiscionX::Core::ssaoBlurShader, "ssaoInput");
 	}
 
+	// OPTIM: cache uniform locations for ssrShader (queried once per shader handle)
+	static GLuint s_ssrCachedShader = 0;
+	static GLint  s_ssrLocProj = -1, s_ssrLocInvProj = -1, s_ssrLocScreenSize = -1;
+	static GLint  s_ssrLocNear = -1, s_ssrLocFar = -1;
+	static GLint  s_ssrLocMaxDist = -1, s_ssrLocThickness = -1, s_ssrLocMaxSteps = -1;
+	static GLint  s_ssrLocBinarySteps = -1, s_ssrLocStride = -1, s_ssrLocEdgeFade = -1;
+	static GLint  s_ssrLocDepthTex = -1, s_ssrLocColorTex = -1, s_ssrLocNormalRoughTex = -1;
+	if (s_ssrCachedShader != FiscionX::Core::ssrShader) {
+		s_ssrCachedShader = FiscionX::Core::ssrShader;
+		s_ssrLocProj = glGetUniformLocation(FiscionX::Core::ssrShader, "projection");
+		s_ssrLocInvProj = glGetUniformLocation(FiscionX::Core::ssrShader, "invProjection");
+		s_ssrLocScreenSize = glGetUniformLocation(FiscionX::Core::ssrShader, "screenSize");
+		s_ssrLocNear = glGetUniformLocation(FiscionX::Core::ssrShader, "nearPlane");
+		s_ssrLocFar = glGetUniformLocation(FiscionX::Core::ssrShader, "farPlane");
+		s_ssrLocMaxDist = glGetUniformLocation(FiscionX::Core::ssrShader, "maxDistance");
+		s_ssrLocThickness = glGetUniformLocation(FiscionX::Core::ssrShader, "thickness");
+		s_ssrLocMaxSteps = glGetUniformLocation(FiscionX::Core::ssrShader, "maxSteps");
+		s_ssrLocBinarySteps = glGetUniformLocation(FiscionX::Core::ssrShader, "binarySteps");
+		s_ssrLocStride = glGetUniformLocation(FiscionX::Core::ssrShader, "stride");
+		s_ssrLocEdgeFade = glGetUniformLocation(FiscionX::Core::ssrShader, "edgeFade");
+		s_ssrLocDepthTex = glGetUniformLocation(FiscionX::Core::ssrShader, "depthTexture");
+		s_ssrLocColorTex = glGetUniformLocation(FiscionX::Core::ssrShader, "colorTexture");
+		s_ssrLocNormalRoughTex = glGetUniformLocation(FiscionX::Core::ssrShader, "normalRoughTexture");
+	}
+
+	// OPTIM: cache uniform locations for ssrBlurShader (queried once per shader handle)
+	static GLuint s_ssrBlurCachedShader = 0;
+	static GLint  s_ssrBlurLocInput = -1, s_ssrBlurLocNormalRoughTex = -1;
+	static GLint  s_ssrBlurLocScreenSize = -1, s_ssrBlurLocMaxRadius = -1;
+	if (s_ssrBlurCachedShader != FiscionX::Core::ssrBlurShader) {
+		s_ssrBlurCachedShader = FiscionX::Core::ssrBlurShader;
+		s_ssrBlurLocInput = glGetUniformLocation(FiscionX::Core::ssrBlurShader, "ssrInput");
+		s_ssrBlurLocNormalRoughTex = glGetUniformLocation(FiscionX::Core::ssrBlurShader, "normalRoughTexture");
+		s_ssrBlurLocScreenSize = glGetUniformLocation(FiscionX::Core::ssrBlurShader, "screenSize");
+		s_ssrBlurLocMaxRadius = glGetUniformLocation(FiscionX::Core::ssrBlurShader, "maxBlurRadius");
+	}
+
+	// OPTIM: cache uniform locations for ssrCompositeShader (queried once per shader handle)
+	static GLuint s_ssrCompCachedShader = 0;
+	static GLint  s_ssrCompLocSceneTex = -1, s_ssrCompLocSsrTex = -1, s_ssrCompLocNormalRoughTex = -1;
+	static GLint  s_ssrCompLocStrength = -1, s_ssrCompLocDepthTex = -1, s_ssrCompLocInvProj = -1;
+	static GLint  s_ssrCompLocMetallicTex = -1;
+	if (s_ssrCompCachedShader != FiscionX::Core::ssrCompositeShader) {
+		s_ssrCompCachedShader = FiscionX::Core::ssrCompositeShader;
+		s_ssrCompLocSceneTex = glGetUniformLocation(FiscionX::Core::ssrCompositeShader, "sceneColorTexture");
+		s_ssrCompLocSsrTex = glGetUniformLocation(FiscionX::Core::ssrCompositeShader, "ssrTexture");
+		s_ssrCompLocNormalRoughTex = glGetUniformLocation(FiscionX::Core::ssrCompositeShader, "normalRoughTexture");
+		s_ssrCompLocStrength = glGetUniformLocation(FiscionX::Core::ssrCompositeShader, "reflectionsStrength");
+		s_ssrCompLocDepthTex = glGetUniformLocation(FiscionX::Core::ssrCompositeShader, "depthTexture");
+		s_ssrCompLocInvProj = glGetUniformLocation(FiscionX::Core::ssrCompositeShader, "invProjection");
+		s_ssrCompLocMetallicTex = glGetUniformLocation(FiscionX::Core::ssrCompositeShader, "metallicTexture");
+	}
+
 	// OPTIM: cache uniform locations for godRaysShader (queried once per shader handle)
 	static GLuint s_grCachedShader = 0;
 	static GLint  s_grLocAspect = -1, s_grLocLightPos = -1, s_grLocSunVis = -1, s_grLocTime = -1;
@@ -5656,6 +6061,133 @@ void FiscionX::Core::Draw::PostProcessing(FiscionX::Mat4 viewProj, FiscionX::Lig
 	glBindVertexArray(FiscionX::Core::screenQuadVAO);
 	glDrawArrays(GL_TRIANGLES, 0, 6);
 	glBindVertexArray(0);
+
+	// === SSR (Screen Space Reflections) ===
+	// Roda depois do SSAO (não depende dele) e antes do God Rays (que lê mainColorBuffer
+	// e precisa já enxergar os reflexos compostos). Quatro sub-passes:
+	//   1) ray march      -> ssrFBO/ssrColorBuffer (cor do hit + confiança, espelho perfeito)
+	//   2) blur            -> ssrBlurFBO/ssrBlurColorBuffer (raio escala com a roughness do
+	//      pixel, aproximando a dispersão de um reflexo glossy que o ray march não produz)
+	//   3) composite        -> ssrCompositeFBO (cena + reflexo borrado fundidos por Fresnel,
+	//      já levando roughness e metallic em conta)
+	//   4) blit de volta   -> mainFBO/mainColorBuffer (só o color attachment 0; depth e os
+	//      buffers de normal/rough e metallic do mainFBO não são tocados)
+	// O passo 3 não pode escrever direto em mainColorBuffer porque o mesmo draw call já o lê
+	// como "cena base" — ler e escrever a mesma textura simultaneamente é UB em OpenGL.
+	if (FiscionX::Core::SSR_ENABLED) {
+		glDisable(GL_BLEND);
+		glBindFramebuffer(GL_FRAMEBUFFER, FiscionX::Core::ssrFBO);
+		glViewport(0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
+		glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+		glClear(GL_COLOR_BUFFER_BIT);
+		glDisable(GL_DEPTH_TEST);
+
+		glUseProgram(FiscionX::Core::ssrShader);
+		glUniformMatrix4fv(s_ssrLocProj, 1, GL_FALSE, glm::value_ptr(projection));
+		glUniformMatrix4fv(s_ssrLocInvProj, 1, GL_FALSE, glm::value_ptr(invProjection));
+		glUniform2f(s_ssrLocScreenSize, (float)FiscionX::Core::SCREEN_WIDTH, (float)FiscionX::Core::SCREEN_HEIGHT);
+		glUniform1f(s_ssrLocNear, FiscionX::Core::NEAR_PLANE);
+		glUniform1f(s_ssrLocFar, FiscionX::Core::FAR_PLANE);
+		glUniform1f(s_ssrLocMaxDist, FiscionX::Core::SSR_MAX_DISTANCE);
+		glUniform1f(s_ssrLocThickness, FiscionX::Core::SSR_THICKNESS);
+		glUniform1i(s_ssrLocMaxSteps, FiscionX::Core::SSR_MAX_STEPS);
+		glUniform1i(s_ssrLocBinarySteps, FiscionX::Core::SSR_BINARY_STEPS);
+		glUniform1f(s_ssrLocStride, FiscionX::Core::SSR_STRIDE);
+		glUniform1f(s_ssrLocEdgeFade, FiscionX::Core::SSR_FADE_SCREEN_EDGE);
+
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainDepthBuffer);
+		glUniform1i(s_ssrLocDepthTex, 0);
+
+		glActiveTexture(GL_TEXTURE1);
+		glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainColorBuffer);
+		glUniform1i(s_ssrLocColorTex, 1);
+
+		glActiveTexture(GL_TEXTURE2);
+		glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainNormalRoughBuffer);
+		glUniform1i(s_ssrLocNormalRoughTex, 2);
+
+		glBindVertexArray(FiscionX::Core::screenQuadVAO);
+		glDrawArrays(GL_TRIANGLES, 0, 6);
+		glBindVertexArray(0);
+
+		// Blur: espalha ssrColorBuffer com raio proporcional à roughness de cada pixel antes
+		// do composite — sem isso, o reflexo nunca perde nitidez de espelho, só opacidade.
+		glBindFramebuffer(GL_FRAMEBUFFER, FiscionX::Core::ssrBlurFBO);
+		glViewport(0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
+
+		glUseProgram(FiscionX::Core::ssrBlurShader);
+		glUniform2f(s_ssrBlurLocScreenSize, (float)FiscionX::Core::SCREEN_WIDTH, (float)FiscionX::Core::SCREEN_HEIGHT);
+		glUniform1f(s_ssrBlurLocMaxRadius, FiscionX::Core::SSR_MAX_BLUR_RADIUS);
+
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, FiscionX::Core::ssrColorBuffer);
+		glUniform1i(s_ssrBlurLocInput, 0);
+
+		glActiveTexture(GL_TEXTURE1);
+		glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainNormalRoughBuffer);
+		glUniform1i(s_ssrBlurLocNormalRoughTex, 1);
+
+		glBindVertexArray(FiscionX::Core::screenQuadVAO);
+		glDrawArrays(GL_TRIANGLES, 0, 6);
+		glBindVertexArray(0);
+
+		// Composite: lê mainColorBuffer (cena) + ssrBlurColorBuffer (reflexo já borrado) e
+		// escreve no FBO dedicado ssrCompositeFBO — NUNCA direto em mainFBO aqui, pois
+		// mainColorBuffer está sendo lido como "sceneColorTexture" nesse mesmo draw call (ler
+		// e escrever a mesma textura simultaneamente é comportamento indefinido em OpenGL).
+		glBindFramebuffer(GL_FRAMEBUFFER, FiscionX::Core::ssrCompositeFBO);
+		glViewport(0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
+
+		glUseProgram(FiscionX::Core::ssrCompositeShader);
+		glUniform1f(s_ssrCompLocStrength, FiscionX::Core::REFLECTIONS_STRENGTH);
+		glUniformMatrix4fv(s_ssrCompLocInvProj, 1, GL_FALSE, glm::value_ptr(invProjection));
+
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainColorBuffer);
+		glUniform1i(s_ssrCompLocSceneTex, 0);
+
+		glActiveTexture(GL_TEXTURE1);
+		glBindTexture(GL_TEXTURE_2D, FiscionX::Core::ssrBlurColorBuffer);
+		glUniform1i(s_ssrCompLocSsrTex, 1);
+
+		glActiveTexture(GL_TEXTURE2);
+		glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainNormalRoughBuffer);
+		glUniform1i(s_ssrCompLocNormalRoughTex, 2);
+
+		glActiveTexture(GL_TEXTURE3);
+		glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainDepthBuffer);
+		glUniform1i(s_ssrCompLocDepthTex, 3);
+
+		glActiveTexture(GL_TEXTURE4);
+		glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainMetallicBuffer);
+		glUniform1i(s_ssrCompLocMetallicTex, 4);
+
+		glBindVertexArray(FiscionX::Core::screenQuadVAO);
+		glDrawArrays(GL_TRIANGLES, 0, 6);
+		glBindVertexArray(0);
+
+		// Copia o resultado composto de volta para mainColorBuffer (cor) sem tocar no depth
+		// nem no normal/rough buffer (ATTACHMENT1) do mainFBO — só o color attachment 0 é
+		// sobrescrito, então o God Rays (logo a seguir) já enxerga a cena com SSR aplicado.
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, FiscionX::Core::ssrCompositeFBO);
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FiscionX::Core::mainFBO);
+		glReadBuffer(GL_COLOR_ATTACHMENT0);
+		glDrawBuffer(GL_COLOR_ATTACHMENT0);
+		glBlitFramebuffer(
+			0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT,
+			0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT,
+			GL_COLOR_BUFFER_BIT, GL_NEAREST
+		);
+		// Restaura os dois draw buffers do mainFBO (mexido acima por glDrawBuffer), já que
+		// outros pontos do pipeline (ex.: o próximo frame, em ClearBackground) esperam que
+		// ATTACHMENT0 + ATTACHMENT1 estejam ambos ativos para limpar/escrever corretamente.
+		glBindFramebuffer(GL_FRAMEBUFFER, FiscionX::Core::mainFBO);
+		{
+			GLenum mainDrawBuffers[3] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2 };
+			glDrawBuffers(3, mainDrawBuffers);
+		}
+	}
 
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	glViewport(0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);

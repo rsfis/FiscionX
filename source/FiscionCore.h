@@ -1242,7 +1242,8 @@ namespace FiscionX {
 
 			instances.push_back(std::move(inst));
 		}
-		void draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLuint depthMap, bool depthPass, FiscionX::Mat4 view, FiscionX::Mat4 projection);
+		void draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLuint depthMap, bool depthPass, FiscionX::Mat4 view, FiscionX::Mat4 projection,
+			bool skipOcclusionAndCulling = false);
 		void bindShaderForTransparency(GLuint shader, FiscionX::Mat4 view, FiscionX::Mat4 projection);
 	};
 
@@ -1275,6 +1276,8 @@ namespace FiscionX {
 		// --- POST PROCESSING ---
 		static GLuint mainFBO;
 		static GLuint mainColorBuffer;
+		static GLuint mainNormalRoughBuffer; // RGBA16F: rgb = view-space normal, a = roughness (opaque pass only)
+		static GLuint mainMetallicBuffer;    // R16F: metallic (opaque pass only) — usado pelo SSR composite p/ F0 físico
 		static GLuint mainDepthBuffer;
 		static GLuint screenQuadVAO, screenQuadVBO;
 		static GLuint godRaysShader;
@@ -1287,6 +1290,25 @@ namespace FiscionX {
 		static GLuint ssaoBlurShader;
 		static GLuint ssaoNoiseTex;
 		static std::vector<glm::vec3> ssaoKernel;
+
+		// --- SSR (Screen Space Reflections) ---
+		static GLuint ssrFBO;
+		static GLuint ssrColorBuffer;       // rgb = reflection color, a = hit confidence/mask
+		static GLuint ssrBlurFBO;
+		static GLuint ssrBlurColorBuffer;   // ssrColorBuffer borrado por um kernel cujo raio escala com a roughness do pixel
+		static GLuint ssrCompositeFBO;
+		static GLuint ssrCompositeColorBuffer; // composited result (scene + SSR); blitted back into mainColorBuffer
+		static GLuint ssrShader;
+		static GLuint ssrBlurShader;        // borra ssrColorBuffer (raio ~ roughness) antes do composite — aproxima reflexo "glossy"
+		static GLuint ssrCompositeShader;   // adds ssrBlurColorBuffer on top of mainColorBuffer (writes into ssrCompositeColorBuffer)
+		static bool   SSR_ENABLED;
+		static float  SSR_MAX_DISTANCE;     // view-space units the ray is allowed to travel
+		static float  SSR_THICKNESS;        // depth thickness tolerance multiplier (scaled by scene distance per-sample, not an absolute value)
+		static int    SSR_MAX_STEPS;        // linear march steps before binary refinement
+		static int    SSR_BINARY_STEPS;     // binary-search refinement steps
+		static float  SSR_FADE_SCREEN_EDGE; // 0..1, how much of the screen border fades the reflection out
+		static float  SSR_STRIDE;           // march step multiplier (scaled by view distance from camera, not an absolute value)
+		static float  SSR_MAX_BLUR_RADIUS;  // raio do blur (em pixels de tela) atingido em roughness = 1.0; 0 desliga o blur
 
 		// --- IBL ---
 		static GLuint iblIrradianceMap;    // samplerCube — diffuse irradiance

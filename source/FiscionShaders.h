@@ -267,6 +267,8 @@ const vec3 gridSamplingOffset[PCF_SAMPLES] = vec3[](
 );
 
 out vec4 FragColor;
+layout(location = 1) out vec4 NormalRough;
+layout(location = 2) out float MetallicOut;
 
 in VS_OUT {
     vec3 FragPos;
@@ -307,8 +309,8 @@ uniform float transmissionFactor;
 uniform int hasNormalMap;
 uniform int numLights;
 
-uniform sampler2D aoTex;    // Ambient Occlusion Map (canal R = AO factor)
-uniform int hasAOMap;       // 1 se a textura está presente, 0 caso contrário
+uniform sampler2D aoTex;
+uniform int hasAOMap;
 
 uniform int lightType[15];
 uniform vec3 lightPos[15];
@@ -371,25 +373,15 @@ float interleavedGradientNoise(vec2 n) {
 }
 
 vec3 ShadowTintColor(vec3 lightCol, float shadowAmt) {
-    // Cor ambiente média (céu + chão), usada como base da luz que ainda
-    // "vaza" para dentro da sombra via dispersão/GI aproximada.
     vec3 ambientAvg = (environmentSkyColor + environmentGroundColor) * 0.5;
 
-    // Tinta complementar: desloca a cor da sombra para o lado oposto do
-    // espectro da luz principal (luz quente -> sombra fria, e vice-versa).
     vec3 complementary = vec3(1.0) - lightCol;
 
-    // Mistura ambiente + complementar como a "cor de fundo" da sombra.
     vec3 scatterColor = mix(ambientAvg, complementary, 0.35);
     scatterColor = max(scatterColor, vec3(0.02)); // nunca cai pra preto absoluto
 
-    // Quanto mais forte a sombra (oclusão total), mais a cor de dispersão
-    // domina e mais escuro fica; em penumbras parciais, mistura suave.
     float occlusion = clamp(shadowAmt, 0.0, 1.0);
 
-    // Fator de escurecimento varia com a luminância da cor de dispersão:
-    // ambientes com luz ambiente forte geram sombras mais claras;
-    // ambientes escuros geram sombras quase pretas, porém com a tinta.
     float scatterLum = dot(scatterColor, vec3(0.299, 0.587, 0.114));
     float darken = mix(1.0, 0.08 + 0.4 * scatterLum, occlusion);
 
@@ -553,17 +545,14 @@ void main() {
   } else if (hasGlossinessMap == 1) {
     float glossiness = texture(glossinessTex, fs_in.TexCoords).a;
     roughness = 1.0 - glossiness;
-    // metallic não existe neste workflow — usar 0 para não suprimir kD
     metallic = 0.0;
 
     if (hasSpecularF0Map == 1) {
-      // Os canais RGB da specularGlossinessTexture já vêm linearizados pelo GL_SRGB
       F0_base = texture(specularF0Tex, fs_in.TexCoords).rgb;
     } else {
       F0_base = vec3(0.04);
     }
   } else {
-    // Sem textura: apenas fatores escalares do material
     metallic  = metallicFactor;
     roughness = roughnessFactor;
     F0_base   = mix(vec3(0.04), baseColor, metallic);
@@ -600,11 +589,15 @@ void main() {
     vec3 kS_amb = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0_base, roughness);
     vec3 kD_amb = (vec3(1.0) - kS_amb) * (1.0 - metallic);
     const float IBL_SAMPLE_MAX = 20.0;
-    vec3 irradiance = min(texture(irradianceMap, N).rgb, vec3(IBL_SAMPLE_MAX));
+
+    vec3 irradianceDir = N;
+    vec3 reflectDirForSample = reflect(-V, N);
+
+    vec3 irradiance = min(texture(irradianceMap, irradianceDir).rgb, vec3(IBL_SAMPLE_MAX));
     vec3 diffuse_ibl = irradiance * baseColor;
 
     const float MAX_REFLECTION_LOD = 4.0;
-    vec3 R = reflect(-V, N);
+    vec3 R = reflectDirForSample;
     vec3 prefilteredColor = min(textureLod(prefilterMap, R, roughness * MAX_REFLECTION_LOD).rgb, vec3(IBL_SAMPLE_MAX));
     vec2 envBRDF = texture(brdfLUT, vec2(max(dot(N, V), 0.0), roughness)).rg;
     vec3 specular_ibl = prefilteredColor * (F0_base * envBRDF.x + envBRDF.y) * reflectionsStrength;
@@ -728,6 +721,16 @@ void main() {
 
   #undef ACES
   #undef TO_SRGB
+
+  
+  if (alphaMode == 2) {
+    NormalRough = vec4(0.0, 0.0, 0.0, -1.0);
+    MetallicOut = 0.0; // irrelevante: sentinela nr.a<0 já descarta o pixel antes de ler isso no SSR
+  } else {
+    vec3 viewSpaceN = normalize(mat3(view) * N);
+    NormalRough = vec4(viewSpaceN, roughness);
+    MetallicOut = metallic;
+  }
 }
 )";
 
@@ -1238,6 +1241,367 @@ void main() {
     FragColor = result / 25.0;
 }
 )";
+
+// ============================================================
+// SSR (Screen Space Reflections)
+// ============================================================
+// Ray march em view-space sobre o depth buffer da cena já renderizada (mainDepthBuffer),
+// usando o "G-buffer-lite" (mainNormalRoughBuffer: normal view-space + roughness) escrito
+// pelo fragment shader principal. Roda como passe de pós-processamento (mesmo padrão do
+// SSAO): não há acoplamento com o shader de material, então funciona em cima do forward
+// renderer existente sem reescrever o pipeline de shading.
+//
+// Saída: ssrColorBuffer.rgb = cor refletida (já amostrada de mainColorBuffer no ponto de
+// hit), ssrColorBuffer.a = confiança do hit (0 = sem reflexo, o material mantém seu
+// specular_ibl normal vindo do prefiltered cubemap; até 1 = hit sólido e confiável em tela).
+// Esse resultado bruto passa por um blur roughness-aware (ssrBlurFragment, logo abaixo —
+// raio do kernel escala com a roughness do pixel, simulando a dispersão de um reflexo glossy
+// que o ray march em si, sendo um raio de espelho perfeito, não produz) antes de chegar ao
+// composite. O composite (ssrCompositeFragment, mais abaixo) funde por interpolação —
+// mix(sceneColor, ssrColor, blend) — e não por soma, então a contribuição de SSR substitui
+// parte do specular já presente na cena em vez de se somar a ele (evitando reflexos
+// "estourados"/duplicados).
+const char* ssrFragment = R"(
+#version 330 core
+out vec4 FragColor;
+in vec2 TexCoords;
+
+uniform sampler2D depthTexture;
+uniform sampler2D colorTexture;
+uniform sampler2D normalRoughTexture;
+
+uniform mat4 projection;
+uniform mat4 invProjection;
+
+uniform vec2 screenSize;
+uniform float nearPlane;
+uniform float farPlane;
+
+uniform float maxDistance;
+uniform float thickness;
+uniform int   maxSteps;
+uniform int   binarySteps;
+uniform float stride;
+uniform float edgeFade;
+
+vec3 ViewPosFromDepth(vec2 uv, float depth) {
+    vec4 clip = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    vec4 view = invProjection * clip;
+    return view.xyz / view.w;
+}
+
+// Projeta um ponto em view-space para coordenadas de tela [0,1] + a profundidade não-linear
+// ([0,1], igual ao que está armazenado no depth buffer) correspondente a esse ponto.
+vec3 ViewToScreen(vec3 viewPos) {
+    vec4 clip = projection * vec4(viewPos, 1.0);
+    vec3 ndc = clip.xyz / clip.w;
+    return vec3(ndc.xy * 0.5 + 0.5, ndc.z * 0.5 + 0.5);
+}
+
+void main() {
+    float depth = texture(depthTexture, TexCoords).r;
+    if (depth >= 0.9999) {
+        // Céu / sem geometria opaca: não há o que refletir.
+        FragColor = vec4(0.0, 0.0, 0.0, 0.0);
+        return;
+    }
+
+    vec4 nr = texture(normalRoughTexture, TexCoords);
+    if (nr.a < 0.0) {
+        // Sentinela: pixel pertence a uma malha BLEND (não participa do SSR).
+        FragColor = vec4(0.0, 0.0, 0.0, 0.0);
+        return;
+    }
+
+    vec3 N = normalize(nr.rgb);
+    float roughness = clamp(nr.a, 0.0, 1.0);
+
+    vec3 viewPos = ViewPosFromDepth(TexCoords, depth);
+    vec3 incident = normalize(viewPos); // câmera na origem em view-space: direção do olho até a superfície
+    vec3 R = normalize(reflect(incident, N));
+
+    // Superfícies extremamente rugosas (quase difusas) não rendem nada útil: o custo do march
+    // não compensa. O fade suave por roughness fica a cargo do composite (ssrCompositeFragment),
+    // que já reduz a contribuição gradualmente — aqui só cortamos o caso extremo para economizar
+    // os passos do march em pixels que de qualquer forma terão blend ~0.
+    if (roughness > 0.95) {
+        FragColor = vec4(0.0, 0.0, 0.0, 0.0);
+        return;
+    }
+
+    // viewPos.z é negativo (câmera olha para -Z) e cresce em módulo com a distância — usamos
+    // |viewPos.z| para escalar o offset/stride/thickness com a distância da câmera. Um offset
+    // fixo em metros (ex.: 0.02) é insignificante a 50m de distância (causa self-intersection
+    // logo no 1º passo, gerando ruído/falsos-hits) e exagerado a 0.5m de distância. Escalar
+    // por uma fração da profundidade resolve ambos os casos com os mesmos parâmetros.
+    float viewDist = max(abs(viewPos.z), nearPlane);
+    float originBias = max(viewDist * 0.01, 0.015);
+
+    // Empurra a origem do raio para fora da superfície ao longo da normal, evitando
+    // auto-interseção imediata (self-hit) no primeiro passo do march.
+    vec3 rayOrigin = viewPos + N * originBias;
+
+    // Step também escalado pela distância: perto da câmera os steps precisam ser pequenos
+    // (mais precisão), longe podem ser maiores (mesmo alcance em menos iterações).
+    float rayStride = max(stride * viewDist * 0.1, 0.02);
+    int steps = max(maxSteps, 1);
+
+    vec3 prevSamplePos = rayOrigin;
+    vec3 hitColor = vec3(0.0);
+    float hitConfidence = 0.0;
+    vec2 hitUV = vec2(0.0);
+
+    bool found = false;
+    vec3 samplePos = rayOrigin;
+
+    for (int i = 1; i <= steps; i++) {
+        prevSamplePos = samplePos;
+        samplePos = rayOrigin + R * (rayStride * float(i));
+
+        float travelled = length(samplePos - rayOrigin);
+        if (travelled > maxDistance) break;
+
+        vec3 screenPos = ViewToScreen(samplePos);
+        if (screenPos.x < 0.0 || screenPos.x > 1.0 || screenPos.y < 0.0 || screenPos.y > 1.0) break;
+        if (screenPos.z < 0.0 || screenPos.z > 1.0) break;
+
+        float sceneDepth = texture(depthTexture, screenPos.xy).r;
+        if (sceneDepth >= 0.9999) continue; // céu nessa direção, sem hit possível aqui
+
+        vec3 sceneViewPos = ViewPosFromDepth(screenPos.xy, sceneDepth);
+
+        // Compara profundidade ao longo do eixo da câmera (view-space Z, negativo "para frente").
+        float rayDepthVS = samplePos.z;
+        float sceneDepthVS = sceneViewPos.z;
+
+        // Tolerância de espessura escalada pela distância da cena nesse pixel: o depth buffer
+        // não-linear perde precisão rapidamente longe da câmera, então uma tolerância fixa
+        // (ex.: 0.4 sempre) ou é grossa demais perto (aceita hits errados/manchas na lataria)
+        // ou fina demais longe (rejeita hits válidos, deixando superfícies distantes "apagadas").
+        float thicknessScaled = max(thickness * max(abs(sceneDepthVS), nearPlane) * 0.05, thickness * 0.1);
+
+        // O raio "passou por trás" da geometria: possível hit. A tolerância evita falsos
+        // positivos atravessando objetos finos/distantes ao longo do raio.
+        if (rayDepthVS <= sceneDepthVS) {
+            float depthDelta = sceneDepthVS - rayDepthVS;
+            if (depthDelta < thicknessScaled) {
+                // Refinamento por busca binária entre prevSamplePos (na frente da superfície)
+                // e samplePos (atrás dela), para convergir no ponto exato de interseção.
+                vec3 lo = prevSamplePos;
+                vec3 hi = samplePos;
+                vec2 refinedUV = screenPos.xy;
+
+                for (int b = 0; b < binarySteps; b++) {
+                    vec3 mid = mix(lo, hi, 0.5);
+                    vec3 midScreen = ViewToScreen(mid);
+                    if (midScreen.x < 0.0 || midScreen.x > 1.0 || midScreen.y < 0.0 || midScreen.y > 1.0) {
+                        hi = mid;
+                        continue;
+                    }
+                    float midSceneDepth = texture(depthTexture, midScreen.xy).r;
+                    if (midSceneDepth >= 0.9999) {
+                        hi = mid;
+                        continue;
+                    }
+                    vec3 midSceneViewPos = ViewPosFromDepth(midScreen.xy, midSceneDepth);
+                    if (mid.z <= midSceneViewPos.z) {
+                        hi = mid;
+                        refinedUV = midScreen.xy;
+                    } else {
+                        lo = mid;
+                    }
+                }
+
+                hitUV = refinedUV;
+                hitColor = texture(colorTexture, hitUV).rgb;
+                found = true;
+
+                // Confiança: cai perto das bordas da tela e perto do limite de maxDistance,
+                // para que a transição para o fallback de IBL (no shader de material) seja suave
+                // em vez de um corte abrupto quando o raio sai do que está visível em tela.
+                vec2 edgeDist = min(hitUV, 1.0 - hitUV);
+                float screenEdgeFactor = smoothstep(0.0, edgeFade, min(edgeDist.x, edgeDist.y));
+
+                float distFactor = 1.0 - smoothstep(maxDistance * 0.75, maxDistance, travelled);
+
+                // Reflexos quase tangentes à tela (R quase perpendicular ao eixo da câmera)
+                // sofrem de baixa precisão numérica no march (passos minúsculos em screen-space
+                // por grande distância percorrida em view-space) — atenua só esse extremo.
+                // A variação "visual" de intensidade por ângulo (Fresnel) fica a cargo do
+                // composite, que é o lugar fisicamente correto para isso.
+                float facingFactor = smoothstep(0.0, 0.15, abs(incident.z));
+
+                hitConfidence = screenEdgeFactor * distFactor * facingFactor;
+                break;
+            }
+        }
+    }
+
+    if (!found) {
+        FragColor = vec4(0.0, 0.0, 0.0, 0.0);
+        return;
+    }
+
+    FragColor = vec4(hitColor, clamp(hitConfidence, 0.0, 1.0));
+}
+)";
+
+// Borra ssrColorBuffer com raio escalado pela roughness do pixel central (lida de
+// mainNormalRoughBuffer), aproximando o espalhamento que um reflexo "glossy" real teria.
+// O ray march em ssrFragment sempre traça um raio de espelho perfeito (sem dispersão), então
+// sem este passe a única coisa que a roughness mudava era a OPACIDADE da reflexão no composite
+// — a imagem refletida em si continuava perfeitamente nítida em qualquer roughness abaixo do
+// início da janela de fade. Isso faz superfícies de roughness média (lataria suja, plástico,
+// concreto polido) refletirem com nitidez de espelho em vez do brilho difuso esperado.
+//
+// Acumula em espaço premultiplied-alpha (rgb * a) — se fizéssemos a média direta de rgb,
+// pixels vizinhos sem hit (a = 0, rgb indefinido/zero) vazariam preto pro resultado borrado
+// mesmo perto da borda de um reflexo válido. Dividindo por alphaSum no final, só a cor dos
+// vizinhos que de fato tinham reflexo entra na média.
+const char* ssrBlurFragment = R"(
+#version 330 core
+out vec4 FragColor;
+in vec2 TexCoords;
+
+uniform sampler2D ssrInput;           // ssrColorBuffer bruto (rgb = cor do hit, a = confiança)
+uniform sampler2D normalRoughTexture; // só a roughness (canal a) é usada aqui
+uniform vec2 screenSize;
+uniform float maxBlurRadius;          // raio em pixels atingido quando roughness = 1.0; 0 desliga o blur
+
+void main() {
+    vec4 center = texture(ssrInput, TexCoords);
+
+    // Sem hit no pixel central: nada a borrar, e não queremos que o blur "invente" um reflexo
+    // aqui a partir só dos vizinhos — isso vazaria reflexo pra fora da silhueta do hit original.
+    if (center.a <= 0.0) {
+        FragColor = vec4(0.0);
+        return;
+    }
+
+    float roughness = clamp(texture(normalRoughTexture, TexCoords).a, 0.0, 1.0);
+    float radiusPx = roughness * maxBlurRadius;
+
+    // Reflexo praticamente espelhado: não vale gastar as 24 amostras extras do kernel.
+    if (radiusPx < 0.6) {
+        FragColor = center;
+        return;
+    }
+
+    vec2 texel = radiusPx / screenSize;
+
+    vec3 colorSum = center.rgb * center.a;
+    float alphaSum = center.a;
+    float weightSum = 1.0;
+
+    for (int x = -2; x <= 2; x++) {
+        for (int y = -2; y <= 2; y++) {
+            if (x == 0 && y == 0) continue;
+            vec4 s = texture(ssrInput, TexCoords + vec2(float(x), float(y)) * texel);
+            colorSum += s.rgb * s.a;
+            alphaSum += s.a;
+            weightSum += 1.0;
+        }
+    }
+
+    float finalAlpha = alphaSum / weightSum;
+    vec3 finalColor = (alphaSum > 0.0001) ? (colorSum / alphaSum) : vec3(0.0);
+
+    FragColor = vec4(finalColor, finalAlpha);
+}
+)";
+
+// Funde o resultado do ray march já borrado (ssrBlurColorBuffer) com a cena (mainColorBuffer),
+// ponderado pela roughness/metallic da superfície (vindos do G-buffer-lite) e pela confiança
+// do hit. Escreve em ssrCompositeColorBuffer (FBO dedicado) — nunca em mainColorBuffer
+// diretamente, já que este último é uma das texturas de entrada lidas no mesmo draw call
+// (ler e escrever a mesma textura simultaneamente é UB em OpenGL). O chamador (PostProcessing)
+// copia o resultado de volta para mainColorBuffer com um blit logo em seguida.
+const char* ssrCompositeFragment = R"(
+#version 330 core
+out vec4 FragColor;
+in vec2 TexCoords;
+
+uniform sampler2D sceneColorTexture;
+uniform sampler2D ssrTexture;
+uniform sampler2D normalRoughTexture;
+uniform sampler2D depthTexture;
+uniform sampler2D metallicTexture;
+uniform mat4 invProjection;
+uniform float reflectionsStrength;
+
+vec3 ViewPosFromDepth(vec2 uv, float depth) {
+    vec4 clip = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    vec4 view = invProjection * clip;
+    return view.xyz / view.w;
+}
+
+void main() {
+    vec3 sceneColor = texture(sceneColorTexture, TexCoords).rgb;
+    vec4 ssr = texture(ssrTexture, TexCoords);
+    vec4 nr = texture(normalRoughTexture, TexCoords);
+
+    if (ssr.a <= 0.0 || nr.a < 0.0) {
+        FragColor = vec4(sceneColor, 1.0);
+        return;
+    }
+
+    float roughness = clamp(nr.a, 0.0, 1.0);
+    // Reduz a intensidade conforme a rugosidade aumenta: um SSR "espelhado" sobre uma
+    // superfície rugosa não é fisicamente coerente (precisaria de um blur por roughness,
+    // que este passe simples não faz), então deixamos a contribuição morrer suavemente
+    // e o specular_ibl (já calculado por material) assume o protagonismo nesse caso.
+    // Janela mais larga (0.55→0.95) que antes: superfícies de roughness média (chão molhado,
+    // asfalto, poças — tipicamente 0.3~0.6) mantêm reflexo visível em vez de já começarem
+    // esmaecidas a partir de 0.35.
+    float roughnessFade = 1.0 - smoothstep(0.55, 0.95, roughness);
+
+    // Fresnel real (Schlick + roughness): sem isso, o reflexo aparece com a mesma força
+    // olhando de frente ou de raspão para a superfície, o que faz a cor refletida (ex.: chão
+    // marrom atrás do carro) parecer um "decalque" colado na lataria em vez de um reflexo que
+    // só deveria se intensificar perto das bordas/ângulos rasantes da carroceria.
+    //
+    // F0 físico (igual ao F0_base do shader de material, mix(0.04, baseColor, metallic)):
+    // dielétrico fica em ~0.04, condutor/metal usa a própria reflectância de banda larga, bem
+    // mais alta mesmo de frente (NdotV alto) — metal não tem termo difuso, então essencialmente
+    // toda a resposta visual do material vem do reflexo. Não temos o baseColor exato aqui (já
+    // foi consumido pelo shading direto/IBL antes deste passe), só o canal metallic do
+    // G-buffer-lite — por isso aproximamos a magnitude do F0 metálico por um escalar alto em
+    // vez de tingir com a cor do material.
+    //
+    // IMPORTANTE: o termo de Fresnel abaixo usa max(1.0 - roughness, F0) em vez de só
+    // (1.0 - F0) como "teto" do realce de borda — é a MESMA fórmula que fresnelSchlickRoughness
+    // já usa pro specular_ibl (logo acima no arquivo, na ambient contribution). Isso faz
+    // roughness e metallic atuarem no MESMO termo, não em dois multiplicadores desconexos:
+    // conforme a superfície fica mais rugosa, o pico de brilho na borda (grazing angle) encolhe
+    // e some — uma superfície 100% rugosa não tem mais aquele "aro" de Fresnel, fica uniforme
+    // em F0 independente do ângulo, exatamente como esperado fisicamente.
+    float depth = texture(depthTexture, TexCoords).r;
+    vec3 viewPos = ViewPosFromDepth(TexCoords, depth);
+    vec3 V = normalize(-viewPos);
+    vec3 N = normalize(nr.rgb);
+    float NdotV = clamp(dot(N, V), 0.0, 1.0);
+
+    float metallic = clamp(texture(metallicTexture, TexCoords).r, 0.0, 1.0);
+    float F0_scalar = mix(0.04, 0.9, metallic);
+    float fresnel = F0_scalar + (max(1.0 - roughness, F0_scalar) - F0_scalar) * pow(1.0 - NdotV, 5.0);
+    // O termo de Fresnel acima já é fisicamente completo (vai de F0_scalar de frente até
+    // ~(1-roughness) em ângulo rasante). O piso do realce de borda precisa escalar com o
+    // próprio F0_scalar do material, e não ser um valor fixo: um piso fixo (ex.: 0.5)
+    // sobrescreve o F0 baixo de dielétricos (tinta, plástico, ~0.04) e força um reflexo
+    // perceptível mesmo olhando de frente para a lataria — exatamente o "decalque" de chão
+    // refletido indesejavelmente na carroceria. Usando F0_scalar como piso, a reflexão de
+    // frente cai para perto do F0 real do material (quase nula em dielétricos, alta em
+    // metais) e só cresce de fato perto da borda/ângulo rasante, como o Fresnel físico prevê.
+    float fresnelFactor = mix(F0_scalar, 1.0, fresnel);
+
+    float blend = clamp(ssr.a * roughnessFade * fresnelFactor * reflectionsStrength, 0.0, 1.0);
+    vec3 result = mix(sceneColor, ssr.rgb, blend);
+
+    FragColor = vec4(result, 1.0);
+}
+)";
+
+
 
 // ============================================================
 // IBL PRE-COMPUTATION SHADERS
