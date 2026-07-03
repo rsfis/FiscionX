@@ -921,6 +921,7 @@ namespace FiscionX {
 		static struct Raycast {
 			static bool CheckCollisionWithBody(FiscionX::Physics::Rigidbody* body, Vector3 origin, Vector3 end);
 			static const btRigidBody* GetFirstBodyCollided(Vector3 origin, Vector3 end);
+			static const btRigidBody* GetFirstBodyCollided(Vector3 origin, Vector3 end, Vector3& outHitPoint, Vector3& outHitNormal);
 		};
 
 		static void DrawDebugWorld(glm::mat4 projection, glm::mat4 view);

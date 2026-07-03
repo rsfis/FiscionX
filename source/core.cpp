@@ -4888,6 +4888,27 @@ const btRigidBody* FiscionX::Physics::Raycast::GetFirstBodyCollided(FiscionX::Ve
 		return nullptr;
 	}
 }
+
+const btRigidBody* FiscionX::Physics::Raycast::GetFirstBodyCollided(FiscionX::Vector3 origin, FiscionX::Vector3 end, FiscionX::Vector3& outHitPoint, FiscionX::Vector3& outHitNormal)
+{
+	btCollisionWorld::ClosestRayResultCallback rayCallback(btVector3(origin.x, origin.y, origin.z), btVector3(end.x, end.y, end.z));
+	FiscionX::Physics::DynamicWorld->rayTest(btVector3(origin.x, origin.y, origin.z), btVector3(end.x, end.y, end.z), rayCallback);
+
+	if (rayCallback.hasHit())
+	{
+		const btRigidBody* hitBody = btRigidBody::upcast(rayCallback.m_collisionObject);
+
+		if (hitBody) {
+			const btVector3& p = rayCallback.m_hitPointWorld;
+			const btVector3& n = rayCallback.m_hitNormalWorld;
+			outHitPoint = FiscionX::Vector3(p.x(), p.y(), p.z());
+			outHitNormal = FiscionX::Vector3(n.x(), n.y(), n.z());
+			return hitBody;
+		}
+	}
+
+	return nullptr;
+}
 // =================== CORE ===================
 void FiscionX::Core::CreateShadowMap(ShadowMap& sm, int LIGHT_TYPE) {
 	glGenFramebuffers(1, &sm.fbo);
