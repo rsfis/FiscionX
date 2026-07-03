@@ -4345,6 +4345,14 @@ void FiscionX::Physics::Rigidbody::applyTorqueImpulse(FiscionX::Vector3 torqueIm
 	}
 }
 
+FiscionX::Vector3 FiscionX::Physics::Rigidbody::getLinearVelocity() {
+	if (body) {
+		btVector3 vel = body->getLinearVelocity();
+
+		return FiscionX::Vector3(vel.x(), vel.y(), vel.z());
+	}
+}
+
 void FiscionX::Physics::Rigidbody::setLinearVelocity(FiscionX::Vector3 velocity) {
 	if (body) {
 		body->setLinearVelocity(btVector3(velocity.x, velocity.y, velocity.z));

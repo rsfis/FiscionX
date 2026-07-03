@@ -830,6 +830,7 @@ namespace FiscionX {
 			void applyCentralForce(Vector3 force);
 			void applyCentralImpulse(Vector3 impulse);
 			void applyTorqueImpulse(Vector3 torqueImpulse);
+			Vector3 getLinearVelocity();
 			void setLinearVelocity(Vector3 velocity);
 			void setAngularVelocity(Vector3 velocity);
 			void setTransform(Vector3 position, Vector3 rotation);

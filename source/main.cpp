@@ -369,6 +369,7 @@ void update() {
     static bool f1WasPressed = false;
     bool f1IsPressed = FiscionX::Input::GetKeyPressed(FISCIONX_KEY_F1);
     if (f1IsPressed && !f1WasPressed) {
+        FiscionX::Core::Camera.canLook = !FiscionX::Core::Camera.canLook;
         showSettingsPanel = !showSettingsPanel;
     }
     f1WasPressed = f1IsPressed;
@@ -508,6 +509,7 @@ int main() {
 
     // ImGui precisa ser inicializado DEPOIS de NewWindow (contexto OpenGL/GLFW já existe)
     InitImGui();
+    showSettingsPanel = false;
 
     FiscionX::Core::AMBIENT_LIGHT_INTENSITY = 0.4f;
     FiscionX::Core::HDR_EXPOSURE = 1.0f;
@@ -518,7 +520,7 @@ int main() {
     FiscionX::Core::SSR_MAX_STEPS = 48;
     FiscionX::Core::SSR_BINARY_STEPS = 6;
     FiscionX::Core::SSR_STRIDE = 0.35f;
-    FiscionX::Core::SSR_FADE_SCREEN_EDGE = 0.15f;
+    FiscionX::Core::SSR_FADE_SCREEN_EDGE = 0.0f;
     FiscionX::Core::SSR_MAX_BLUR_RADIUS = 10.0f;
 
     FiscionX::Core::SSAO_ENABLED = true;
@@ -566,7 +568,7 @@ int main() {
         FiscionX::Vector3(2.1f, 2.1f, 2.1f)
     );
     boxModel = new FiscionX::Model(
-        "assets/models/tree_scene2.glb"
+        "assets/models/seoul2.glb"
     );
     boxModel->addInstance(
         FiscionX::Vector3(0, 0.09f, 4.2f),
