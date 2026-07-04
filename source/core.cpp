@@ -4746,6 +4746,7 @@ btTriangleMesh* FiscionX::Physics::LoadMeshFromFile(const char* path, FiscionX::
 
 FiscionX::Physics::Shape FiscionX::Physics::CreateMeshShape(const char* path, FiscionX::Vector3 position, FiscionX::Vector3 rotation, FiscionX::Vector3 scale, float mass) {
 	btGImpactMeshShape* newshape = new btGImpactMeshShape(FiscionX::Physics::LoadMeshFromFile(path, scale));
+	newshape->updateBound();
 	btTransform start;
 	start.setIdentity();
 	start.setRotation(btQuaternion(rotation.x, rotation.y, rotation.z));
