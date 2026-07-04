@@ -1126,6 +1126,8 @@ namespace FiscionX {
 			GLint alpha = -1, numLights = -1;
 			GLint hasNormalMap = -1;
 			GLint hdrExposure = -1;
+			// Fog uniforms
+			GLint fogColor = -1, fogDensity = -1, fogStart = -1, fogEnd = -1, fogType = -1;
 			// IBL uniforms
 			GLint irradianceMap = -1, prefilterMap = -1, brdfLUT = -1, hasIBL = -1;
 			// Uniforms de luz (até 10)
@@ -1325,6 +1327,13 @@ namespace FiscionX {
 		static GLuint iblBrdfLUT;          // sampler2D   — BRDF integration LUT
 		static bool   iblReady;            // true after successful pre-computation
 		// -----------
+
+		//---- FOG ----
+		static Vector3 fogColor;
+		static float fogDensity;
+		static float fogStart;
+		static float fogEnd;
+		static int fogType;
 
 		static float sunDiskSize;
 		static float sunHaloSize;

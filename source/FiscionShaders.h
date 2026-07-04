@@ -278,6 +278,7 @@ in VS_OUT {
     vec2 TexCoords;
     vec4 FragPosLightSpace[15];
 } fs_in;
+in vec3 FragViewPos;
 
 uniform float reflectionsStrength = 0.5;
 uniform sampler2D baseColorTex;
@@ -335,6 +336,12 @@ uniform vec3 environmentGroundColor;
 uniform int isAffectedByLight;
 uniform int acceptsShadows;
 uniform float hdrExposure = 1.0;
+
+uniform vec3 fogColor;
+uniform float fogDensity; // For Exp/Exp2
+uniform float fogStart;   // For Linear
+uniform float fogEnd;     // For Linear
+uniform int fogType;      // 0: Linear, 1: Exp, 2: Exp2
 
 const float diskRadius = 0.1;
 
@@ -710,19 +717,38 @@ void main() {
   #define ACES(c) clamp(((c)*(2.51*(c)+0.03))/((c)*(2.43*(c)+0.59)+0.14),0.0,1.0)
   #define TO_SRGB(c) pow(max((c),vec3(0.0)),vec3(1.0/2.2))
 
+
+  float distance = length(FragViewPos);
+  float fogFactor = 1.0;
+  if (fogType == 0) {
+      fogFactor = (fogEnd - distance) / (fogEnd - fogStart);
+  } 
+  else if (fogType == 1) {
+      // Exponential Fog
+      fogFactor = exp(-fogDensity * distance);
+  } 
+  else if (fogType == 2) {
+      // Exponential Squared Fog
+      fogFactor = exp(-pow(fogDensity * distance, 2.0));
+  }
+  fogFactor = clamp(fogFactor, 0.0, 1.0);  
+
+
+  vec4 finalPixelColour;
   if (isAffectedByLight == 0) {
     vec3 fallback = ambientContribution + ambientSum;
     fallback = max(fallback, baseColor * 0.7);
     fallback = mix(fallback, fallback + transLight, transAmt);
-    FragColor = vec4(TO_SRGB(ACES(fallback * hdrExposure)), (alphaMode == 2 ? baseSample.a : 1.0));
+    finalPixelColour = vec4(TO_SRGB(ACES(fallback * hdrExposure)), (alphaMode == 2 ? baseSample.a : 1.0));
   } else {
-    FragColor = vec4(TO_SRGB(ACES(result * hdrExposure)), (alphaMode == 2 ? baseSample.a : 1.0));
+    finalPixelColour = vec4(TO_SRGB(ACES(result * hdrExposure)), (alphaMode == 2 ? baseSample.a : 1.0));
   }
+// With Fog
+  FragColor = vec4(mix(fogColor, finalPixelColour.rgb, fogFactor), finalPixelColour.a);
 
   #undef ACES
   #undef TO_SRGB
 
-  
   if (alphaMode == 2) {
     NormalRough = vec4(0.0, 0.0, 0.0, -1.0);
     MetallicOut = 0.0; // irrelevante: sentinela nr.a<0 já descarta o pixel antes de ler isso no SSR
@@ -840,6 +866,8 @@ out VS_OUT {
     vec4 FragPosLightSpace[15];
 } vs_out;
 
+out vec3 FragViewPos;
+
 uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
@@ -857,11 +885,13 @@ vec4 skinPosition(vec4 pos) {
 }
 
 void main() {
+    vec4 viewPos = view * model * vec4(aPos, 1.0);
+    FragViewPos = viewPos.xyz;
+
     vec4 skinned = skinPosition(vec4(aPos, 1.0));
     vec4 worldPos = model * skinned;
     vs_out.FragPos = worldPos.xyz;
 
-    // OPTIM: use precomputed normalMatrix uniform instead of per-vertex inverse
     vs_out.Normal = normalize(normalMatrix * aNormal);
 
     vec3 T = normalize(mat3(model) * aTangent.xyz);
@@ -880,14 +910,6 @@ void main() {
 }
 )";
 
-// OPTIM: normalMatrix is precomputed on the CPU and uploaded as a uniform
-// instead of calling transpose(inverse(model)) per-vertex on the GPU.
-// mat3(transpose(inverse(model))) involves a full 4x4 matrix inverse inside
-// every vertex invocation — that is O(N_verts) matrix inversions per frame.
-// The CPU computes it once per draw call and sends it via the "normalMatrix" uniform.
-// NOTE: Add "uniform mat3 normalMatrix;" to vertexStatic and vertexSkinned,
-//       and set it from CPU before each drawSubMesh call.  If non-uniform scale
-//       is never used, mat3(model) is also acceptable (avoids the inverse entirely).
 const char* vertexStatic = R"(
 #version 330 core
 layout(location = 0) in vec3 aPos;
@@ -904,6 +926,8 @@ out VS_OUT {
     vec4 FragPosLightSpace[15];
 } vs_out;
 
+out vec3 FragViewPos;
+
 uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
@@ -912,6 +936,9 @@ uniform mat4 lightSpaceMatrices[15]; // um por luz
 uniform mat3 normalMatrix;
 
 void main() {
+    vec4 viewPos = view * model * vec4(aPos, 1.0);
+    FragViewPos = viewPos.xyz;
+
     vec4 worldPos = model * vec4(aPos, 1.0);
     vs_out.FragPos = worldPos.xyz;
 

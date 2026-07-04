@@ -499,6 +499,12 @@ void draw() {
 }
 
 int main() {
+    // Shape Keys; Reflection Probes; Displacement Map & SPOM; Emission Textures; Lights extracted from glb; 
+    // Anim Blending; Draw halo and glow also for point lights and spot lights; 
+    // Point lights are traversing walls/solid objects;
+    // Sliders; Viewports; UI Masks; Model Cache; Particles; Ambient Occlusion; 
+    // Terrains; Water
+
     FiscionX::Core::Set3DSettings(3048, 1024, 512, { 15.0f, 70.0f, 150.0f }, 0.01f, 1000.0f, true);
     FiscionX::Core::SetCacheSettings(true, true);
     FiscionX::Core::NewWindow(1280, 720, "FiscionX");
@@ -528,6 +534,12 @@ int main() {
     FiscionX::Core::SSAO_BIAS = 0.025f;
     FiscionX::Core::SSAO_INTENSITY = 1.5f;
     FiscionX::Core::SSAO_GI_STRENGTH = 0.6f;
+
+    FiscionX::Core::fogColor = FiscionX::Vector3(0.4f, 0.4f, 0.45f);
+    FiscionX::Core::fogDensity = 0.015f;
+    FiscionX::Core::fogStart = 30.0f;
+    FiscionX::Core::fogEnd = 120.0f;
+    FiscionX::Core::fogType = 2;
 
     dirLight = new FiscionX::Light();
     dirLight->type = FiscionX::LIGHT_DIRECTIONAL;

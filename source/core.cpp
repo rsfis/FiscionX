@@ -57,6 +57,12 @@ float  FiscionX::Core::SSR_FADE_SCREEN_EDGE = 0.15f;
 float  FiscionX::Core::SSR_STRIDE = 0.35f;
 float  FiscionX::Core::SSR_MAX_BLUR_RADIUS = 10.0f;
 
+FiscionX::Vector3 FiscionX::Core::fogColor = FiscionX::Vector3(0.4f, 0.4f, 0.45f);
+float FiscionX::Core::fogDensity = 0.015f;
+float FiscionX::Core::fogStart = 30.0f;
+float FiscionX::Core::fogEnd = 120.0f;
+int FiscionX::Core::fogType = 2;
+
 float FiscionX::Core::sunDiskSize = 0.030;
 float FiscionX::Core::sunHaloSize = 0.3;
 FiscionX::Vector3 FiscionX::Core::sunColor(1.0, 0.95, 0.8);
@@ -3605,6 +3611,11 @@ void FiscionX::Model::drawSubMesh(
 		uniformCache.acceptsShadows = glGetUniformLocation(shader, "acceptsShadows");
 		uniformCache.alpha = glGetUniformLocation(shader, "alpha");
 		uniformCache.hdrExposure = glGetUniformLocation(shader, "hdrExposure");
+		uniformCache.fogColor = glGetUniformLocation(shader, "fogColor");
+		uniformCache.fogDensity = glGetUniformLocation(shader, "fogDensity");
+		uniformCache.fogStart = glGetUniformLocation(shader, "fogStart");
+		uniformCache.fogEnd = glGetUniformLocation(shader, "fogEnd");
+		uniformCache.fogType = glGetUniformLocation(shader, "fogType");
 		uniformCache.numLights = glGetUniformLocation(shader, "numLights");
 		uniformCache.metallicFactor = glGetUniformLocation(shader, "metallicFactor");
 		uniformCache.roughnessFactor = glGetUniformLocation(shader, "roughnessFactor");
@@ -3758,6 +3769,11 @@ void FiscionX::Model::drawSubMesh(
 	glUniform1i(uniformCache.acceptsShadows, inst->acceptsShadows ? 1 : 0);
 	glUniform1f(uniformCache.alpha, alpha);
 	glUniform1f(uniformCache.hdrExposure, FiscionX::Core::HDR_EXPOSURE);
+	glUniform3f(uniformCache.fogColor, FiscionX::Core::fogColor.x, FiscionX::Core::fogColor.y, FiscionX::Core::fogColor.z);
+	glUniform1f(uniformCache.fogDensity, FiscionX::Core::fogDensity);
+	glUniform1f(uniformCache.fogStart, FiscionX::Core::fogStart);
+	glUniform1f(uniformCache.fogEnd, FiscionX::Core::fogEnd);
+	glUniform1i(uniformCache.fogType, FiscionX::Core::fogType);
 
 	// ── IBL textures (slots 6, 7, 8) ────────────────────────────────────────
 	if (FiscionX::Core::iblReady) {
