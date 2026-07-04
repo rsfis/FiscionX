@@ -83,8 +83,31 @@ int main() {
     FiscionX::Core::SetWindowIcon("assets/icons/fiscionx_logo_big_512.png");
     FiscionX::Core::SetCursorMode(FISCIONX_CURSOR_DISABLED);
     FiscionX::Physics::CreatePhysicsWorld(FiscionX::Vector3(0, -9.81f, 0), 10);
+    FiscionX::Core::LoadHDR("assets/environment/gardens.hdr");
 
-    FiscionX::Core::AMBIENT_LIGHT_INTENSITY = 2.0f;
+    FiscionX::Core::AMBIENT_LIGHT_INTENSITY = 0.4f;
+    FiscionX::Core::HDR_EXPOSURE = 1.0f;
+    
+    FiscionX::Core::SSR_ENABLED = true;
+    FiscionX::Core::SSR_MAX_DISTANCE = 30.0f;
+    FiscionX::Core::SSR_THICKNESS = 1.5f;
+    FiscionX::Core::SSR_MAX_STEPS = 48;
+    FiscionX::Core::SSR_BINARY_STEPS = 6;
+    FiscionX::Core::SSR_STRIDE = 0.35f;
+    FiscionX::Core::SSR_FADE_SCREEN_EDGE = 0.0f;
+    FiscionX::Core::SSR_MAX_BLUR_RADIUS = 10.0f;
+    
+    FiscionX::Core::SSAO_ENABLED = true;
+    FiscionX::Core::SSAO_RADIUS = 0.5f;
+    FiscionX::Core::SSAO_BIAS = 0.025f;
+    FiscionX::Core::SSAO_INTENSITY = 1.5f;
+    FiscionX::Core::SSAO_GI_STRENGTH = 0.6f;
+    
+    FiscionX::Core::fogColor = FiscionX::Vector3(0.4f, 0.4f, 0.45f);
+    FiscionX::Core::fogDensity = 0.015f;
+    FiscionX::Core::fogStart = 30.0f;
+    FiscionX::Core::fogEnd = 120.0f;
+    FiscionX::Core::fogType = 2;
 
     dirLight = new FiscionX::Light();
     dirLight->type = FiscionX::LIGHT_DIRECTIONAL;
