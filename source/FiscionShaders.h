@@ -247,13 +247,10 @@ void main() {
 // For FiscionX High Quality Render Pipeline
 const char* fragment = R"(
 #version 330 core
-
 const int LIGHT_DIRECTIONAL = 0;
 const int LIGHT_POINT = 1;
 const int LIGHT_SPOT = 2;
-
 const float PI = 3.14159265359;
-
 const int PCF_SAMPLES = 8;
 const vec3 gridSamplingOffset[PCF_SAMPLES] = vec3[](
     vec3( 0.1,  0.1,  0.0),
@@ -265,11 +262,9 @@ const vec3 gridSamplingOffset[PCF_SAMPLES] = vec3[](
     vec3( 0.15, 0.0, -0.15),
     vec3(-0.15, 0.0, -0.15)
 );
-
 out vec4 FragColor;
 layout(location = 1) out vec4 NormalRough;
 layout(location = 2) out float MetallicOut;
-
 in VS_OUT {
     vec3 FragPos;
     vec3 Normal;
@@ -279,7 +274,6 @@ in VS_OUT {
     vec4 FragPosLightSpace[15];
 } fs_in;
 in vec3 FragViewPos;
-
 uniform float reflectionsStrength = 0.5;
 uniform sampler2D baseColorTex;
 uniform sampler2D normalMapTex;
@@ -294,25 +288,20 @@ uniform float roughnessFactor;
 uniform sampler2D shadowMaps[15];
 uniform samplerCube shadowCubeMaps[15];
 uniform sampler2D transmissionTex;
-
 uniform sampler2DArray shadowMapDir;
 uniform float cascadePlaneDistances[16];
-uniform int cascadeCount; 
+uniform int cascadeCount;
 uniform mat4 cascadeLightSpaceMatrices[16];
 uniform mat4 view;
-
 uniform samplerCube irradianceMap;
 uniform samplerCube prefilterMap;
 uniform sampler2D   brdfLUT;
 uniform int         hasIBL;
-
 uniform float transmissionFactor;
 uniform int hasNormalMap;
 uniform int numLights;
-
 uniform sampler2D aoTex;
 uniform int hasAOMap;
-
 uniform int lightType[15];
 uniform vec3 lightPos[15];
 uniform vec3 lightDir[15];
@@ -324,46 +313,22 @@ uniform float lightOuterCutOff[15];
 uniform float lightConstant[15];
 uniform float lightLinear[15];
 uniform float lightQuadratic[15];
-
 uniform vec3 viewPos;
 uniform int alphaMode;
 uniform float alphaCutoff;
-
 uniform float environmentStrength;
 uniform vec3 environmentSkyColor;
 uniform vec3 environmentGroundColor;
-
 uniform int isAffectedByLight;
 uniform int acceptsShadows;
 uniform float hdrExposure = 1.0;
-
 uniform vec3 fogColor;
-uniform float fogDensity; // For Exp/Exp2
-uniform float fogStart;   // For Linear
-uniform float fogEnd;     // For Linear
-uniform int fogType;      // 0: Linear, 1: Exp, 2: Exp2
-
+uniform float fogDensity;
+uniform float fogStart;
+uniform float fogEnd;
+uniform int fogType;
 const float diskRadius = 0.1;
-
 vec4 baseSample = vec4(1.0);
-
-const vec2 poisson8[8] = vec2[](
-    vec2(-0.326212, -0.40581),
-    vec2(-0.840144,  0.07358),
-    vec2(-0.695914, -0.45755),
-    vec2(-0.203345,  0.620716),
-    vec2( 0.96234,  -0.194983),
-    vec2( 0.473434, -0.480026),
-    vec2( 0.519456,  0.767022),
-    vec2( 0.185461, -0.893124)
-);
-
-float random(vec3 seed, int i) {
-    vec4 seed4 = vec4(seed, i);
-    float dot_product = dot(seed4, vec4(12.9898, 78.233, 45.164, 94.673));
-    return fract(sin(dot_product) * 43758.5453);
-}
-
 const vec2 poisson16[16] = vec2[](
     vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725),
     vec2(-0.094184101, -0.92938870), vec2(0.34495938, 0.29387760),
@@ -374,33 +339,46 @@ const vec2 poisson16[16] = vec2[](
     vec2(-0.24188840, 0.99706507), vec2(-0.81409955, 0.91437590),
     vec2(0.19984126, 0.78641367), vec2(0.14383161, -0.14100790)
 );
-
 float interleavedGradientNoise(vec2 n) {
     return fract(3.378 * fract(dot(n, vec2(0.754877666, 0.56984029))));
 }
-
 vec3 ShadowTintColor(vec3 lightCol, float shadowAmt) {
     vec3 ambientAvg = (environmentSkyColor + environmentGroundColor) * 0.5;
-
     vec3 complementary = vec3(1.0) - lightCol;
-
     vec3 scatterColor = mix(ambientAvg, complementary, 0.35);
-    scatterColor = max(scatterColor, vec3(0.02)); // nunca cai pra preto absoluto
-
+    scatterColor = max(scatterColor, vec3(0.02));
     float occlusion = clamp(shadowAmt, 0.0, 1.0);
-
     float scatterLum = dot(scatterColor, vec3(0.299, 0.587, 0.114));
     float darken = mix(1.0, 0.08 + 0.4 * scatterLum, occlusion);
-
     return mix(vec3(1.0), scatterColor * darken, occlusion);
 }
-
+float SampleCascadeShadow(int layer, vec3 fragPosWorld, vec3 N, vec3 L) {
+    vec4 fragPosLS = cascadeLightSpaceMatrices[layer] * vec4(fragPosWorld, 1.0);
+    vec3 projCoords = fragPosLS.xyz / fragPosLS.w;
+    projCoords = projCoords * 0.5 + 0.5;
+    float currentDepth = projCoords.z;
+    if (currentDepth > 1.0) return 0.0;
+    float layerScale = 1.0 + float(layer) * 1.5;
+    float bias = max(0.0007 * (1.0 - dot(N, L)), 0.00007) * layerScale;
+    float shadow = 0.0;
+    vec2 texelSize = 1.0 / vec2(textureSize(shadowMapDir, 0));
+    float noise = interleavedGradientNoise(gl_FragCoord.xy);
+    float angle = noise * 2.0 * PI;
+    float s = sin(angle);
+    float c = cos(angle);
+    mat2 rotation = mat2(c, -s, s, c);
+    float spread = 1.5;
+    for (int i = 0; i < 16; ++i) {
+        vec2 offset = (rotation * poisson16[i]) * texelSize * spread;
+        float pcfDepth = texture(shadowMapDir, vec3(projCoords.xy + offset, layer)).r;
+        shadow += (currentDepth - bias) > pcfDepth ? 1.0 : 0.0;
+    }
+    return shadow / 16.0;
+}
 float ShadowCalculationCSM(vec3 fragPosWorld, vec3 N, vec3 L) {
     if (acceptsShadows == 0) return 0.0;
-
     vec4 fragPosViewSpace = view * vec4(fragPosWorld, 1.0);
     float depthValue = abs(fragPosViewSpace.z);
-
     int layer = -1;
     for (int i = 0; i < cascadeCount; ++i) {
         if (depthValue < cascadePlaneDistances[i]) {
@@ -409,122 +387,81 @@ float ShadowCalculationCSM(vec3 fragPosWorld, vec3 N, vec3 L) {
         }
     }
     if (layer == -1) layer = max(0, cascadeCount - 1);
-
-    vec4 fragPosLS = cascadeLightSpaceMatrices[layer] * vec4(fragPosWorld, 1.0);
-    vec3 projCoords = fragPosLS.xyz / fragPosLS.w;
-    projCoords = projCoords * 0.5 + 0.5;
-
-    float currentDepth = projCoords.z;
-    if (currentDepth > 1.0) return 0.0;
-
-    float bias = max(0.0007 * (1.0 - dot(N, L)), 0.00007);
-    if (layer == cascadeCount - 1) bias *= 0.5; 
-    else bias *= 1.0 / (float(layer) + 1.0); 
-
-    float shadow = 0.0;
-    vec2 texelSize = 1.0 / vec2(textureSize(shadowMapDir, 0));
-    
-    float noise = interleavedGradientNoise(gl_FragCoord.xy);
-    float angle = noise * 2.0 * PI;
-    float s = sin(angle);
-    float c = cos(angle);
-    mat2 rotation = mat2(c, -s, s, c);
-
-    float spread = 1.5; 
-
-    for(int i = 0; i < 16; ++i) {
-        vec2 offset = (rotation * poisson16[i]) * texelSize * spread;
-        float pcfDepth = texture(shadowMapDir, vec3(projCoords.xy + offset, layer)).r;
-        shadow += (currentDepth - bias) > pcfDepth ? 1.0 : 0.0;
+    float shadow = SampleCascadeShadow(layer, fragPosWorld, N, L);
+    if (layer < cascadeCount - 1) {
+        float splitDist = cascadePlaneDistances[layer];
+        float blendRange = splitDist * 0.1;
+        float distToSplit = splitDist - depthValue;
+        if (distToSplit < blendRange) {
+            float nextShadow = SampleCascadeShadow(layer + 1, fragPosWorld, N, L);
+            float t = clamp(1.0 - (distToSplit / blendRange), 0.0, 1.0);
+            shadow = mix(shadow, nextShadow, t);
+        }
     }
-
-    return shadow / 16.0;
+    return shadow;
 }
-
 float ShadowCalculation2D(vec4 fragPosLS, sampler2D shadowMap, vec3 N, vec3 L) {
     if (acceptsShadows == 0) return 0.0;
-
     vec3 projCoords = fragPosLS.xyz / fragPosLS.w;
     projCoords = projCoords * 0.5 + 0.5;
-
     if (projCoords.z > 1.0 || projCoords.x < 0.0 || projCoords.y < 0.0 || projCoords.x > 1.0 || projCoords.y > 1.0)
         return 0.0;
-
     float currentDepth = projCoords.z;
     vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
     float bias = max(0.003 * (1.0 - dot(N, L)), 0.001);
-
     float noise = interleavedGradientNoise(gl_FragCoord.xy);
     float angle = noise * 2.0 * PI;
     float s = sin(angle);
     float c = cos(angle);
     mat2 rotation = mat2(c, -s, s, c);
-
     float shadow = 0.0;
     float spread = 1.8;
-
     for (int i = 0; i < 16; ++i) {
         vec2 offset = (rotation * poisson16[i]) * texelSize * spread;
         float closestDepth = texture(shadowMap, projCoords.xy + offset).r;
         if (currentDepth - bias > closestDepth) shadow += 1.0;
     }
-
     return shadow / 16.0;
 }
-
 float ShadowCalculationPoint(int idx, vec3 fragPos) {
     if (acceptsShadows == 0) return 0.0;
-
     vec3 fragToLight = fragPos - lightPos[idx];
     float currentDepth = length(fragToLight);
-    float bias = 0.15; 
-
+    float bias = 0.15;
     float shadow = 0.0;
     int samples = 16;
-    
     float viewDistance = length(viewPos - fragPos);
     float diskRadiusLocal = (1.0 + (viewDistance / lightMaxDistance[idx])) * diskRadius;
-
     for (int i = 0; i < samples; ++i) {
         vec3 samplePos = fragToLight + gridSamplingOffset[i % 8] * diskRadiusLocal;
         float closestDepth = texture(shadowCubeMaps[idx], samplePos).r;
         closestDepth *= lightMaxDistance[idx];
         if (currentDepth - bias > closestDepth) shadow += 1.0;
     }
-
     return shadow / float(samples);
 }
-
 vec3 fresnelSchlick(float cosTheta, vec3 F0) {
     vec3 fresnel = F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
     return mix(F0, fresnel, reflectionsStrength);
 }
-
 vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness) {
     return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
-
 float DistributionGGX(vec3 N, vec3 H, float roughness) {
-    float a = roughness*roughness;
-    float a2 = a*a;
+    float a = roughness * roughness;
+    float a2 = a * a;
     float NdotH = max(dot(N, H), 0.0);
-    float NdotH2 = NdotH*NdotH;
-
-    float nom = a2;
+    float NdotH2 = NdotH * NdotH;
     float denom = (NdotH2 * (a2 - 1.0) + 1.0);
     denom = PI * denom * denom;
-
-    return nom / max(denom, 0.0000001);
+    return a2 / max(denom, 0.0000001);
 }
-
 float GeometrySchlickGGX(float NdotV, float roughness) {
     float r = (roughness + 1.0);
-    float k = (r*r) / 8.0; 
-    float nom = NdotV;
+    float k = (r * r) / 8.0;
     float denom = NdotV * (1.0 - k) + k;
-    return nom / max(denom, 0.0000001);
+    return NdotV / max(denom, 0.0000001);
 }
-
 float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
     float NdotV = max(dot(N, V), 0.0);
     float NdotL = max(dot(N, L), 0.0);
@@ -532,231 +469,189 @@ float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
     float ggx1 = GeometrySchlickGGX(NdotL, roughness);
     return ggx1 * ggx2;
 }
-
 void main() {
-  baseSample = texture(baseColorTex, fs_in.TexCoords);
-  if (alphaMode == 1 && baseSample.a < alphaCutoff) discard;
-  vec3 baseColor = baseSample.rgb;
-
-  float metallic;
-  float roughness;
-  vec3  F0_base;
-
-  if (useMetalRoughness == 1) {
-    vec4 metallicProps = texture(metallicTex, fs_in.TexCoords);
-
-    roughness = metallicProps.g * roughnessFactor;
-    metallic  = metallicProps.b * metallicFactor;
-
-    F0_base = mix(vec3(0.04), baseColor, metallic);
-  } else if (hasGlossinessMap == 1) {
-    float glossiness = texture(glossinessTex, fs_in.TexCoords).a;
-    roughness = 1.0 - glossiness;
-    metallic = 0.0;
-
-    if (hasSpecularF0Map == 1) {
-      F0_base = texture(specularF0Tex, fs_in.TexCoords).rgb;
-    } else {
-      F0_base = vec3(0.04);
+    baseSample = texture(baseColorTex, fs_in.TexCoords);
+    if (alphaMode == 1 && baseSample.a < alphaCutoff) discard;
+    vec3 baseColor = baseSample.rgb;
+    float metallic;
+    float roughness;
+    vec3  F0_base;
+    if (useMetalRoughness == 1) {
+        vec4 metallicProps = texture(metallicTex, fs_in.TexCoords);
+        roughness = metallicProps.g * roughnessFactor;
+        metallic = metallicProps.b * metallicFactor;
+        F0_base = mix(vec3(0.04), baseColor, metallic);
     }
-  } else {
-    metallic  = metallicFactor;
-    roughness = roughnessFactor;
-    F0_base   = mix(vec3(0.04), baseColor, metallic);
-  }
-  
-  roughness = clamp(roughness, 0.01, 1.0);
-  
-  vec3 N;
-  if (hasNormalMap == 1) {
-    vec2 rg = texture(normalMapTex, fs_in.TexCoords).rg * 2.0 - 1.0;
-    vec3 tangentNormal = vec3(rg, sqrt(max(0.0, 1.0 - dot(rg, rg))));
-    vec3 T = normalize(fs_in.Tangent);
-    vec3 B = normalize(fs_in.Bitangent);
-    vec3 Nor = normalize(fs_in.Normal);
-    mat3 TBN = mat3(T, B, Nor);
-    N = normalize(TBN * tangentNormal);
-  } else {
-    N = normalize(fs_in.Normal);
-  }
-
-  vec3 V = normalize(viewPos - fs_in.FragPos);
-
-  if (dot(N, V) < 0.0) {
-    N = -N;
-  }
-
-  vec3 ambientSum = vec3(0.0);
-  vec3 directLightSum = vec3(0.0);
-
-  vec3 ambientContribution;
-  if (hasIBL == 1) {
-    float iblScale = 1.0;
-
-    vec3 kS_amb = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0_base, roughness);
-    vec3 kD_amb = (vec3(1.0) - kS_amb) * (1.0 - metallic);
-    const float IBL_SAMPLE_MAX = 20.0;
-
-    vec3 irradianceDir = N;
-    vec3 reflectDirForSample = reflect(-V, N);
-
-    vec3 irradiance = min(texture(irradianceMap, irradianceDir).rgb, vec3(IBL_SAMPLE_MAX));
-    vec3 diffuse_ibl = irradiance * baseColor;
-
-    const float MAX_REFLECTION_LOD = 4.0;
-    vec3 R = reflectDirForSample;
-    vec3 prefilteredColor = min(textureLod(prefilterMap, R, roughness * MAX_REFLECTION_LOD).rgb, vec3(IBL_SAMPLE_MAX));
-    vec2 envBRDF = texture(brdfLUT, vec2(max(dot(N, V), 0.0), roughness)).rg;
-    vec3 specular_ibl = prefilteredColor * (F0_base * envBRDF.x + envBRDF.y) * reflectionsStrength;
-
-    ambientContribution = (kD_amb * diffuse_ibl + specular_ibl) * environmentStrength;
-  } else {
-    float hemi = 0.5 * (dot(N, vec3(0, 1, 0)) + 1.0);
-    vec3 ambientHemi = mix(environmentGroundColor, environmentSkyColor, hemi);
-    ambientContribution = baseColor * ambientHemi * environmentStrength;
-  }
-
-  const float IBL_MAX = 10.0;
-  ambientContribution = min(ambientContribution, vec3(IBL_MAX));
-
-  
-  float ao = 1.0;
-  if (hasAOMap == 1) {
-    ao = texture(aoTex, fs_in.TexCoords).r;
-  }
-  ambientContribution *= ao;
-
-  const float localAmbientFactor = 0.05;
-
-  for (int i = 0; i < 15; ++i) { 
-    if (i >= numLights) break;
-    
-    int ltype = lightType[i];
-    vec3 L;
-    float attenuation = 1.0;
-    float intensity = lightIntensity[i];
-    float shadow = 0.0;
-    vec3 lightCol = lightColor[i];
-
-    if (ltype == LIGHT_DIRECTIONAL) {
-      L = normalize(-lightDir[i]);
-      float NdotL = dot(N, L);
-      if (NdotL <= 0.0) {
-        ambientSum += localAmbientFactor * baseColor * lightCol * intensity; // attenuation == 1 para directional
-        continue;
-      }
-      
-      shadow = ShadowCalculationCSM(fs_in.FragPos, N, L);
-    }
-    else if (ltype == LIGHT_POINT) {
-      vec3 toLight = lightPos[i] - fs_in.FragPos;
-      float dist = length(toLight);
-      if (dist > lightMaxDistance[i]) continue;
-      L = normalize(toLight);
-      float attFactor = clamp(1.0 - dist / lightMaxDistance[i], 0.0, 1.0);
-      attenuation = attFactor * attFactor;
-      float NdotL = dot(N, L);
-      if (NdotL <= 0.0) {
-        ambientSum += attenuation * localAmbientFactor * baseColor * lightCol * intensity;
-        continue;
-      }
-      shadow = ShadowCalculationPoint(i, fs_in.FragPos);
+    else if (hasGlossinessMap == 1) {
+        float glossiness = texture(glossinessTex, fs_in.TexCoords).a;
+        roughness = 1.0 - glossiness;
+        metallic = 0.0;
+        if (hasSpecularF0Map == 1) {
+            F0_base = texture(specularF0Tex, fs_in.TexCoords).rgb;
+        }
+        else {
+            F0_base = vec3(0.04);
+        }
     }
     else {
-      vec3 toLight = lightPos[i] - fs_in.FragPos;
-      float dist = length(toLight);
-      if (dist > lightMaxDistance[i]) continue;
-      L = normalize(toLight);
-      attenuation = 1.0 / (lightConstant[i] + lightLinear[i] * dist + lightQuadratic[i] * dist * dist);
-      float theta = dot(-L, normalize(lightDir[i]));
-      float eps = max(lightCutOff[i] - lightOuterCutOff[i], 0.001);
-      float spotIntensity = clamp((theta - lightOuterCutOff[i]) / eps, 0.0, 1.0);
-      intensity *= spotIntensity;
-      float NdotL = dot(N, L);
-      if (NdotL <= 0.0) {
-        ambientSum += attenuation * localAmbientFactor * baseColor * lightCol * intensity;
-        continue;
-      }
-      shadow = ShadowCalculation2D(fs_in.FragPosLightSpace[i], shadowMaps[i], N, L);
+        metallic = metallicFactor;
+        roughness = roughnessFactor;
+        F0_base = mix(vec3(0.04), baseColor, metallic);
     }
-
-    vec3 H = normalize(L + V);
-    float NdotH = max(dot(N, H), 0.0);
-    float NdotL = max(dot(N, L), 0.0);
-    float VdotH = max(dot(V, H), 0.0);
+    roughness = clamp(roughness, 0.01, 1.0);
+    vec3 N;
+    if (hasNormalMap == 1) {
+        vec2 rg = texture(normalMapTex, fs_in.TexCoords).rg * 2.0 - 1.0;
+        vec3 tangentNormal = vec3(rg, sqrt(max(0.0, 1.0 - dot(rg, rg))));
+        vec3 T = normalize(fs_in.Tangent);
+        vec3 B = normalize(fs_in.Bitangent);
+        vec3 Nor = normalize(fs_in.Normal);
+        mat3 TBN = mat3(T, B, Nor);
+        N = normalize(TBN * tangentNormal);
+    }
+    else {
+        N = normalize(fs_in.Normal);
+    }
+    vec3 V = normalize(viewPos - fs_in.FragPos);
     
-    vec3 F = fresnelSchlick(VdotH, F0_base);
-    
-    float D = DistributionGGX(N, H, roughness);
-    
-    float G = GeometrySmith(N, V, L, roughness);
-
-    vec3 specularBRDF = (D * G * F) / max(4.0 * NdotL * max(dot(N, V), 0.0), 0.000001);
-    specularBRDF *= reflectionsStrength; // <-- aqui
-
-    vec3 kS = F;
-    vec3 kD = (vec3(1.0) - kS) * (1.0 - metallic);
-    vec3 diffuse = kD * baseColor / PI;
-    
-    vec3 directContrib = (diffuse + specularBRDF) * lightCol * NdotL * intensity;
-
-    vec3 shadowColor = ShadowTintColor(lightCol, shadow);
-
-    directLightSum += attenuation * directContrib * shadowColor;
-    
-    ambientSum += attenuation * localAmbientFactor * baseColor * lightCol * intensity;
-  }
-
-  float transAmt = texture(transmissionTex, fs_in.TexCoords).r * transmissionFactor;
-  vec3 transLight = baseColor * transAmt * 0.5;
-
-  vec3 result = ambientContribution + ambientSum + directLightSum;
-
-  result = mix(result, result + transLight, transAmt);
-
-  #define ACES(c) clamp(((c)*(2.51*(c)+0.03))/((c)*(2.43*(c)+0.59)+0.14),0.0,1.0)
-  #define TO_SRGB(c) pow(max((c),vec3(0.0)),vec3(1.0/2.2))
-
-
-  float distance = length(FragViewPos);
-  float fogFactor = 1.0;
-  if (fogType == 0) {
-      fogFactor = (fogEnd - distance) / (fogEnd - fogStart);
-  } 
-  else if (fogType == 1) {
-      // Exponential Fog
-      fogFactor = exp(-fogDensity * distance);
-  } 
-  else if (fogType == 2) {
-      // Exponential Squared Fog
-      fogFactor = exp(-pow(fogDensity * distance, 2.0));
-  }
-  fogFactor = clamp(fogFactor, 0.0, 1.0);  
-
-
-  vec4 finalPixelColour;
-  if (isAffectedByLight == 0) {
-    vec3 fallback = ambientContribution + ambientSum;
-    fallback = max(fallback, baseColor * 0.7);
-    fallback = mix(fallback, fallback + transLight, transAmt);
-    finalPixelColour = vec4(TO_SRGB(ACES(fallback * hdrExposure)), (alphaMode == 2 ? baseSample.a : 1.0));
-  } else {
-    finalPixelColour = vec4(TO_SRGB(ACES(result * hdrExposure)), (alphaMode == 2 ? baseSample.a : 1.0));
-  }
-// With Fog
-  FragColor = vec4(mix(fogColor, finalPixelColour.rgb, fogFactor), finalPixelColour.a);
-
-  #undef ACES
-  #undef TO_SRGB
-
-  if (alphaMode == 2) {
-    NormalRough = vec4(0.0, 0.0, 0.0, -1.0);
-    MetallicOut = 0.0; // irrelevante: sentinela nr.a<0 já descarta o pixel antes de ler isso no SSR
-  } else {
-    vec3 viewSpaceN = normalize(mat3(view) * N);
-    NormalRough = vec4(viewSpaceN, roughness);
-    MetallicOut = metallic;
-  }
+    if (!gl_FrontFacing) {
+        N = -N;
+    }
+    vec3 ambientSum = vec3(0.0);
+    vec3 directLightSum = vec3(0.0);
+    vec3 ambientContribution;
+    if (hasIBL == 1) {
+        vec3 kS_amb = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0_base, roughness);
+        vec3 kD_amb = (vec3(1.0) - kS_amb) * (1.0 - metallic);
+        const float IBL_SAMPLE_MAX = 20.0;
+        vec3 irradianceDir = N;
+        vec3 reflectDirForSample = reflect(-V, N);
+        vec3 irradiance = min(texture(irradianceMap, irradianceDir).rgb, vec3(IBL_SAMPLE_MAX));
+        vec3 diffuse_ibl = irradiance * baseColor;
+        const float MAX_REFLECTION_LOD = 4.0;
+        vec3 R = reflectDirForSample;
+        vec3 prefilteredColor = min(textureLod(prefilterMap, R, roughness * MAX_REFLECTION_LOD).rgb, vec3(IBL_SAMPLE_MAX));
+        vec2 envBRDF = texture(brdfLUT, vec2(max(dot(N, V), 0.0), roughness)).rg;
+        vec3 specular_ibl = prefilteredColor * (F0_base * envBRDF.x + envBRDF.y) * reflectionsStrength;
+        ambientContribution = (kD_amb * diffuse_ibl + specular_ibl) * environmentStrength;
+    }
+    else {
+        float hemi = 0.5 * (dot(N, vec3(0, 1, 0)) + 1.0);
+        vec3 ambientHemi = mix(environmentGroundColor, environmentSkyColor, hemi);
+        ambientContribution = baseColor * ambientHemi * environmentStrength;
+    }
+    const float IBL_MAX = 10.0;
+    ambientContribution = min(ambientContribution, vec3(IBL_MAX));
+    float ao = 1.0;
+    if (hasAOMap == 1) {
+        ao = texture(aoTex, fs_in.TexCoords).r;
+    }
+    ambientContribution *= ao;
+    const float localAmbientFactor = 0.05;
+    for (int i = 0; i < 15; ++i) {
+        if (i >= numLights) break;
+        int ltype = lightType[i];
+        vec3 L;
+        float attenuation = 1.0;
+        float intensity = lightIntensity[i];
+        float shadow = 0.0;
+        vec3 lightCol = lightColor[i];
+        if (ltype == LIGHT_DIRECTIONAL) {
+            L = normalize(-lightDir[i]);
+            float NdotL = dot(N, L);
+            if (NdotL <= 0.0) {
+                ambientSum += localAmbientFactor * baseColor * lightCol * intensity;
+                continue;
+            }
+            shadow = ShadowCalculationCSM(fs_in.FragPos, N, L);
+        }
+        else if (ltype == LIGHT_POINT) {
+            vec3 toLight = lightPos[i] - fs_in.FragPos;
+            float dist = length(toLight);
+            if (dist > lightMaxDistance[i]) continue;
+            L = normalize(toLight);
+            float attFactor = clamp(1.0 - dist / lightMaxDistance[i], 0.0, 1.0);
+            attenuation = attFactor * attFactor;
+            float NdotL = dot(N, L);
+            if (NdotL <= 0.0) {
+                ambientSum += attenuation * localAmbientFactor * baseColor * lightCol * intensity;
+                continue;
+            }
+            shadow = ShadowCalculationPoint(i, fs_in.FragPos);
+        }
+        else {
+            vec3 toLight = lightPos[i] - fs_in.FragPos;
+            float dist = length(toLight);
+            if (dist > lightMaxDistance[i]) continue;
+            L = normalize(toLight);
+            attenuation = 1.0 / (lightConstant[i] + lightLinear[i] * dist + lightQuadratic[i] * dist * dist);
+            float theta = dot(-L, normalize(lightDir[i]));
+            float eps = max(lightCutOff[i] - lightOuterCutOff[i], 0.001);
+            float spotIntensity = clamp((theta - lightOuterCutOff[i]) / eps, 0.0, 1.0);
+            intensity *= spotIntensity;
+            float NdotL = dot(N, L);
+            if (NdotL <= 0.0) {
+                ambientSum += attenuation * localAmbientFactor * baseColor * lightCol * intensity;
+                continue;
+            }
+            shadow = ShadowCalculation2D(fs_in.FragPosLightSpace[i], shadowMaps[i], N, L);
+        }
+        vec3 H = normalize(L + V);
+        float NdotL = max(dot(N, L), 0.0);
+        float VdotH = max(dot(V, H), 0.0);
+        vec3 F = fresnelSchlick(VdotH, F0_base);
+        float D = DistributionGGX(N, H, roughness);
+        float G = GeometrySmith(N, V, L, roughness);
+        vec3 specularBRDF = (D * G * F) / max(4.0 * NdotL * max(dot(N, V), 0.0), 0.000001);
+        specularBRDF *= reflectionsStrength;
+        vec3 kS = F;
+        vec3 kD = (vec3(1.0) - kS) * (1.0 - metallic);
+        vec3 diffuse = kD * baseColor / PI;
+        vec3 directContrib = (diffuse + specularBRDF) * lightCol * NdotL * intensity;
+        vec3 shadowColor = ShadowTintColor(lightCol, shadow);
+        directLightSum += attenuation * directContrib * shadowColor;
+        ambientSum += attenuation * localAmbientFactor * baseColor * lightCol * intensity;
+    }
+    float transAmt = texture(transmissionTex, fs_in.TexCoords).r * transmissionFactor;
+    vec3 transLight = baseColor * transAmt * 0.5;
+    vec3 result = ambientContribution + ambientSum + directLightSum;
+    result = mix(result, result + transLight, transAmt);
+#define ACES(c) clamp(((c)*(2.51*(c)+0.03))/((c)*(2.43*(c)+0.59)+0.14),0.0,1.0)
+#define TO_SRGB(c) pow(max((c),vec3(0.0)),vec3(1.0/2.2))
+    float distance = length(FragViewPos);
+    float fogFactor = 1.0;
+    if (fogType == 0) {
+        fogFactor = (fogEnd - distance) / (fogEnd - fogStart);
+    }
+    else if (fogType == 1) {
+        fogFactor = exp(-fogDensity * distance);
+    }
+    else if (fogType == 2) {
+        fogFactor = exp(-pow(fogDensity * distance, 2.0));
+    }
+    fogFactor = clamp(fogFactor, 0.0, 1.0);
+    vec4 finalPixelColour;
+    if (isAffectedByLight == 0) {
+        vec3 fallback = ambientContribution + ambientSum;
+        fallback = max(fallback, baseColor * 0.7);
+        fallback = mix(fallback, fallback + transLight, transAmt);
+        finalPixelColour = vec4(TO_SRGB(ACES(fallback * hdrExposure)), (alphaMode == 2 ? baseSample.a : 1.0));
+    }
+    else {
+        finalPixelColour = vec4(TO_SRGB(ACES(result * hdrExposure)), (alphaMode == 2 ? baseSample.a : 1.0));
+    }
+    FragColor = vec4(mix(fogColor, finalPixelColour.rgb, fogFactor), finalPixelColour.a);
+#undef ACES
+#undef TO_SRGB
+    if (alphaMode == 2) {
+        NormalRough = vec4(0.0, 0.0, 0.0, -1.0);
+        MetallicOut = 0.0;
+    }
+    else {
+        vec3 viewSpaceN = normalize(mat3(view) * N);
+        NormalRough = vec4(viewSpaceN, roughness);
+        MetallicOut = metallic;
+    }
 }
 )";
 
@@ -1900,7 +1795,6 @@ void main()
     vec2 uv = SampleSphericalMap(normalize(TexCoords));
     vec3 color = texture(hdrTex, uv).rgb;
 
-    // --- EXPOSURE ---
     color *= exposure;
 
     // --- TONEMAP (exponential, estável e barato) ---

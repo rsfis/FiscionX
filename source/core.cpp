@@ -114,6 +114,7 @@ GLuint FiscionX::Physics::debugVAO = 0, FiscionX::Physics::debugVBO = 0;
 GLuint FiscionX::Physics::debugShader = 0;
 std::vector<float> FiscionX::Physics::debugLines;
 FiscionX::Physics::GLDebugDrawer* FiscionX::Physics::debugDrawer;
+std::vector<FiscionX::Physics::Rigidbody*> FiscionX::Physics::worldBodies;
 
 FiscionX::Vector2 FiscionX::Input::mousePosition;
 FiscionX::Vector2 FiscionX::Input::mouseDelta;
@@ -129,6 +130,8 @@ std::vector<FiscionX::ShadowMap> FiscionX::Core::AllShadowMaps;
 float FiscionX::Core::lastFrame;
 float FiscionX::Core::deltaTime;
 int FiscionX::Core::FPS;
+int FiscionX::Core::DEBUG_InstancesTotal = 0;
+int FiscionX::Core::DEBUG_InstancesCulled = 0;
 float FiscionX::Core::lastFPSTime;
 
 bool FiscionX::Core::enableShaderCache = true;
@@ -142,6 +145,52 @@ bool firstMouse = true;
 float deltaTime = 0.0f, lastFrame = 0;
 
 GLuint LoadShader(const char* vertexSrc, const char* fragmentSrc);
+
+
+
+std::vector<FiscionX::Physics::DebugTracer> FiscionX::Physics::activeTracers;
+float FiscionX::Physics::TRACER_LIFETIME = 2.0f;
+void FiscionX::Physics::PushDebugLine(Vector3 a, Vector3 b, Vector3 color) {
+	Physics::debugLines.push_back(a.x); Physics::debugLines.push_back(a.y); Physics::debugLines.push_back(a.z);
+	Physics::debugLines.push_back(color.x); Physics::debugLines.push_back(color.y); Physics::debugLines.push_back(color.z);
+
+	Physics::debugLines.push_back(b.x); Physics::debugLines.push_back(b.y); Physics::debugLines.push_back(b.z);
+	Physics::debugLines.push_back(color.x); Physics::debugLines.push_back(color.y); Physics::debugLines.push_back(color.z);
+}
+
+void FiscionX::Physics::PushImpactMarker(Vector3 point, Vector3 color) {
+	float s = 0.2f;
+	PushDebugLine(point + Vector3(s, 0, 0), point - Vector3(s, 0, 0), color);
+	PushDebugLine(point + Vector3(0, s, 0), point - Vector3(0, s, 0), color);
+	PushDebugLine(point + Vector3(0, 0, s), point - Vector3(0, 0, s), color);
+}
+
+void FiscionX::Physics::AddTracerLine(Vector3 a, Vector3 b, Vector3 color) {
+	activeTracers.push_back({ a, b, color, TRACER_LIFETIME });
+}
+
+void FiscionX::Physics::AddImpactMarkerTracer(Vector3 point, Vector3 color) {
+	float s = 0.2f;
+	AddTracerLine(point + Vector3(s, 0, 0), point - Vector3(s, 0, 0), color);
+	AddTracerLine(point + Vector3(0, s, 0), point - Vector3(0, s, 0), color);
+	AddTracerLine(point + Vector3(0, 0, s), point - Vector3(0, 0, s), color);
+}
+
+void FiscionX::Physics::UpdateAndPushTracers(float dt) {
+	for (int i = (int)activeTracers.size() - 1; i >= 0; --i) {
+		activeTracers[i].life -= dt;
+		if (activeTracers[i].life <= 0.0f) {
+			activeTracers.erase(activeTracers.begin() + i);
+		}
+	}
+
+	for (const DebugTracer& t : activeTracers) {
+		PushDebugLine(t.a, t.b, t.color);
+	}
+}
+
+
+
 
 // Used by LoadHDR() (global skybox IBL). Compiles a tiny vertex+fragment
 // program, used only to render the convolution passes.
@@ -3267,7 +3316,6 @@ void FiscionX::Model::buildLODs(const std::vector<float>& ratios) {
 		sub.lodLevels.clear();
 	}
 
-	// Real VBO stride used by the engine: pos(3) + normal(3) + tangent(4) + uv(2) = 12 floats
 	constexpr int FLOATS_PER_VERTEX = 3 + 3 + 4 + 2;  // = 12
 	constexpr GLsizei STRIDE = FLOATS_PER_VERTEX * sizeof(float);
 
@@ -3431,6 +3479,30 @@ void FiscionX::Model::extractFrustumPlanes(const glm::mat4& vp, glm::vec4 planes
 	planes[4] = { m[0][3] + m[0][2], m[1][3] + m[1][2], m[2][3] + m[2][2], m[3][3] + m[3][2] };
 	// Far:    row3 - row2
 	planes[5] = { m[0][3] - m[0][2], m[1][3] - m[1][2], m[2][3] - m[2][2], m[3][3] - m[3][2] };
+
+	// FIX: os planos saem daqui SEM normalizar. Isso nunca foi problema pro teste de
+	// AABB (isSubMeshInFrustum) porque ele só olha o SINAL de dot(n,corner)+d, e esse
+	// sinal não muda multiplicando o plano inteiro por uma constante positiva.
+	// Mas o novo teste de esfera (isSphereInFrustum) compara essa mesma expressão
+	// contra "radius", que é uma distância real em unidades de mundo — isso só
+	// funciona se o normal do plano tiver módulo 1. Por isso normaliza aqui.
+	for (int p = 0; p < 6; ++p) {
+		float len = glm::length(glm::vec3(planes[p]));
+		if (len > 1e-6f) planes[p] /= len;
+	}
+}
+
+bool FiscionX::Model::isSphereInFrustum(const glm::vec3& center, float radius, const glm::vec4 planes[6])
+{
+	for (int p = 0; p < 6; ++p) {
+		glm::vec3 n(planes[p]);
+		float d = planes[p].w;
+		// Distância assinada do centro da esfera a este plano. Se ela for menor que
+		// -radius, a esfera inteira está do lado de fora — pode cortar sem checar
+		// os outros planos.
+		if (glm::dot(n, center) + d < -radius) return false;
+	}
+	return true; // esfera sobrevive a todos os 6 planos → pelo menos parcialmente visível
 }
 
 bool FiscionX::Model::Instance::isSubMeshInFrustum(const SubMesh& sub,
@@ -3510,6 +3582,13 @@ int FiscionX::Model::selectLOD(float distanceSq) const {
 	return INT_MAX;
 }
 
+// OPTIM: este método NÃO mexe mais em glColorMask/glDepthMask/glDisable(GL_BLEND)/
+// glUseProgram(0) — esse state (que só precisa existir uma vez, não uma vez por
+// submesh nem uma vez por instância) agora é setado uma única vez pelo chamador
+// (Model::draw), antes de rodar as queries de TODAS as instâncias candidatas, e
+// restaurado uma única vez no final. Ver comentário em Model::draw, na fase
+// "PASS 1: occlusion queries". Esta função assume que esse state já está ativo
+// quando é chamada.
 void FiscionX::Model::Instance::updateOcclusion(const glm::mat4& viewProj) {
 	glm::mat4 baseMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(position.x, position.y, position.z))
 		* glm::eulerAngleXYZ(rotation.y, rotation.x, rotation.z)
@@ -3546,18 +3625,149 @@ void FiscionX::Model::Instance::updateOcclusion(const glm::mat4& viewProj) {
 			queryType = mesh.lodLevels[occLOD].indexType;
 		}
 
-		glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-		glDepthMask(GL_FALSE);
-		glDisable(GL_BLEND);
-
 		glBeginQuery(GL_ANY_SAMPLES_PASSED, occlusionQueries[i]);
 		glBindVertexArray(queryVAO);
-		glUseProgram(0);
 		glDrawElements(GL_TRIANGLES, queryCount, queryType, 0);
 		glEndQuery(GL_ANY_SAMPLES_PASSED);
+	}
+}
 
-		glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-		glDepthMask(GL_TRUE);
+// OPTIM: lookup de uniform locations extraído de dentro de drawSubMesh pra um
+// método próprio, reusável tanto por drawSubMesh (por submesh) quanto por
+// Model::draw (uma vez por chamada, ANTES do loop de instâncias) — necessário
+// pra poder enviar luzes/ambiente/fog/IBL uma única vez por draw() em vez de
+// uma vez por submesh (ver uploadPerDrawUniforms logo abaixo). Continua
+// idempotente: só refaz os glGetUniformLocation quando o shader muda.
+void FiscionX::Model::ensureUniformCache(GLuint shader) {
+	if (uniformCache.cachedShader == shader) return;
+	uniformCache.cachedShader = shader;
+	uniformCache.model = glGetUniformLocation(shader, "model");
+	uniformCache.lightSpaceMatrix = glGetUniformLocation(shader, "lightSpaceMatrix");
+	uniformCache.alphaMode = glGetUniformLocation(shader, "alphaMode");
+	uniformCache.alphaCutoff = glGetUniformLocation(shader, "alphaCutoff");
+	uniformCache.baseColorTex = glGetUniformLocation(shader, "baseColorTex");
+	uniformCache.normalMapTex = glGetUniformLocation(shader, "normalMapTex");
+	uniformCache.hasNormalMap = glGetUniformLocation(shader, "hasNormalMap");
+	uniformCache.shadowMap = glGetUniformLocation(shader, "shadowMap");
+	uniformCache.aoTex = glGetUniformLocation(shader, "aoTex");
+	uniformCache.hasAOMap = glGetUniformLocation(shader, "hasAOMap");
+	uniformCache.glossinessTex = glGetUniformLocation(shader, "glossinessTex");
+	uniformCache.hasGlossinessMap = glGetUniformLocation(shader, "hasGlossinessMap");
+	uniformCache.glossinessInAlphaOfSpecular = glGetUniformLocation(shader, "glossinessInAlphaOfSpecular");
+	uniformCache.specularF0Tex = glGetUniformLocation(shader, "specularF0Tex");
+	uniformCache.hasSpecularF0Map = glGetUniformLocation(shader, "hasSpecularF0Map");
+	uniformCache.metallicTex = glGetUniformLocation(shader, "metallicTex");
+	uniformCache.useMetalRoughness = glGetUniformLocation(shader, "useMetalRoughness");
+	uniformCache.environmentStrength = glGetUniformLocation(shader, "environmentStrength");
+	uniformCache.environmentSkyColor = glGetUniformLocation(shader, "environmentSkyColor");
+	uniformCache.environmentGroundColor = glGetUniformLocation(shader, "environmentGroundColor");
+	uniformCache.reflectionsStrength = glGetUniformLocation(shader, "reflectionsStrength");
+	uniformCache.isAffectedByLight = glGetUniformLocation(shader, "isAffectedByLight");
+	uniformCache.acceptsShadows = glGetUniformLocation(shader, "acceptsShadows");
+	uniformCache.alpha = glGetUniformLocation(shader, "alpha");
+	uniformCache.hdrExposure = glGetUniformLocation(shader, "hdrExposure");
+	uniformCache.fogColor = glGetUniformLocation(shader, "fogColor");
+	uniformCache.fogDensity = glGetUniformLocation(shader, "fogDensity");
+	uniformCache.fogStart = glGetUniformLocation(shader, "fogStart");
+	uniformCache.fogEnd = glGetUniformLocation(shader, "fogEnd");
+	uniformCache.fogType = glGetUniformLocation(shader, "fogType");
+	uniformCache.numLights = glGetUniformLocation(shader, "numLights");
+	uniformCache.metallicFactor = glGetUniformLocation(shader, "metallicFactor");
+	uniformCache.roughnessFactor = glGetUniformLocation(shader, "roughnessFactor");
+
+	// IBL
+	uniformCache.irradianceMap = glGetUniformLocation(shader, "irradianceMap");
+	uniformCache.prefilterMap = glGetUniformLocation(shader, "prefilterMap");
+	uniformCache.brdfLUT = glGetUniformLocation(shader, "brdfLUT");
+	uniformCache.hasIBL = glGetUniformLocation(shader, "hasIBL");
+
+	char buf[64];
+	for (int i = 0; i < 10; ++i) {
+		auto& Lu = uniformCache.lights[i];
+		snprintf(buf, sizeof(buf), "lightType[%d]", i); Lu.type = glGetUniformLocation(shader, buf);
+		snprintf(buf, sizeof(buf), "lightPos[%d]", i); Lu.pos = glGetUniformLocation(shader, buf);
+		snprintf(buf, sizeof(buf), "lightDir[%d]", i); Lu.dir = glGetUniformLocation(shader, buf);
+		snprintf(buf, sizeof(buf), "lightColor[%d]", i); Lu.color = glGetUniformLocation(shader, buf);
+		snprintf(buf, sizeof(buf), "lightIntensity[%d]", i); Lu.intensity = glGetUniformLocation(shader, buf);
+		snprintf(buf, sizeof(buf), "lightMaxDistance[%d]", i); Lu.maxDist = glGetUniformLocation(shader, buf);
+		snprintf(buf, sizeof(buf), "lightCutOff[%d]", i); Lu.cutOff = glGetUniformLocation(shader, buf);
+		snprintf(buf, sizeof(buf), "lightOuterCutOff[%d]", i); Lu.outerCutOff = glGetUniformLocation(shader, buf);
+		snprintf(buf, sizeof(buf), "lightConstant[%d]", i); Lu.constant = glGetUniformLocation(shader, buf);
+		snprintf(buf, sizeof(buf), "lightLinear[%d]", i); Lu.linear = glGetUniformLocation(shader, buf);
+		snprintf(buf, sizeof(buf), "lightQuadratic[%d]", i); Lu.quadratic = glGetUniformLocation(shader, buf);
+		snprintf(buf, sizeof(buf), "lightHasGlow[%d]", i); Lu.hasGlow = glGetUniformLocation(shader, buf);
+		snprintf(buf, sizeof(buf), "lightGlowColor[%d]", i); Lu.glowColor = glGetUniformLocation(shader, buf);
+		snprintf(buf, sizeof(buf), "lightGlowRadius[%d]", i); Lu.glowRadius = glGetUniformLocation(shader, buf);
+	}
+}
+
+// OPTIM PRINCIPAL: todo esse bloco (luzes, ambiente/IBL, fog, shadowMap da
+// câmera, alpha do Model) era enviado DENTRO de drawSubMesh — refeito a cada
+// SUBMESH, de CADA INSTÂNCIA, todo frame. Nenhum desses valores muda dentro
+// de uma mesma chamada de Model::draw(): luzes/ambiente/fog/IBL são globais
+// da cena, e alpha é uma propriedade do Model inteiro, não da instância ou
+// do submesh. Chamado uma única vez por Model::draw(), antes do loop de
+// instâncias, isso reduz um bloco de ~150 glUniform* por submesh-instância
+// pra ~150 por CHAMADA DE DRAW inteira — em um Model com 50 instâncias e 3
+// submeshes cada, isso é uma redução de ~150x nas chamadas de uniform de
+// luz sozinhas. (isAffectedByLight/acceptsShadows continuam em drawSubMesh:
+// dependem da Instance, não são globais.)
+void FiscionX::Model::uploadPerDrawUniforms(GLuint shader, GLuint depthMap) {
+	ensureUniformCache(shader);
+
+	glUniform1f(uniformCache.alpha, alpha);
+	glUniform1f(uniformCache.environmentStrength, FiscionX::Core::AMBIENT_LIGHT_INTENSITY);
+	glUniform3f(uniformCache.environmentSkyColor, 0.3f, 0.3f, 0.35f);
+	glUniform3f(uniformCache.environmentGroundColor, 0.05f, 0.05f, 0.07f);
+	glUniform1f(uniformCache.reflectionsStrength, FiscionX::Core::REFLECTIONS_STRENGTH);
+	glUniform1f(uniformCache.hdrExposure, FiscionX::Core::HDR_EXPOSURE);
+	glUniform3f(uniformCache.fogColor, FiscionX::Core::fogColor.x, FiscionX::Core::fogColor.y, FiscionX::Core::fogColor.z);
+	glUniform1f(uniformCache.fogDensity, FiscionX::Core::fogDensity);
+	glUniform1f(uniformCache.fogStart, FiscionX::Core::fogStart);
+	glUniform1f(uniformCache.fogEnd, FiscionX::Core::fogEnd);
+	glUniform1i(uniformCache.fogType, FiscionX::Core::fogType);
+
+	bindTexIfChanged(2, depthMap);
+	glUniform1i(uniformCache.shadowMap, 2);
+
+	if (FiscionX::Core::iblReady) {
+		glActiveTexture(GL_TEXTURE6);
+		glBindTexture(GL_TEXTURE_CUBE_MAP, FiscionX::Core::iblIrradianceMap);
+		glUniform1i(uniformCache.irradianceMap, 6);
+
+		glActiveTexture(GL_TEXTURE7);
+		glBindTexture(GL_TEXTURE_CUBE_MAP, FiscionX::Core::iblPrefilterMap);
+		glUniform1i(uniformCache.prefilterMap, 7);
+
+		glActiveTexture(GL_TEXTURE8);
+		glBindTexture(GL_TEXTURE_2D, FiscionX::Core::iblBrdfLUT);
+		glUniform1i(uniformCache.brdfLUT, 8);
+
+		glUniform1i(uniformCache.hasIBL, 1);
+	}
+	else {
+		glUniform1i(uniformCache.hasIBL, 0);
+	}
+
+	int numLights = std::min((int)FiscionX::Core::AllLights.size(), 10);
+	glUniform1i(uniformCache.numLights, numLights);
+	for (int i = 0; i < numLights; ++i) {
+		const Light& Lref = *FiscionX::Core::AllLights[i];
+		const auto& Lu = uniformCache.lights[i];
+		glUniform1i(Lu.type, Lref.type);
+		glUniform3f(Lu.pos, Lref.position.x, Lref.position.y, Lref.position.z);
+		glUniform3f(Lu.dir, Lref.direction.x, Lref.direction.y, Lref.direction.z);
+		glUniform3f(Lu.color, Lref.color.x, Lref.color.y, Lref.color.z);
+		glUniform1f(Lu.intensity, Lref.intensity);
+		glUniform1f(Lu.maxDist, Lref.maxDistance);
+		glUniform1f(Lu.cutOff, Lref.cutOff);
+		glUniform1f(Lu.outerCutOff, Lref.outerCutOff);
+		glUniform1f(Lu.constant, Lref.constant);
+		glUniform1f(Lu.linear, Lref.linear);
+		glUniform1f(Lu.quadratic, Lref.quadratic);
+		glUniform1i(Lu.hasGlow, Lref.hasGlow ? 1 : 0);
+		glUniform3f(Lu.glowColor, Lref.glowColor.x, Lref.glowColor.y, Lref.glowColor.z);
+		glUniform1f(Lu.glowRadius, Lref.glowRadius);
 	}
 }
 
@@ -3580,71 +3790,14 @@ void FiscionX::Model::drawSubMesh(
 	const GLsizei activeIndexCount = useLOD ? overrideIndexCount : mesh.indexCount;
 	const GLenum  activeIndexType = useLOD ? overrideIndexType : mesh.indexType;
 
-	glUseProgram(shader);
-	glBindVertexArray(activeVAO);
+	// OPTIM: useProgramIfChanged/bindVAOIfChanged pulam a chamada ao driver
+	// quando o shader/VAO já é exatamente o que estava ativo no submesh
+	// anterior (muito comum entre instâncias consecutivas do mesmo Model).
+	useProgramIfChanged(shader);
+	bindVAOIfChanged(activeVAO);
 
 	// ── Reconstrói cache de uniform locations apenas quando o shader muda ──
-	if (uniformCache.cachedShader != shader) {
-		uniformCache.cachedShader = shader;
-		uniformCache.model = glGetUniformLocation(shader, "model");
-		uniformCache.lightSpaceMatrix = glGetUniformLocation(shader, "lightSpaceMatrix");
-		uniformCache.alphaMode = glGetUniformLocation(shader, "alphaMode");
-		uniformCache.alphaCutoff = glGetUniformLocation(shader, "alphaCutoff");
-		uniformCache.baseColorTex = glGetUniformLocation(shader, "baseColorTex");
-		uniformCache.normalMapTex = glGetUniformLocation(shader, "normalMapTex");
-		uniformCache.hasNormalMap = glGetUniformLocation(shader, "hasNormalMap");
-		uniformCache.shadowMap = glGetUniformLocation(shader, "shadowMap");
-		uniformCache.aoTex = glGetUniformLocation(shader, "aoTex");
-		uniformCache.hasAOMap = glGetUniformLocation(shader, "hasAOMap");
-		uniformCache.glossinessTex = glGetUniformLocation(shader, "glossinessTex");
-		uniformCache.hasGlossinessMap = glGetUniformLocation(shader, "hasGlossinessMap");
-		uniformCache.glossinessInAlphaOfSpecular = glGetUniformLocation(shader, "glossinessInAlphaOfSpecular");
-		uniformCache.specularF0Tex = glGetUniformLocation(shader, "specularF0Tex");
-		uniformCache.hasSpecularF0Map = glGetUniformLocation(shader, "hasSpecularF0Map");
-		uniformCache.metallicTex = glGetUniformLocation(shader, "metallicTex");
-		uniformCache.useMetalRoughness = glGetUniformLocation(shader, "useMetalRoughness");
-		uniformCache.environmentStrength = glGetUniformLocation(shader, "environmentStrength");
-		uniformCache.environmentSkyColor = glGetUniformLocation(shader, "environmentSkyColor");
-		uniformCache.environmentGroundColor = glGetUniformLocation(shader, "environmentGroundColor");
-		uniformCache.reflectionsStrength = glGetUniformLocation(shader, "reflectionsStrength");
-		uniformCache.isAffectedByLight = glGetUniformLocation(shader, "isAffectedByLight");
-		uniformCache.acceptsShadows = glGetUniformLocation(shader, "acceptsShadows");
-		uniformCache.alpha = glGetUniformLocation(shader, "alpha");
-		uniformCache.hdrExposure = glGetUniformLocation(shader, "hdrExposure");
-		uniformCache.fogColor = glGetUniformLocation(shader, "fogColor");
-		uniformCache.fogDensity = glGetUniformLocation(shader, "fogDensity");
-		uniformCache.fogStart = glGetUniformLocation(shader, "fogStart");
-		uniformCache.fogEnd = glGetUniformLocation(shader, "fogEnd");
-		uniformCache.fogType = glGetUniformLocation(shader, "fogType");
-		uniformCache.numLights = glGetUniformLocation(shader, "numLights");
-		uniformCache.metallicFactor = glGetUniformLocation(shader, "metallicFactor");
-		uniformCache.roughnessFactor = glGetUniformLocation(shader, "roughnessFactor");
-
-		// IBL
-		uniformCache.irradianceMap = glGetUniformLocation(shader, "irradianceMap");
-		uniformCache.prefilterMap = glGetUniformLocation(shader, "prefilterMap");
-		uniformCache.brdfLUT = glGetUniformLocation(shader, "brdfLUT");
-		uniformCache.hasIBL = glGetUniformLocation(shader, "hasIBL");
-
-		char buf[64];
-		for (int i = 0; i < 10; ++i) {
-			auto& Lu = uniformCache.lights[i];
-			snprintf(buf, sizeof(buf), "lightType[%d]", i); Lu.type = glGetUniformLocation(shader, buf);
-			snprintf(buf, sizeof(buf), "lightPos[%d]", i); Lu.pos = glGetUniformLocation(shader, buf);
-			snprintf(buf, sizeof(buf), "lightDir[%d]", i); Lu.dir = glGetUniformLocation(shader, buf);
-			snprintf(buf, sizeof(buf), "lightColor[%d]", i); Lu.color = glGetUniformLocation(shader, buf);
-			snprintf(buf, sizeof(buf), "lightIntensity[%d]", i); Lu.intensity = glGetUniformLocation(shader, buf);
-			snprintf(buf, sizeof(buf), "lightMaxDistance[%d]", i); Lu.maxDist = glGetUniformLocation(shader, buf);
-			snprintf(buf, sizeof(buf), "lightCutOff[%d]", i); Lu.cutOff = glGetUniformLocation(shader, buf);
-			snprintf(buf, sizeof(buf), "lightOuterCutOff[%d]", i); Lu.outerCutOff = glGetUniformLocation(shader, buf);
-			snprintf(buf, sizeof(buf), "lightConstant[%d]", i); Lu.constant = glGetUniformLocation(shader, buf);
-			snprintf(buf, sizeof(buf), "lightLinear[%d]", i); Lu.linear = glGetUniformLocation(shader, buf);
-			snprintf(buf, sizeof(buf), "lightQuadratic[%d]", i); Lu.quadratic = glGetUniformLocation(shader, buf);
-			snprintf(buf, sizeof(buf), "lightHasGlow[%d]", i); Lu.hasGlow = glGetUniformLocation(shader, buf);
-			snprintf(buf, sizeof(buf), "lightGlowColor[%d]", i); Lu.glowColor = glGetUniformLocation(shader, buf);
-			snprintf(buf, sizeof(buf), "lightGlowRadius[%d]", i); Lu.glowRadius = glGetUniformLocation(shader, buf);
-		}
-	}
+	ensureUniformCache(shader);
 
 	if (depthPass) {
 		glEnable(GL_DEPTH_TEST);
@@ -3680,15 +3833,16 @@ void FiscionX::Model::drawSubMesh(
 		if (locTransFactor != -1) glUniform1f(locTransFactor, mesh.transmissionFactor);
 
 		if (locBaseTex != -1 && mesh.baseColorTex != 0) {
-			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, mesh.baseColorTex);
+			bindTexIfChanged(0, mesh.baseColorTex);
 			glUniform1i(locBaseTex, 0);
 		}
 		// ========================================
 
 		glDrawElements(GL_TRIANGLES, activeIndexCount, activeIndexType, 0);
-		glBindVertexArray(0);
-		glUseProgram(0);
+		// OPTIM: unbind de VAO/program removido daqui pelo mesmo motivo do
+		// caminho não-depthPass (ver comentário no fim da função) — só
+		// atrapalhava useProgramIfChanged/bindVAOIfChanged do próximo submesh
+		// da mesma passagem de sombra, forçando rebind mesmo quando nada mudou.
 		return;
 	}
 
@@ -3730,123 +3884,76 @@ void FiscionX::Model::drawSubMesh(
 		}
 	}
 
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, mesh.baseColorTex);
+	bindTexIfChanged(0, mesh.baseColorTex);
 	glUniform1i(uniformCache.baseColorTex, 0);
 
-	glActiveTexture(GL_TEXTURE1);
-	glBindTexture(GL_TEXTURE_2D, mesh.normalMapTex);
+	bindTexIfChanged(1, mesh.normalMapTex);
 	glUniform1i(uniformCache.normalMapTex, 1);
 	glUniform1i(uniformCache.hasNormalMap, mesh.normalMapTex != 0 ? 1 : 0);
 
-	glActiveTexture(GL_TEXTURE2);
-	glBindTexture(GL_TEXTURE_2D, depthMap);
-	glUniform1i(uniformCache.shadowMap, 2);
+	// shadowMap (slot 2) já foi vinculado uma única vez por Model::draw() em
+	// uploadPerDrawUniforms — é o mesmo depthMap pra toda instância/submesh
+	// desta chamada, não precisa ser refeito aqui.
 
-	glActiveTexture(GL_TEXTURE3);
-	glBindTexture(GL_TEXTURE_2D, mesh.glossinessTex);
+	bindTexIfChanged(3, mesh.glossinessTex);
 	glUniform1i(uniformCache.glossinessTex, 3);
 	glUniform1i(uniformCache.hasGlossinessMap, mesh.glossinessTex != 0 ? 1 : 0);
 	glUniform1i(uniformCache.glossinessInAlphaOfSpecular, mesh.glossinessInAlphaOfSpecular ? 1 : 0);
 
-	glActiveTexture(GL_TEXTURE4);
-	glBindTexture(GL_TEXTURE_2D, mesh.specularF0Tex);
+	bindTexIfChanged(4, mesh.specularF0Tex);
 	glUniform1i(uniformCache.specularF0Tex, 4);
 	glUniform1i(uniformCache.hasSpecularF0Map, mesh.specularF0Tex != 0 ? 1 : 0);
 
-	glActiveTexture(GL_TEXTURE5);
-	glBindTexture(GL_TEXTURE_2D, mesh.metallicTex);
+	bindTexIfChanged(5, mesh.metallicTex);
 	glUniform1i(uniformCache.metallicTex, 5);
 	glUniform1i(uniformCache.useMetalRoughness, mesh.useMetalRoughness ? 1 : 0);
 	glUniform1f(uniformCache.metallicFactor, mesh.metallicFactor);
 	glUniform1f(uniformCache.roughnessFactor, mesh.roughnessFactor);
 
-	glUniform1f(uniformCache.environmentStrength, FiscionX::Core::AMBIENT_LIGHT_INTENSITY);
-	glUniform3f(uniformCache.environmentSkyColor, 0.3f, 0.3f, 0.35f);
-	glUniform3f(uniformCache.environmentGroundColor, 0.05f, 0.05f, 0.07f);
-	glUniform1f(uniformCache.reflectionsStrength, FiscionX::Core::REFLECTIONS_STRENGTH);
+	// OPTIM: environmentStrength/SkyColor/GroundColor, reflectionsStrength,
+	// alpha, hdrExposure, fog* e o bloco inteiro de luzes/IBL saíram daqui —
+	// são os mesmos pra toda instância/submesh desta chamada de Model::draw()
+	// e agora são enviados uma única vez em uploadPerDrawUniforms(). Só o que
+	// realmente varia por Instance continua aqui:
 	glUniform1i(uniformCache.isAffectedByLight, inst->isAffectedByLight ? 1 : 0);
 	glUniform1i(uniformCache.acceptsShadows, inst->acceptsShadows ? 1 : 0);
-	glUniform1f(uniformCache.alpha, alpha);
-	glUniform1f(uniformCache.hdrExposure, FiscionX::Core::HDR_EXPOSURE);
-	glUniform3f(uniformCache.fogColor, FiscionX::Core::fogColor.x, FiscionX::Core::fogColor.y, FiscionX::Core::fogColor.z);
-	glUniform1f(uniformCache.fogDensity, FiscionX::Core::fogDensity);
-	glUniform1f(uniformCache.fogStart, FiscionX::Core::fogStart);
-	glUniform1f(uniformCache.fogEnd, FiscionX::Core::fogEnd);
-	glUniform1i(uniformCache.fogType, FiscionX::Core::fogType);
-
-	// ── IBL textures (slots 6, 7, 8) ────────────────────────────────────────
-	if (FiscionX::Core::iblReady) {
-		glActiveTexture(GL_TEXTURE6);
-		glBindTexture(GL_TEXTURE_CUBE_MAP, FiscionX::Core::iblIrradianceMap);
-		glUniform1i(uniformCache.irradianceMap, 6);
-
-		glActiveTexture(GL_TEXTURE7);
-		glBindTexture(GL_TEXTURE_CUBE_MAP, FiscionX::Core::iblPrefilterMap);
-		glUniform1i(uniformCache.prefilterMap, 7);
-
-		glActiveTexture(GL_TEXTURE8);
-		glBindTexture(GL_TEXTURE_2D, FiscionX::Core::iblBrdfLUT);
-		glUniform1i(uniformCache.brdfLUT, 8);
-
-		glUniform1i(uniformCache.hasIBL, 1);
-	}
-	else {
-		glUniform1i(uniformCache.hasIBL, 0);
-	}
 
 	// ── Ambient Occlusion Map (slot 9) ───────────────────────────────────────
-	glActiveTexture(GL_TEXTURE9);
-	if (mesh.aoTex != 0) {
-		glBindTexture(GL_TEXTURE_2D, mesh.aoTex);
-		glUniform1i(uniformCache.aoTex, 9);
-		glUniform1i(uniformCache.hasAOMap, 1);
-	}
-	else {
-		glBindTexture(GL_TEXTURE_2D, 0);
-		glUniform1i(uniformCache.aoTex, 9);
-		glUniform1i(uniformCache.hasAOMap, 0);
-	}
+	bindTexIfChanged(9, mesh.aoTex); // mesh.aoTex == 0 é um bind válido (limpa o slot)
+	glUniform1i(uniformCache.aoTex, 9);
+	glUniform1i(uniformCache.hasAOMap, mesh.aoTex != 0 ? 1 : 0);
 	// ─────────────────────────────────────────────────────────────────────────
-
-	int numLights = std::min((int)FiscionX::Core::AllLights.size(), 10);
-	glUniform1i(uniformCache.numLights, numLights);
-	for (int i = 0; i < numLights; ++i) {
-		const Light& Lref = *FiscionX::Core::AllLights[i];
-		const auto& Lu = uniformCache.lights[i];
-		glUniform1i(Lu.type, Lref.type);
-		glUniform3f(Lu.pos, Lref.position.x, Lref.position.y, Lref.position.z);
-		glUniform3f(Lu.dir, Lref.direction.x, Lref.direction.y, Lref.direction.z);
-		glUniform3f(Lu.color, Lref.color.x, Lref.color.y, Lref.color.z);
-		glUniform1f(Lu.intensity, Lref.intensity);
-		glUniform1f(Lu.maxDist, Lref.maxDistance);
-		glUniform1f(Lu.cutOff, Lref.cutOff);
-		glUniform1f(Lu.outerCutOff, Lref.outerCutOff);
-		glUniform1f(Lu.constant, Lref.constant);
-		glUniform1f(Lu.linear, Lref.linear);
-		glUniform1f(Lu.quadratic, Lref.quadratic);
-		glUniform1i(Lu.hasGlow, Lref.hasGlow ? 1 : 0);
-		glUniform3f(Lu.glowColor, Lref.glowColor.x, Lref.glowColor.y, Lref.glowColor.z);
-		glUniform1f(Lu.glowRadius, Lref.glowRadius);
-	}
 
 	// Draw
 	glDrawElements(GL_TRIANGLES, activeIndexCount, activeIndexType, 0);
 
-	glBindVertexArray(0);
-	glUseProgram(0);
-	glBindTexture(GL_TEXTURE_2D, 0);
-
-	glDepthMask(GL_TRUE);
-	glDisable(GL_BLEND);
-	glEnable(GL_DEPTH_TEST);
-	glEnable(GL_CULL_FACE);
-	glCullFace(GL_BACK);
+	// OPTIM: o reset completo de estado (unbind VAO/program/textura, restaurar
+	// blend/depth/cull) que rodava AQUI — ou seja, depois de CADA submesh de
+	// CADA instância — foi removido. Ele não servia pra nada dentro do loop:
+	// o próximo drawSubMesh sempre define explicitamente tudo que precisa
+	// (useProgramIfChanged/bindVAOIfChanged, blend/depthMask/cullFace conforme
+	// o "mode" do material) antes de desenhar. O único motivo real pra
+	// resetar é deixar um estado neutro pra o que roda DEPOIS de todos os
+	// desenhos deste Model — isso agora acontece uma única vez, no fim de
+	// Model::draw(), em vez de uma vez por submesh-instância (ver lá).
 }
 
 void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLuint depthMap, bool depthPass, FiscionX::Mat4 view, FiscionX::Mat4 projection,
 	bool skipOcclusionAndCulling) {
-	int numLights = static_cast<int>(FiscionX::Core::AllLights.size());	glUseProgram(shader);
+	int numLights = static_cast<int>(FiscionX::Core::AllLights.size());
+
+	// OPTIM: cache de estado (shader/VAO/texturas por unidade) escopado a esta
+	// chamada de draw() é resetado aqui, no início — garante que nunca fica
+	// "stale" em relação a outras passagens (shadow, postprocessing, UI) que
+	// rodam entre uma chamada de Model::draw() e a próxima e mexem no mesmo
+	// contexto GL. useProgramIfChanged/bindVAOIfChanged/bindTexIfChanged (usados
+	// em drawSubMesh/uploadPerDrawUniforms abaixo) então só evitam trabalho
+	// DENTRO desta mesma chamada — entre instâncias/submeshes consecutivos.
+	lastUsedProgram = 0xFFFFFFFFu;
+	lastBoundVAO = 0xFFFFFFFFu;
+	for (int i = 0; i < 10; ++i) texUnitCache[i] = 0xFFFFFFFFu;
+
+	useProgramIfChanged(shader);
 
 	// ── OPTIM: reconstrói o cache de locations apenas quando o shader muda ──
 	// Antes: ~6 glGetUniformLocation fixos + até 16+16 lookups com std::to_string()
@@ -3941,38 +4048,129 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 	// estava sendo recalculado por instância (sempre que inst.enableFrustumCulling
 	// estava ativo) mesmo sendo idêntico para todas elas. Calcula uma única vez
 	// por chamada de draw() em vez de uma vez por instância.
+	//
+	// FIX: passagens de sombra (depthPass == true) não faziam NENHUM frustum culling
+	// — o bloco abaixo só rodava com "!depthPass", então cada cascata da luz
+	// direcional (e cada face de point light / cada spot light) desenhava toda
+	// instância dentro de maxViewDistance, mesmo completamente fora do frustum
+	// daquela cascata/face específica. Isso incluía a cascata mais próxima, que
+	// deveria conter só o que está bem perto do player. Como o culling da câmera
+	// principal usa viewProjMat (câmera), mas em depthPass "view"/"projection" são
+	// os da câmera principal só por assinatura de função (não da luz), o frustum
+	// correto pra cada passagem de sombra vem de "lightSpaceMatrix" — o parâmetro
+	// que já é exatamente o proj*view daquela cascata/face/spot (ver chamadas em
+	// RenderAllShadowPasses). extractFrustumPlanes funciona igual pra matriz
+	// ortográfica (cascatas) ou perspectiva (point light), então reusamos a mesma
+	// função só trocando qual matriz alimenta ela.
 	glm::vec4 frustumPlanes[6];
 	if (!depthPass) {
 		extractFrustumPlanes(viewProjMat, frustumPlanes);
 	}
+	else if (!skipOcclusionAndCulling) {
+		extractFrustumPlanes(lightSpaceMatrix, frustumPlanes);
+	}
+
+	// FIX: os testes de frustum (por instância e por submesh), lá embaixo, agora
+	// rodam tanto fora quanto dentro de depthPass — usam sempre "frustumPlanes",
+	// que aponta pro frustum certo (câmera ou luz) dependendo do caso acima.
+	// skipOcclusionAndCulling continua desligando o culling nos dois casos (usado
+	// por chamadas especiais tipo captura de cubemap sem culling).
+	const bool applyFrustumCulling = !skipOcclusionAndCulling;
+
+	// FIX: boundingCenter/boundingRadius existiam na struct mas nunca eram
+	// preenchidos — ficavam sempre no valor hardcoded padrão. Calculado uma única
+	// vez por Model (não por instância, não por frame) em computeBoundsIfNeeded(),
+	// que também corrige o AABB cru de cada submesh pelo transform do node antes
+	// de unir (ver comentário no header — sem isso a esfera de modelos como a
+	// grama, cujo node tem escala não-aplicada, saía minúscula e sem relação com
+	// o tamanho real desenhado). É essa esfera, transformada por instância, que dá
+	// o teste rápido de "a instância inteira está fora da câmera?" — usado aqui e
+	// em Core::DrawTransparentPass.
+	computeBoundsIfNeeded();
+
+	// OPTIM PRINCIPAL: luzes/ambiente/fog/IBL/shadowMap-da-câmera/alpha, que
+	// eram reenviados dentro de drawSubMesh a cada SUBMESH de CADA INSTÂNCIA,
+	// agora são enviados uma única vez aqui — nenhum desses valores muda
+	// dentro desta chamada de draw() (ver uploadPerDrawUniforms). O shader de
+	// depthPass não usa nenhum desses uniforms (só model/alphaMode/alphaCutoff/
+	// baseColorTex, tratados dentro do próprio drawSubMesh), então isso só
+	// roda na passagem de câmera.
+	if (!depthPass) {
+		uploadPerDrawUniforms(shader, depthMap);
+	}
+
+	// OPTIM: camPos era recalculado (mesmo valor, Camera.position) uma vez por
+	// instância dentro do loop, só pra ser usado na seleção de LOD por submesh.
+	// Calculado uma única vez aqui, já que não muda entre instâncias desta chamada.
+	glm::vec3 camPos(
+		FiscionX::Core::Camera.position.x,
+		FiscionX::Core::Camera.position.y,
+		FiscionX::Core::Camera.position.z);
+
+	// FIX/OPTIM PRINCIPAL: o loop de instâncias foi dividido em duas fases —
+	// (1) culling + coleta dos candidatos visíveis, (2) draw real — com a fase de
+	// occlusion query rodando em lote no meio, uma única vez para TODAS as
+	// instâncias candidatas. Antes, cada instância fazia: occlusion query -> LOD ->
+	// draw, tudo intercalado, e o state de occlusion (glColorMask/glDepthMask/
+	// glDisable(GL_BLEND)/glUseProgram(0)) era ligado e desligado a cada SUBMESH,
+	// mesmo sem nenhum draw real acontecendo no meio das queries. Guardamos aqui o
+	// resultado do culling (instBase, instSubVisible) pra não recalcular nada na
+	// fase 2.
+	struct DrawCandidate {
+		Instance* inst;
+		glm::mat4 instBase;
+		std::vector<bool> instSubVisible;
+	};
+	std::vector<DrawCandidate> candidates;
+	candidates.reserve(instances.size());
 
 	for (Instance& inst : instances) {
-		glm::mat4 baseMatrix = glm::mat4(1.0f);
-
-		// IMPORTANT: occlusion queries are async (glBeginQuery/glEndQuery, read back
-		// later in Instance::update()). Any caller that draws the same instances
-		// several times in a row with non-main-camera views (e.g. cubemap face
-		// captures), with no real frame boundary in between for the driver to
-		// resolve each query before the next glBeginQuery on the same query object,
-		// would corrupt/desync the occlusion state for the *real* camera's following
-		// frames (symptom: meshes vanish almost entirely right after such a capture).
-		// skipOcclusionAndCulling exists for exactly that case: skip occlusion
-		// querying entirely and just draw everything.
-		if (!depthPass && !skipOcclusionAndCulling) {
-			inst.updateOcclusion(viewProjMat);
+		// FIX: instâncias com inst.visible == false continuavam pagando occlusion
+		// query e teste de visibilidade por submesh todo frame, mesmo nunca sendo
+		// desenhadas de fato (só o draw final é que respeitava esse flag). Agora
+		// pula tudo de uma vez.
+		if (FiscionX::Math::getDistance3D(FiscionX::Core::Camera.position, inst.position) > maxViewDistance) {
+			continue;
 		}
-		if (inst.physicsSyncTransformMatrix != glm::mat4(1.0f)) {
-			baseMatrix = glm::scale(inst.physicsSyncTransformMatrix, glm::vec3(inst.scale.x, inst.scale.y, inst.scale.z));
+		if (depthPass && !inst.castsShadows) continue;
+		if (!inst.visible) continue;
+
+		// DEBUG: conta toda instância visível que chega até aqui, na passagem da
+		// câmera principal, pra sabermos o denominador (quantas existem no total).
+		if (!depthPass && !skipOcclusionAndCulling) {
+			FiscionX::Core::DEBUG_InstancesTotal++;
 		}
 
-		std::vector<bool> subMeshVisible;
-		if (!depthPass && !skipOcclusionAndCulling) {
-			inst.computeSubMeshVisibility(viewProjMat, subMeshVisible);
-		}
-		else {
-			// shadow pass, or a probe bake: never cull — a probe bake's view is not
-			// the main camera's, so main-camera frustum/occlusion state doesn't apply.
-			subMeshVisible.assign(meshes.size(), true);
+		// OPTIM/FIX: instBase é a matriz de mundo real da instância — antes era
+		// calculada duas vezes: uma vez em "baseMatrix" aqui em cima (que nunca era
+		// lida depois, trabalho jogado fora) e de novo, do zero, como "instBase" lá
+		// embaixo. Agora é montada uma única vez e reusada no teste de frustum da
+		// instância inteira, no teste por submesh, no LOD e no draw.
+		glm::mat4 instBase = (inst.physicsSyncTransformMatrix != glm::mat4(1.0f))
+			? glm::scale(inst.physicsSyncTransformMatrix, glm::vec3(inst.scale.x, inst.scale.y, inst.scale.z))
+			: glm::translate(glm::mat4(1.0f), glm::vec3(inst.position.x, inst.position.y, inst.position.z))
+			* glm::eulerAngleXYZ(inst.rotation.y, inst.rotation.x, inst.rotation.z)
+			* glm::scale(glm::mat4(1.0f), glm::vec3(inst.scale.x, inst.scale.y, inst.scale.z));
+
+		// FIX PRINCIPAL: frustum culling por INSTÂNCIA, agora também durante
+		// depthPass (passagens de sombra). Antes só existia o teste por SUBMESH
+		// (isSubMeshInFrustum), e mesmo esse vinha atrás de uma flag
+		// (enableFrustumCulling) que ficava "false" por padrão e nunca era ligada em
+		// lugar nenhum do código — ou seja, nenhuma instância era cortada por estar
+		// fora da câmera. Toda instância pagava occlusion query + teste de submesh +
+		// draw call inteiros, mesmo 100% fora do frustum. Esse teste de esfera
+		// resolve os dois problemas: agora existe um corte no nível da instância
+		// inteira, ligado por padrão, tanto no passe da câmera quanto no de sombra
+		// (nesse caso usando o frustum da cascata/face/spot, ver frustumPlanes acima).
+		if (inst.enableFrustumCulling && applyFrustumCulling) {
+			glm::vec3 worldCenter = glm::vec3(instBase * glm::vec4(boundingCenter, 1.0f));
+			float maxScale = std::max({ std::abs(inst.scale.x), std::abs(inst.scale.y), std::abs(inst.scale.z) });
+			float worldRadius = boundingRadius * maxScale;
+
+			if (!isSphereInFrustum(worldCenter, worldRadius, frustumPlanes)) {
+				if (!depthPass) FiscionX::Core::DEBUG_InstancesCulled++; // DEBUG: contador só reflete o passe da câmera principal
+				continue; // instância inteira fora do frustum (câmera OU cascata/face/spot): para de desenhar, sem occlusion query nem teste de submesh
+			}
 		}
 
 		// OPTIM: LOD agora é calculado por SubMesh, não mais uma única vez pra
@@ -3983,60 +4181,125 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 		// Agora cada SubMesh mede sua própria distância via o centro do seu AABB
 		// local transformado para o mundo, então cada parte do modelo escolhe
 		// seu LOD de forma independente.
-		glm::vec3 camPos(
-			FiscionX::Core::Camera.position.x,
-			FiscionX::Core::Camera.position.y,
-			FiscionX::Core::Camera.position.z);
+		std::vector<bool> instSubVisible;
+		if (inst.enableFrustumCulling && applyFrustumCulling) {
+			instSubVisible.resize(meshes.size());
+			for (int i = 0; i < (int)meshes.size(); ++i) {
+				glm::mat4 M = instBase * (isSkinned ? glm::mat4(1.0f) : meshes[i].transform);
+				instSubVisible[i] = inst.isSubMeshInFrustum(meshes[i], M, frustumPlanes);
+			}
+		}
+		else {
+			instSubVisible.assign(meshes.size(), true);
+		}
 
-		if (inst.visible == true) {
-			glm::mat4 instBase =
-				glm::translate(glm::mat4(1.0f), glm::vec3(inst.position.x, inst.position.y, inst.position.z))
-				* glm::eulerAngleXYZ(inst.rotation.y, inst.rotation.x, inst.rotation.z)
-				* glm::scale(glm::mat4(1.0f), glm::vec3(inst.scale.x, inst.scale.y, inst.scale.z));
+		candidates.push_back({ &inst, instBase, std::move(instSubVisible) });
+	}
 
-			std::vector<bool> instSubVisible;
-			if (inst.enableFrustumCulling && !depthPass && !skipOcclusionAndCulling) {
-				instSubVisible.resize(meshes.size());
-				for (int i = 0; i < (int)meshes.size(); ++i) {
-					glm::mat4 M = instBase * (isSkinned ? glm::mat4(1.0f) : meshes[i].transform);
-					instSubVisible[i] = inst.isSubMeshInFrustum(meshes[i], M, frustumPlanes);
+	// ── PASS 1: occlusion queries, em lote, pra TODAS as instâncias candidatas ──
+	// IMPORTANT: occlusion queries are async (glBeginQuery/glEndQuery, read back
+	// later in Instance::update()). Any caller that draws the same instances
+	// several times in a row with non-main-camera views (e.g. cubemap face
+	// captures), with no real frame boundary in between for the driver to
+	// resolve each query before the next glBeginQuery on the same query object,
+	// would corrupt/desync the occlusion state for the *real* camera's following
+	// frames (symptom: meshes vanish almost entirely right after such a capture).
+	// skipOcclusionAndCulling exists for exactly that case: skip occlusion
+	// querying entirely and just draw everything.
+	if (!depthPass && !skipOcclusionAndCulling) {
+		// FIX: objetos baratos de desenhar (grama, folhagem, detritos) quase sempre
+		// perdem com occlusion query — o teste custa mais caro que o draw call que
+		// tentaria evitar. Instâncias com enableOcclusionQuery=false (ex.: a grama)
+		// pulam a query inteira e vão direto pro draw real, na PASS 2.
+		bool anyOcclusionQuery = false;
+		for (auto& c : candidates) {
+			if (c.inst->enableOcclusionQuery) { anyOcclusionQuery = true; break; }
+		}
+
+		if (anyOcclusionQuery) {
+			// OPTIM: este state era ligado/desligado a cada SUBMESH, dentro de
+			// Instance::updateOcclusion, mesmo sem nenhum draw real acontecendo
+			// entre uma query e a próxima. Agora é setado uma única vez aqui, antes
+			// de rodar as queries de todas as instâncias candidatas, e restaurado
+			// uma única vez logo abaixo.
+			glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+			glDepthMask(GL_FALSE);
+			glDisable(GL_BLEND);
+			glUseProgram(0);
+
+			for (auto& c : candidates) {
+				if (c.inst->enableOcclusionQuery) {
+					c.inst->updateOcclusion(viewProjMat);
 				}
+			}
+
+			glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+			glDepthMask(GL_TRUE);
+
+			// FIX: PASS 1 chama glUseProgram(0) diretamente (fora de
+			// useProgramIfChanged) e Instance::updateOcclusion() faz
+			// glBindVertexArray(queryVAO) diretamente (fora de bindVAOIfChanged) —
+			// os dois deixariam lastUsedProgram/lastBoundVAO desatualizados em
+			// relação ao estado real do driver, fazendo a PASS 2 pular o rebind
+			// necessário do shader/VAO no primeiro drawSubMesh. Invalida os dois
+			// caches pra forçar o rebind real.
+			lastUsedProgram = 0xFFFFFFFFu;
+			lastBoundVAO = 0xFFFFFFFFu;
+		}
+	}
+
+	// ── PASS 2: draw real de todas as instâncias candidatas ──
+	for (auto& c : candidates) {
+		Instance& inst = *c.inst;
+		const glm::mat4& instBase = c.instBase;
+		const std::vector<bool>& instSubVisible = c.instSubVisible;
+
+		if (isSkinned && inst.uboSkin != 0) {
+			glBindBufferBase(GL_UNIFORM_BUFFER, 0, inst.uboSkin);
+		}
+
+		for (int i = 0; i < (int)meshes.size(); i++) {
+			const auto& mesh = meshes[i];
+			bool isBlend = (mesh.alphaMode == "BLEND");
+			if (!depthPass && isBlend) continue;  // BLEND vai para DrawTransparentPass
+			if (!instSubVisible[i]) continue;      // frustum culling por submesh
+			glm::mat4 modelMatrix = instBase * (isSkinned ? glm::mat4(1.0f) : mesh.transform);
+
+			int activeLOD = -1; // -1 = full-resolution base submesh
+			if (!lodDistances.empty() && !skipOcclusionAndCulling) {
+				glm::vec3 subCenterWorld = glm::vec3(modelMatrix * glm::vec4(mesh.aabbCenter(), 1.0f));
+				float dSq = glm::dot(camPos - subCenterWorld, camPos - subCenterWorld);
+				activeLOD = selectLOD(dSq);
+				if (activeLOD == INT_MAX) continue; // essa submesh está além do último LOD → cull por distância (só ela, não o modelo inteiro)
+			}
+
+			if (activeLOD >= 0 && activeLOD < (int)mesh.lodLevels.size()) {
+				const SubMesh::LODLevel& lod = mesh.lodLevels[activeLOD];
+				drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass, &inst,
+					lod.vao, lod.ebo, (GLsizei)lod.indexCount, lod.indexType);
 			}
 			else {
-				instSubVisible.assign(meshes.size(), true);
-			}
-
-			if (isSkinned && inst.uboSkin != 0) {
-				glBindBufferBase(GL_UNIFORM_BUFFER, 0, inst.uboSkin);
-			}
-
-			for (int i = 0; i < (int)meshes.size(); i++) {
-				const auto& mesh = meshes[i];
-				bool isBlend = (mesh.alphaMode == "BLEND");
-				if (!depthPass && isBlend) continue;  // BLEND vai para DrawTransparentPass
-				if (!instSubVisible[i]) continue;      // frustum culling por submesh
-				glm::mat4 modelMatrix = instBase * (isSkinned ? glm::mat4(1.0f) : mesh.transform);
-
-				int activeLOD = -1; // -1 = full-resolution base submesh
-				if (!lodDistances.empty() && !skipOcclusionAndCulling) {
-					glm::vec3 subCenterWorld = glm::vec3(modelMatrix * glm::vec4(mesh.aabbCenter(), 1.0f));
-					float dSq = glm::dot(camPos - subCenterWorld, camPos - subCenterWorld);
-					activeLOD = selectLOD(dSq);
-					if (activeLOD == INT_MAX) continue; // essa submesh está além do último LOD → cull por distância (só ela, não o modelo inteiro)
-				}
-
-				if (activeLOD >= 0 && activeLOD < (int)mesh.lodLevels.size()) {
-					const SubMesh::LODLevel& lod = mesh.lodLevels[activeLOD];
-					drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass, &inst,
-						lod.vao, lod.ebo, (GLsizei)lod.indexCount, lod.indexType);
-				}
-				else {
-					drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass, &inst,
-						0, 0, 0, GL_UNSIGNED_INT);
-				}
+				drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass, &inst,
+					0, 0, 0, GL_UNSIGNED_INT);
 			}
 		}
 	}
+
+	// OPTIM: estado neutro (unbind VAO/program/textura da unidade 0, restaura
+	// depth mask/blend/cull-face pro padrão) — antes era refeito depois de
+	// CADA submesh de CADA instância dentro de drawSubMesh; agora roda uma
+	// única vez aqui, no fim da chamada de draw() inteira, que é o único
+	// ponto em que esse "reset pra quem for desenhar a seguir" realmente
+	// importa.
+	glBindVertexArray(0);
+	glUseProgram(0);
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	glDepthMask(GL_TRUE);
+	glDisable(GL_BLEND);
+	glEnable(GL_DEPTH_TEST);
+	glEnable(GL_CULL_FACE);
+	glCullFace(GL_BACK);
 }
 
 void FiscionX::Model::bindShaderForTransparency(GLuint shader, FiscionX::Mat4 view, FiscionX::Mat4 projection) {
@@ -4292,6 +4555,7 @@ FiscionX::Physics::Rigidbody::Rigidbody(FiscionX::Physics::Shape _shape) : shape
 	body = new btRigidBody(shape.info);
 	body->setCcdMotionThreshold(0.001f);
 	body->setCcdSweptSphereRadius(0.3f);
+	FiscionX::Physics::worldBodies.push_back(this);
 }
 
 void FiscionX::Physics::Rigidbody::activate() {
@@ -5646,16 +5910,6 @@ void FiscionX::Core::ClockTick() {
 	glfwPollEvents();
 }
 
-// =================== RECREATE POST PROCESSING BUFFERS ===================
-// Todas as texturas/FBOs de post-processing (main G-buffer, SSAO, SSR) sao
-// alocadas com largura/altura FIXAS dentro de NewWindow(). SetWindowSize()
-// trocava SCREEN_WIDTH/SCREEN_HEIGHT e o glViewport, mas nunca realocava
-// essas texturas — o resultado e a engine renderizando dentro de um viewport
-// novo enquanto le/escreve em texturas com o tamanho antigo (esticamento /
-// "ghosting" visivel ao mudar a resolucao em runtime). Esta funcao deleta e
-// recria exatamente os mesmos buffers que NewWindow cria, agora com w/h
-// atuais. screenQuadVAO/VBO e ssaoNoiseTex ficam de fora pois nao dependem
-// da resolucao da tela (quad em NDC e ruido 4x4 fixo).
 static void RecreatePostProcessBuffers(int w, int h) {
 	if (w <= 0) w = 1;
 	if (h <= 0) h = 1;
@@ -5895,6 +6149,19 @@ void FiscionX::Core::DrawTransparentPass(FiscionX::Mat4 view, FiscionX::Mat4 pro
 
 	glm::vec3 camPos(Camera.position.x, Camera.position.y, Camera.position.z);
 
+	// FIX: este passe desenhava TODA instância de TODO modelo com submesh BLEND,
+	// sem nenhum teste de distância (maxViewDistance) nem de frustum — os dois
+	// testes existiam só no passe opaco (Model::draw), que pula submeshes BLEND
+	// de propósito e empurra elas pra cá (ver comentário "BLEND vai para
+	// DrawTransparentPass" logo abaixo). Na prática, qualquer prop com material
+	// BLEND (a grama, por causa das bordas com alpha suave) nunca era cortado
+	// por estar fora da câmera ou longe demais. Recalcula aqui os mesmos dois
+	// testes que Model::draw já faz pro passe opaco, pra respeitar frustum
+	// culling e maxViewDistance também nas instâncias transparentes.
+	const glm::mat4 viewProjMat = glm::mat4(projection) * glm::mat4(view);
+	glm::vec4 frustumPlanes[6];
+	FiscionX::Model::extractFrustumPlanes(viewProjMat, frustumPlanes);
+
 	// OPTIM: vetor `static` reaproveitado entre frames — depois do warm-up das primeiras
 	// chamadas, a capacity já comporta o número típico de entradas e clear() não libera
 	// a memória, então o loop abaixo deixa de fazer realocação de heap todo frame.
@@ -5909,8 +6176,21 @@ void FiscionX::Core::DrawTransparentPass(FiscionX::Mat4 view, FiscionX::Mat4 pro
 		// seja, trabalho recalculado todo frame para modelos 100% opacos.
 		if (!model->hasBlendSubMesh) continue;
 
+		// FIX: mesma esfera envolvente usada no passe opaco — calculada uma vez por
+		// Model em computeBoundsIfNeeded(), já corrigida pelo transform do node de
+		// cada submesh (ver comentário no header / Model::draw). Sem isso o teste
+		// abaixo usava um raio praticamente inútil (~0.01 pra grama).
+		model->computeBoundsIfNeeded();
+
 		for (auto& inst : model->instances) {
 			if (!inst.visible) continue;
+
+			// FIX: corte por distância, igual ao passe opaco — sem isso, grama (e
+			// qualquer outro prop BLEND) continuava sendo desenhada bem além de
+			// maxViewDistance.
+			if (FiscionX::Math::getDistance3D(FiscionX::Core::Camera.position, inst.position) > model->maxViewDistance) {
+				continue;
+			}
 
 			glm::mat4 base;
 			if (inst.physicsSyncTransformMatrix != glm::mat4(1.0f))
@@ -5920,6 +6200,19 @@ void FiscionX::Core::DrawTransparentPass(FiscionX::Mat4 view, FiscionX::Mat4 pro
 				glm::translate(glm::mat4(1.0f), glm::vec3(inst.position.x, inst.position.y, inst.position.z))
 				* glm::eulerAngleXYZ(inst.rotation.y, inst.rotation.x, inst.rotation.z)
 				* glm::scale(glm::mat4(1.0f), glm::vec3(inst.scale.x, inst.scale.y, inst.scale.z));
+
+			// FIX: corte por frustum, igual ao passe opaco (isSphereInFrustum sobre a
+			// esfera envolvente transformada pra espaço de mundo) — instância inteira
+			// fora da câmera não chega nem a entrar em `entries`.
+			if (inst.enableFrustumCulling) {
+				glm::vec3 worldCenter = glm::vec3(base * glm::vec4(model->boundingCenter, 1.0f));
+				float maxScale = std::max({ std::abs(inst.scale.x), std::abs(inst.scale.y), std::abs(inst.scale.z) });
+				float worldRadius = model->boundingRadius * maxScale;
+
+				if (!FiscionX::Model::isSphereInFrustum(worldCenter, worldRadius, frustumPlanes)) {
+					continue;
+				}
+			}
 
 			for (const auto& mesh : model->meshes) {
 				if (mesh.alphaMode != "BLEND") continue;
@@ -5960,7 +6253,26 @@ void FiscionX::Core::DrawTransparentPass(FiscionX::Mat4 view, FiscionX::Mat4 pro
 		GLuint sh = e.model->isSkinned ? shaderSkinned : shaderStatic;
 
 		if (sh != lastShader || e.model != lastModel) {
+			// FIX: environment/fog/IBL/alpha/array de luzes eram enviados por
+			// drawSubMesh a cada chamada (inclusive aqui, na passagem de
+			// transparência) — isso foi movido pra uploadPerDrawUniforms, que só
+			// é chamado automaticamente dentro de Model::draw(). Esta passagem
+			// chama drawSubMesh diretamente, então precisa chamar
+			// uploadPerDrawUniforms manualmente (uma vez por troca de
+			// shader/model, não por entry) pra não perder esses uniforms.
 			e.model->bindShaderForTransparency(sh, view, projection);
+			e.model->uploadPerDrawUniforms(sh, 0);
+
+			// FIX: o cache de estado (lastUsedProgram/lastBoundVAO/texUnitCache)
+			// de e.model pode estar desatualizado em relação ao driver — entre o
+			// passe opaco (Model::draw) e este passe de transparência rodam
+			// SSAO/SSR/postprocessing/blit, que trocam program/VAO/texturas nas
+			// mesmas unidades. Invalida aqui pra garantir rebind real no
+			// primeiro drawSubMesh deste model/shader.
+			e.model->lastUsedProgram = 0xFFFFFFFFu;
+			e.model->lastBoundVAO = 0xFFFFFFFFu;
+			for (int i = 0; i < 10; ++i) e.model->texUnitCache[i] = 0xFFFFFFFFu;
+
 			lastShader = sh;
 			lastModel = e.model;
 		}

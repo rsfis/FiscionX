@@ -51,6 +51,7 @@
 #include "dependencies/bullet/BulletCollision/Gimpact/btGImpactCollisionAlgorithm.h"
 #include "dependencies/bullet/BulletCollision/Gimpact/btGImpactShape.h"
 #include "dependencies/bullet/BulletDynamics/Vehicle/btRaycastVehicle.h"
+#include "dependencies/bullet/BulletCollision/CollisionShapes/btHeightfieldTerrainShape.h"
 
 #include "meshoptimizer.h"
 
@@ -798,6 +799,19 @@ namespace FiscionX {
 			void draw3dText(const btVector3&, const char*) override;
 		};
 
+		struct DebugTracer {
+			Vector3 a, b, color;
+			float life;
+		};
+		static std::vector<DebugTracer> activeTracers;
+		static float TRACER_LIFETIME;
+		static void PushDebugLine(Vector3 a, Vector3 b, Vector3 color);
+		static void PushImpactMarker(Vector3 point, Vector3 color);
+		static void AddTracerLine(Vector3 a, Vector3 b, Vector3 color);
+		static void AddImpactMarkerTracer(Vector3 point, Vector3 color);
+		static void UpdateAndPushTracers(float dt);
+
+
 		static btBroadphaseInterface* broadphase;
 		static btDefaultCollisionConfiguration* collisionConfig;
 		static btCollisionDispatcher* dispatcher;
@@ -848,6 +862,8 @@ namespace FiscionX {
 			void setBouncingFactor(float factor);
 			void setCenterOfMass(const btVector3& newCOMOffset);
 		};
+
+		static std::vector<Physics::Rigidbody*> worldBodies;
 
 		enum class JointType {
 			POINT2POINT,
@@ -1043,6 +1059,7 @@ namespace FiscionX {
 		// matriz é que descobria (dentro do loop de submeshes) que o modelo nem tinha
 		// nenhuma submesh BLEND. Com a flag, modelos 100% opacos são pulados de cara.
 		bool hasBlendSubMesh = false;
+		float maxViewDistance = 120;
 
 		struct Instance {
 			FiscionX::Vector3 position;
@@ -1057,7 +1074,25 @@ namespace FiscionX {
 			bool castsShadows = true;
 			bool acceptsShadows = true;
 
-			bool enableFrustumCulling = false;
+			// FIX: estava "false" por padrão e nada no código jamais setava essa flag
+			// como true (nem no loader, nem no main.cpp) — ou seja, o frustum culling
+			// por instância nunca era de fato aplicado, mesmo com o teste
+			// (isSubMeshInFrustum) pronto e sendo chamado condicionalmente. Toda
+			// instância de todo modelo era sempre desenhada por inteiro, mesmo
+			// completamente fora da câmera. Se algum modelo específico precisar
+			// nunca ser cortado (ex: view model da arma preso na câmera), desligue
+			// essa flag manualmente só naquela instância.
+			bool enableFrustumCulling = true;
+
+			// FIX: occlusion query custa ~9 chamadas ao driver por submesh (glBeginQuery/
+			// glBindVertexArray/glUseProgram/glDrawElements/glEndQuery + os state changes em
+			// volta), e isso só compensa quando o objeto em si é caro de desenhar (prédios,
+			// veículos grandes) — a query serve pra evitar um draw call caro. Em objetos
+			// baratos (grama, folhagem, detritos), a query custa mais caro do que o desenho
+			// que ela tentaria evitar. Default true (mantém o comportamento atual pra tudo
+			// que já usava occlusion), mas instâncias como grama devem setar isso pra false
+			// (ex.: grass.modelInst->enableOcclusionQuery = false;).
+			bool enableOcclusionQuery = true;
 
 			int  cameraNodeIndex = -1;   // index of the camera node found in the glTF (-1 = none)
 			bool drivesCamera = false; // true while this model is driving Core::Camera
@@ -1106,6 +1141,50 @@ namespace FiscionX {
 
 		glm::vec3 boundingCenter = glm::vec3(0.0f);
 		float boundingRadius = 1.1f;
+		bool boundsComputed = false;
+
+		// FIX: calcula boundingCenter/boundingRadius (esfera que envolve a união de
+		// TODAS as submeshes, em espaço "de instância") uma única vez por Model.
+		// Existiam DUAS cópias quase idênticas deste cálculo (no passe opaco de
+		// Model::draw e em Core::DrawTransparentPass), e as duas cometiam o mesmo
+		// erro: usavam sub.aabbMin/aabbMax crus, sem passar por sub.transform (o
+		// transform do node do glTF — posição/rotação/ESCALA — aplicado em cima dos
+		// vértices na hora de desenhar, ver processNode() no loader). Pra modelos
+		// exportados sem "aplicar a escala" no node (caso da grama: node com escala
+		// pequena, geometria só vira o tamanho final através desse transform), isso
+		// dava uma esfera praticamente do tamanho do mesh CRU (ex: boundingRadius
+		// ~0.01 pra uma folha de grama que na verdade mede dezenas de cm depois do
+		// transform) — ou seja, a esfera não correspondia nem de longe ao volume
+		// realmente desenhado, tanto errando a posição do centro quanto o raio.
+		// Agora os 8 cantos do AABB de cada submesh são transformados por
+		// sub.transform ANTES de entrar na união, então o resultado já está no
+		// mesmo espaço que instBase/base usam (posição/rotação/escala da própria
+		// instância é aplicada depois, em cima disso).
+		void computeBoundsIfNeeded() {
+			if (boundsComputed || meshes.empty()) return;
+			glm::vec3 unionMin(1e30f), unionMax(-1e30f);
+			for (const auto& sub : meshes) {
+				const glm::vec3& lo = sub.aabbMin;
+				const glm::vec3& hi = sub.aabbMax;
+				glm::vec3 corners[8] = {
+					glm::vec3(sub.transform * glm::vec4(lo.x, lo.y, lo.z, 1.0f)),
+					glm::vec3(sub.transform * glm::vec4(hi.x, lo.y, lo.z, 1.0f)),
+					glm::vec3(sub.transform * glm::vec4(lo.x, hi.y, lo.z, 1.0f)),
+					glm::vec3(sub.transform * glm::vec4(hi.x, hi.y, lo.z, 1.0f)),
+					glm::vec3(sub.transform * glm::vec4(lo.x, lo.y, hi.z, 1.0f)),
+					glm::vec3(sub.transform * glm::vec4(hi.x, lo.y, hi.z, 1.0f)),
+					glm::vec3(sub.transform * glm::vec4(lo.x, hi.y, hi.z, 1.0f)),
+					glm::vec3(sub.transform * glm::vec4(hi.x, hi.y, hi.z, 1.0f))
+				};
+				for (const auto& c : corners) {
+					unionMin = glm::min(unionMin, c);
+					unionMax = glm::max(unionMax, c);
+				}
+			}
+			boundingCenter = (unionMin + unionMax) * 0.5f;
+			boundingRadius = glm::length(unionMax - boundingCenter);
+			boundsComputed = true;
+		}
 
 		std::vector<float> lodDistances;
 
@@ -1181,6 +1260,49 @@ namespace FiscionX {
 		};
 		mutable TransparencyUniformCache transparencyUniformCache;
 
+		// OPTIM: uniforms de luzes/ambiente/fog/IBL/shadowMap/alpha eram reenviados
+		// (glUniform*) DENTRO de drawSubMesh — ou seja, uma vez por SUBMESH, por
+		// INSTÂNCIA (até ~130 chamadas só pro array de luzes, por draw call). Nenhum
+		// desses valores muda dentro de uma mesma chamada de Model::draw(): luzes,
+		// ambiente, fog, IBL e o shadowMap da câmera são os mesmos pra TODAS as
+		// instâncias/submeshes desenhados por essa chamada. Agora são enviados uma
+		// única vez em Model::draw(), antes do loop de instâncias, usando as mesmas
+		// locations de uniformCache (populadas por ensureUniformCache).
+		void ensureUniformCache(GLuint shader);
+		void uploadPerDrawUniforms(GLuint shader, GLuint depthMap);
+
+		// OPTIM: cache de estado de GL escopado por chamada de Model::draw(), pra
+		// evitar glUseProgram / glBindVertexArray / glActiveTexture+glBindTexture
+		// redundantes quando o submesh seguinte (próxima instância, ou mesmo
+		// mesh dentro da mesma instância) usa exatamente o mesmo shader/VAO/textura
+		// do submesh anterior — muito comum em cenas com várias instâncias do MESMO
+		// Model (grama, folhagem, veículos repetidos etc.), que sempre compartilham
+		// material. É resetado no início de cada Model::draw() (ver lá), então nunca
+		// fica "stale" em relação a outras passagens (shadow, postprocessing) que
+		// rodam entre uma chamada de draw() e outra.
+		mutable GLuint lastBoundVAO = 0xFFFFFFFFu;
+		mutable GLuint lastUsedProgram = 0xFFFFFFFFu;
+		mutable GLuint texUnitCache[10] = {
+			0xFFFFFFFFu,0xFFFFFFFFu,0xFFFFFFFFu,0xFFFFFFFFu,0xFFFFFFFFu,
+			0xFFFFFFFFu,0xFFFFFFFFu,0xFFFFFFFFu,0xFFFFFFFFu,0xFFFFFFFFu
+		};
+		inline void bindTexIfChanged(int unit, GLuint tex) const {
+			if (texUnitCache[unit] == tex) return; // já é o handle certo nesse slot: pula glActiveTexture+glBindTexture
+			texUnitCache[unit] = tex;
+			glActiveTexture(GL_TEXTURE0 + unit);
+			glBindTexture(GL_TEXTURE_2D, tex);
+		}
+		inline void useProgramIfChanged(GLuint shader) const {
+			if (lastUsedProgram == shader) return;
+			lastUsedProgram = shader;
+			glUseProgram(shader);
+		}
+		inline void bindVAOIfChanged(GLuint vao) const {
+			if (lastBoundVAO == vao) return;
+			lastBoundVAO = vao;
+			glBindVertexArray(vao);
+		}
+
 		const std::vector<glm::mat4>& getBoneTransforms() const;
 		Model(const std::string& path);
 		void playAnim(const std::string& name, bool repeat, const std::string& next = "");
@@ -1192,6 +1314,11 @@ namespace FiscionX {
 		void init(const std::string& path);
 
 		static void extractFrustumPlanes(const glm::mat4& viewProj, glm::vec4 planes[6]);
+
+		// FIX: teste barato de esfera-vs-frustum, usado para cortar a instância
+		// INTEIRA de uma vez (antes de occlusion query e do teste por submesh),
+		// em vez de só existir o teste caro por AABB de cada submesh individual.
+		static bool isSphereInFrustum(const glm::vec3& center, float radius, const glm::vec4 planes[6]);
 
 		int selectLOD(float distanceSq) const;
 		void drawSubMesh(
@@ -1209,7 +1336,7 @@ namespace FiscionX {
 		);
 		void unload();
 		// FiscionCore.h — dentro de Model
-		inline void addInstance(FiscionX::Vector3 position, FiscionX::Vector3 rotation, FiscionX::Vector3 scale) {
+		inline Instance* addInstance(FiscionX::Vector3 position, FiscionX::Vector3 rotation, FiscionX::Vector3 scale) {
 			Instance inst;
 			inst.position = position;
 			inst.rotation = rotation;
@@ -1245,7 +1372,44 @@ namespace FiscionX {
 			}
 
 			instances.push_back(std::move(inst));
+			// FIX (bug crítico): antes retornava "&inst", o endereço da variável
+			// LOCAL da função — um ponteiro pra pilha que já é lixo assim que
+			// addInstance() retorna (push_back move o CONTEÚDO pro vetor, mas
+			// não muda o que "&inst" aponta). Todo Instance* devolvido por esta
+			// função (de qualquer prop: árvore, pedra, grama, etc.) nascia
+			// dangling. "Funcionava" só por sorte de a memória da pilha ainda
+			// não ter sido reescrita — até algo fazer aritmética de ponteiro
+			// com ele (ex: removeInstance), quando o resultado vira lixo.
+			return &instances.back();
 		}
+
+		// Remove "inst" do vetor com swap-and-pop (troca com o último elemento
+		// e dá pop_back) em vez de erase() no meio: erase() desloca TODOS os
+		// elementos depois do removido, invalidando os ponteiros que qualquer
+		// outra instância guarde pra eles. Com swap-and-pop, no máximo UMA outra
+		// instância muda de endereço — a que estava em back().
+		//
+		// Retorna o Instance* que foi deslocado pro slot que "inst" ocupava
+		// (ou nullptr se "inst" já era o último, ou se não foi encontrado).
+		// Quem guarda Instance* de longa duração pro MESMO Model (é o caso da
+		// grama, com várias chunks compartilhando os mesmos 2 modelos) PRECISA
+		// usar esse retorno pra atualizar o ponteiro que apontava pro antigo
+		// back() — ver TerrainSystem::RemoveGrassForChunk.
+		inline Instance* removeInstance(Instance* inst) {
+			if (!inst) return nullptr;
+			size_t idx = inst - instances.data();
+			if (idx >= instances.size()) return nullptr;
+
+			size_t lastIdx = instances.size() - 1;
+			bool displaced = (idx != lastIdx);
+			if (displaced) {
+				instances[idx] = std::move(instances[lastIdx]);
+			}
+			instances.pop_back();
+
+			return displaced ? &instances[idx] : nullptr;
+		}
+
 		void draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLuint depthMap, bool depthPass, FiscionX::Mat4 view, FiscionX::Mat4 projection,
 			bool skipOcclusionAndCulling = false);
 		void bindShaderForTransparency(GLuint shader, FiscionX::Mat4 view, FiscionX::Mat4 projection);
@@ -1384,6 +1548,13 @@ namespace FiscionX {
 		static float deltaTime;
 		static int FPS;
 		static float lastFPSTime;
+
+		// DEBUG: contadores pra verificar se o frustum culling por instância está
+		// realmente cortando alguma coisa. Zerados/lidos uma vez por segundo junto
+		// com o FPS (ver ClockTick). Só contam a passagem da câmera principal
+		// (depthPass == false) — shadow passes não usam esse culling de propósito.
+		static int DEBUG_InstancesTotal;
+		static int DEBUG_InstancesCulled;
 
 		static bool enableShaderCache;
 		static bool enableModelCache;
