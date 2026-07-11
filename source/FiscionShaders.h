@@ -195,9 +195,9 @@ void main() {
 // FEATURE: compact counterpart of depth2DStaticInstancedVertex, used for
 // useCompactInstancing Models (grass) during the 2D shadow passes. Reads the
 // same 5-float/instance buffer (position.xyz + rotationY + scale) the color
-// pass uploads via uploadInstanceStreamCompact — see vertexGrassInstanced for
+// pass uploads via uploadInstanceStreamCompact — see vertexCompactInstanced for
 // the identical matrix-rebuild math (normal matrix omitted here, unneeded).
-const char* depth2DGrassInstancedVertex = R"(
+const char* depth2DCompactInstancedVertex = R"(
 #version 420 core
 
 layout(location = 0) in vec3 aPos;
@@ -997,7 +997,7 @@ void main() {
 // multiply/inverse entirely for every one of these instances, every frame.
 // Everything else (fragment shader, PBR/shadow/fog behavior) is identical to
 // vertexStaticInstanced — see the comment there.
-const char* vertexGrassInstanced = R"(
+const char* vertexCompactInstanced = R"(
 #version 330 core
 layout(location = 0) in vec3  aPos;
 layout(location = 1) in vec3  aNormal;
@@ -1073,6 +1073,102 @@ void main() {
     }
 
     gl_Position = projection * view * worldPos;
+}
+)";
+
+// FEATURE: GPU-driven frustum + distance culling for useCompactInstancing
+// Models with Model::useGPUCulling == true (grass is the intended use case).
+// Replaces the CPU `for (Instance& inst : instances)` loop in Model::draw()
+// for those Models: every instance is tested here, one GPU thread per
+// instance, and survivors are appended directly into gpuCulledInstanceVBO —
+// the SAME buffer that's bound as the instanced vertex buffer (locations 6/7,
+// see vertexCompactInstanced) for the glDrawElementsIndirect/
+// glMultiDrawElementsIndirect call that follows. No readback to the CPU at
+// any point in the process (the survivor count round-trips entirely on the
+// GPU via glCopyBufferSubData into the indirect draw command's instanceCount
+// field — see Model::drawInstancedGPUCulled in core.cpp).
+//
+// The math here is intentionally a 1:1 port of the CPU path so a Model
+// renders identically whether it goes through CPU or GPU culling:
+//   - distance test mirrors Math::getDistanceSq3D(camPos, inst.position) vs
+//     maxViewDistanceSq (Model::draw()'s testAndCollectInstance)
+//   - frustum test mirrors Model::isSphereInFrustum's 6-plane signed-distance
+//     check, against the same world-space bounding sphere (boundingCenter/
+//     boundingRadius rotated by the instance's rotationY and scaled — the
+//     rotationY-only, uniform-scale assumption is exactly what
+//     useCompactInstancing already requires of every instance)
+const char* cullCompactInstancesCompute = R"(
+#version 430 core
+layout(local_size_x = 128) in;
+
+// ALL instances of this Model, 5 floats each: position.xyz, rotationY, scale.
+// Rebuilt on the CPU (Model::rebuildGPUCullingBuffersIfNeeded) only when
+// instances are added/removed — never per frame.
+layout(std430, binding = 0) readonly buffer RawInstances {
+    float rawData[];
+};
+
+// Surviving instances, tightly packed, same 5-float layout.
+layout(std430, binding = 1) writeonly buffer CulledInstances {
+    float culledData[];
+};
+
+// Single atomic counter — reset to 0 on the CPU immediately before dispatch.
+layout(std430, binding = 2) buffer SurvivorCounter {
+    uint survivorCount;
+};
+
+uniform vec4  uFrustumPlanes[6];
+uniform vec3  uCamPos;
+uniform float uMaxViewDistanceSq;
+uniform vec3  uBoundingCenter; // Model::boundingCenter, local (instance) space
+uniform float uBoundingRadius; // Model::boundingRadius, local (instance) space
+uniform uint  uInstanceCount;
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= uInstanceCount) return;
+
+    uint base = idx * 5u;
+    vec3  pos   = vec3(rawData[base + 0u], rawData[base + 1u], rawData[base + 2u]);
+    float rotY  = rawData[base + 3u];
+    float scale = rawData[base + 4u];
+
+    // Distance cull first — cheapest test, and matches the CPU path's order
+    // (testAndCollectInstance checks distance before anything else).
+    vec3 toCam = uCamPos - pos;
+    if (dot(toCam, toCam) > uMaxViewDistanceSq) return;
+
+    // Rebuild the world-space bounding sphere: same rotationY-only rotation +
+    // uniform scale the vertex shader (vertexCompactInstanced) uses to rebuild
+    // the full model matrix, applied here just to boundingCenter.
+    float c = cos(rotY);
+    float s = sin(rotY);
+    vec3 rotatedCenter = vec3(
+        c * uBoundingCenter.x + s * uBoundingCenter.z,
+        uBoundingCenter.y,
+        -s * uBoundingCenter.x + c * uBoundingCenter.z
+    );
+    vec3  worldCenter = pos + rotatedCenter * scale;
+    float worldRadius = uBoundingRadius * scale;
+
+    // Frustum cull — identical 6-plane signed-distance test to
+    // Model::isSphereInFrustum (planes are pre-normalized on the CPU).
+    for (int i = 0; i < 6; ++i) {
+        if (dot(uFrustumPlanes[i].xyz, worldCenter) + uFrustumPlanes[i].w < -worldRadius) {
+            return;
+        }
+    }
+
+    // Survived both tests: append to the culled buffer at an atomically
+    // reserved slot, and bump the count the indirect draw command will read.
+    uint outIdx = atomicAdd(survivorCount, 1u);
+    uint outBase = outIdx * 5u;
+    culledData[outBase + 0u] = pos.x;
+    culledData[outBase + 1u] = pos.y;
+    culledData[outBase + 2u] = pos.z;
+    culledData[outBase + 3u] = rotY;
+    culledData[outBase + 4u] = scale;
 }
 )";
 

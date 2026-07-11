@@ -14,6 +14,7 @@
 #include <cmath>
 #include <math.h>
 #include <climits>
+#include <cstdint>
 #include <set>
 #include <bitset>
 #include <array>
@@ -205,6 +206,11 @@ extern FMOD_RESULT SYS;
 extern FMOD::System* FMOD_SYS;
 
 GLuint LoadShader(const char* vertexSrc, const char* fragmentSrc);
+// FEATURE: compute-shader counterpart of LoadShader, used by
+// Core::compactCullComputeShader (GPU frustum/distance culling for
+// useCompactInstancing + useGPUCulling Models — see cullCompactInstancesCompute
+// in FiscionShaders.h and Model::drawInstancedGPUCulled in core.cpp).
+GLuint LoadComputeShader(const char* computeSrc);
 
 struct File {
 	std::fstream rawfile;
@@ -977,6 +983,23 @@ namespace FiscionX {
 		// existing non-instanced rendering changes.
 		mutable GLuint instanceVBO = 0;
 
+		// OPTIM (batch scratch buffers): Model::draw() used to allocate a fresh
+		// `std::vector<std::array<std::vector<float>, 4>>` (color pass) / fresh
+		// `std::vector<std::vector<float>>` (depth pass) for this submesh's
+		// per-LOD/per-flag instance batches on EVERY call — i.e. once per submesh,
+		// per Model::draw() call, per PASS (camera + every shadow cascade/spot),
+		// every frame. With hundreds of thousands of instances (grass) filling
+		// these via push_back/insert, that's a lot of vector growth (realloc+copy)
+		// happening repeatedly for buffers whose final size is usually the same
+		// frame to frame. These persist across frames/calls instead: Model::draw()
+		// resizes them (only if the LOD-tier count changed) and then just
+		// `.clear()`s each inner vector (keeps capacity) before refilling, so after
+		// the first few frames no further heap allocation happens here at all.
+		mutable std::vector<std::array<std::vector<float>, 4>> colorBatchScratch;
+		mutable std::vector<std::array<int, 4>>                colorBatchCountScratch;
+		mutable std::vector<std::vector<float>>                depthBatchScratch;
+		mutable std::vector<int>                               depthBatchCountScratch;
+
 		// Per-submesh axis-aligned bounding box (local space, computed at load time)
 		glm::vec3 aabbMin = glm::vec3(1e30f);
 		glm::vec3 aabbMax = glm::vec3(-1e30f);
@@ -1087,12 +1110,65 @@ namespace FiscionX {
 		// por instância no glBufferData de todo frame, e a montagem da matriz
 		// (translate*eulerAngleXYZ*scale + normalMatrix) deixa de rodar na CPU
 		// pra 200k+ instâncias: o vertex shader remonta a matriz a partir dos
-		// 5 floats (ver vertexGrassInstanced em FiscionShaders.h). Habilite
+		// 5 floats (ver vertexCompactInstanced em FiscionShaders.h). Habilite
 		// manualmente só em Models cujas instâncias respeitam essas restrições
 		// (ex.: grassModel->useCompactInstancing = true;) — trees/props com
 		// rotação em X/Z, escala não-uniforme ou physics sync devem continuar
 		// no caminho genérico (drawSubMeshInstanced).
 		bool useCompactInstancing = false;
+
+		// FEATURE (GPU-driven culling): opt-in, only meaningful together with
+		// useCompactInstancing == true. When set, Model::draw()'s main camera
+		// color pass skips the CPU per-instance frustum/distance loop and the
+		// spatial-grid broad phase ENTIRELY for this Model — every instance is
+		// tested in parallel on the GPU (cullCompactInstancesCompute, see
+		// FiscionShaders.h) and survivors are drawn via
+		// glDrawElementsIndirect/glMultiDrawElementsIndirect, with zero CPU-side
+		// per-instance work and no GPU->CPU readback.
+		//
+		// Requirements, checked once by rebuildGPUCullingBuffersIfNeeded (falls
+		// back to the normal CPU path with a one-time warning if violated):
+		//   - useCompactInstancing == true (this only understands the 5-float
+		//     position.xyz + rotationY + scale layout)
+		//   - lodDistances.empty() (no LOD tiers — the compute shader doesn't
+		//     select LOD, so a Model with LOD tiers must keep doing that on the
+		//     CPU today)
+		//   - every Instance shares the same isAffectedByLight/acceptsShadows
+		//     (the GPU path draws every survivor as a single batch and can't
+		//     split per-instance flags the way the CPU path's fIdx grouping does)
+		//   - every OPAQUE/MASK submesh shares the same index type (glMultiDraw
+		//     ElementsIndirect requires one index type per call)
+		//
+		// Only affects the main camera color pass — shadow passes (cascades/
+		// spot lights) keep using the CPU path for this Model regardless, since
+		// they'd need their own culled set per light/cascade per frame and grass
+		// shadow-casting is a smaller win than the color pass to begin with.
+		bool useGPUCulling = false;
+
+		// GPU-side buffers backing the useGPUCulling path (0 until first built).
+		GLuint gpuRawInstanceSSBO = 0;    // ALL instances, 5 floats each (position.xyz, rotY, scale)
+		GLuint gpuCulledInstanceVBO = 0;  // survivors, same layout — bound both as SSBO (compute output) and GL_ARRAY_BUFFER (instanced vertex attribs)
+		GLuint gpuCounterSSBO = 0;        // single atomic uint: survivor count, reset to 0 before every dispatch
+		GLuint gpuIndirectBuffer = 0;     // one DrawElementsIndirectCommand per OPAQUE/MASK submesh
+		std::vector<int> gpuOpaqueSubMeshIndices; // meshes[] indices covered by gpuIndirectBuffer, in order
+		bool gpuBuffersDirty = true;      // set by addInstance/removeInstance, mirrors SpatialGrid::dirty
+		size_t gpuBuiltForInstanceCount = 0;
+		bool gpuCullingSupported = true;  // latched false (with a one-time warning) if requirements above aren't met
+
+		// (Re)builds gpuRawInstanceSSBO/gpuCulledInstanceVBO/gpuIndirectBuffer
+		// from `instances` if dirty or the instance count changed since the last
+		// build (mirrors rebuildSpatialGridIfNeeded's staleness rule). No-op if
+		// useGPUCulling's requirements (see comment above) aren't satisfied —
+		// sets gpuCullingSupported = false the first time that's detected.
+		void rebuildGPUCullingBuffersIfNeeded();
+
+		// Dispatches the culling compute shader for this Model's full instance
+		// set and draws every surviving instance via glDrawElementsIndirect (or
+		// glMultiDrawElementsIndirect when every OPAQUE/MASK submesh shares one
+		// material — the common case for grass, a single texture set). Called
+		// from Model::draw() instead of the CPU candidate-collection/batching
+		// path entirely, when useGPUCulling is active and supported.
+		void drawInstancedGPUCulled(const glm::vec4 frustumPlanes[6], const glm::vec3& camPos, GLuint shader, const glm::mat4& lightSpaceMatrix);
 
 		struct Instance {
 			FiscionX::Vector3 position;
@@ -1276,6 +1352,66 @@ namespace FiscionX {
 
 		void buildLODs(const std::vector<float>& ratios);
 
+		// OPTIM (spatial grid broad-phase): Model::draw() used to do a flat
+		// `for (Instance& inst : instances)` over EVERY instance of this Model,
+		// every single call — and it's called once for the main camera pass
+		// plus once per shadow cascade/spot light. For a Model with hundreds of
+		// thousands of instances spread across a large world (grass/props over
+		// terrain), the vast majority of them sit far outside maxViewDistance
+		// and/or the current frustum on any given call, but still paid for a
+		// getDistanceSq3D + (sometimes) a frustum test each.
+		//
+		// This buckets instances into a 2D (X/Z) uniform grid — vertical extent
+		// of props/grass/trees is bounded, so height doesn't need its own axis
+		// here — keyed by cell coordinate. Model::draw() then only visits the
+		// cells that fall within maxViewDistance of the camera AND whose cell
+		// bounds pass the frustum test (approximated as a bounding sphere, reusing
+		// isSphereInFrustum), skipping every instance inside a rejected cell in
+		// bulk instead of testing each one individually.
+		//
+		// The grid indexes `instances` by position, so it's invalidated (fully
+		// rebuilt) whenever instances are added/removed (see addInstance/
+		// removeInstance below) — swap-and-pop on removal changes an index, so
+		// a partial/incremental update isn't safe here. It is NOT invalidated
+		// when an existing instance merely moves (physics sync, wind sway,
+		// etc.); those keep working correctly for shading/culling itself (the
+		// per-instance distance/frustum test inside the cell is still exact),
+		// they just may sit in a grid cell that no longer matches their exact
+		// position until the next add/remove triggers a rebuild — an
+		// acceptable trade-off for the intended use case (mostly-static
+		// instance sets: grass, trees, props). Models with few instances skip
+		// the grid path entirely (see gridInstanceThreshold in Model::draw())
+		// since building/walking the grid isn't worth it below that size.
+		struct SpatialGrid {
+			struct Cell {
+				std::vector<uint32_t> indices;
+				glm::vec3 aabbMin = glm::vec3(1e30f);
+				glm::vec3 aabbMax = glm::vec3(-1e30f);
+			};
+			float cellSize = 25.0f;
+			std::unordered_map<int64_t, Cell> cells;
+			bool dirty = true;
+			size_t builtForInstanceCount = 0;
+		};
+		mutable SpatialGrid spatialGrid;
+		static constexpr int GRID_INSTANCE_THRESHOLD = 128; // below this, plain linear scan is cheaper than the grid
+
+		static inline int64_t gridCellKey(int cellX, int cellZ) {
+			// Bias to keep coordinates non-negative before packing into the key,
+			// well within int32 range for any realistic world size.
+			const int64_t BIAS = (int64_t)1 << 20;
+			return ((int64_t)(cellX + BIAS) << 32) ^ (uint32_t)(cellZ + BIAS);
+		}
+		inline void gridCellCoord(const glm::vec3& pos, int& outX, int& outZ) const {
+			outX = (int)std::floor(pos.x / spatialGrid.cellSize);
+			outZ = (int)std::floor(pos.z / spatialGrid.cellSize);
+		}
+
+		// (Re)builds spatialGrid.cells from `instances` if it's dirty or the
+		// instance count changed since the last build. Requires
+		// computeBoundsIfNeeded() to have already run (uses boundingRadius).
+		void rebuildSpatialGridIfNeeded() const;
+
 		struct UniformCache {
 			// Uniforms simples
 			GLint model = -1, lightSpaceMatrix = -1, alphaMode = -1, alphaCutoff = -1;
@@ -1407,6 +1543,29 @@ namespace FiscionX {
 		static bool isSphereInFrustum(const glm::vec3& center, float radius, const glm::vec4 planes[6]);
 
 		int selectLOD(float distanceSq) const;
+
+		// OPTIM (LOD cache across passes): the LOD chosen for a given
+		// (instance, submesh) pair depends only on `camPos` (always
+		// Core::Camera.position — Model::draw() uses the SAME camPos whether
+		// it's rendering the main color pass or a shadow pass) and on that
+		// instance's world matrix, which doesn't change between the several
+		// Model::draw() calls issued for one frame (camera + one call per
+		// shadow cascade + one per spot light). Before this cache, selectLOD()
+		// was re-run — same distance, same result — once per submesh per
+		// candidate in EVERY one of those calls. lodCache stores the result
+		// keyed by (instance index in `instances`) * meshes.size() + submesh
+		// index, and is invalidated once per frame via Core::FrameIndex (not
+		// once per draw() call), so only the very first call of the frame that
+		// touches a given (instance, submesh) actually computes it; every
+		// later call in the same frame (the shadow passes) just reads it back.
+		// Only allocated/used for Models that actually have LOD tiers —
+		// callers only invoke this when !lodDistances.empty(), so grass and
+		// other no-LOD Models never pay for this vector at all.
+		mutable std::vector<int32_t> lodCache;
+		mutable uint64_t lodCacheFrame = ~0ull;
+		static constexpr int32_t LOD_NOT_CACHED = -1000000;
+		static constexpr int32_t LOD_CULLED = -1000001; // cached equivalent of selectLOD()'s INT_MAX sentinel
+		int getCachedLOD(size_t instIdx, int subIdx, const glm::vec3& camPos, const glm::mat4& modelMatrix, const SubMesh& mesh) const;
 		void drawSubMesh(
 			const SubMesh& mesh,
 			GLuint shader,
@@ -1463,7 +1622,7 @@ namespace FiscionX {
 		// 5x smaller than the 25-float mat4+mat3 format, and built directly from
 		// Instance::position/rotation.y/scale.x with no matrix math on the CPU
 		// side at all (the vertex shader rebuilds the matrix — see
-		// vertexGrassInstanced). Only valid for instances with no pitch/roll, no
+		// vertexCompactInstanced). Only valid for instances with no pitch/roll, no
 		// non-uniform scale, no physicsSyncTransformMatrix, and an identity
 		// mesh.transform; callers must not mix these into a batch with instances
 		// that violate any of those (Model::draw() decides this once per Model
@@ -1496,7 +1655,7 @@ namespace FiscionX {
 		// for this Model (25-float generic via uploadInstanceStream, or 5-float
 		// compact via uploadInstanceStreamCompact, chosen by `compact`) — pass
 		// `shader` as Core::depthShaderStaticInstanced or
-		// Core::depthShaderGrassInstanced to match. Unlike the color-pass
+		// Core::depthShaderCompactInstanced to match. Unlike the color-pass
 		// instanced draw, BLEND submeshes are included here too (shadows don't
 		// need back-to-front sorting, just the stochastic dithered discard
 		// already in depth_fragment), and there's no isAffectedByLight/
@@ -1552,6 +1711,12 @@ namespace FiscionX {
 			}
 
 			instances.push_back(std::move(inst));
+			// OPTIM: novo índice invalida o grid espacial (ver SpatialGrid acima) —
+			// reconstruído sob demanda na próxima chamada de draw().
+			spatialGrid.dirty = true;
+			// Same idea for the GPU culling raw-instance buffer (useGPUCulling) —
+			// rebuilt on demand in rebuildGPUCullingBuffersIfNeeded().
+			gpuBuffersDirty = true;
 			// FIX (bug crítico): antes retornava "&inst", o endereço da variável
 			// LOCAL da função — um ponteiro pra pilha que já é lixo assim que
 			// addInstance() retorna (push_back move o CONTEÚDO pro vetor, mas
@@ -1587,6 +1752,13 @@ namespace FiscionX {
 			}
 			instances.pop_back();
 
+			// OPTIM: swap-and-pop just changed the index of whichever instance was
+			// at back() (if any), which the spatial grid (keyed by index into
+			// `instances`) has no cheap way to patch incrementally — rebuilt on the
+			// next draw() call instead. See SpatialGrid above.
+			spatialGrid.dirty = true;
+			gpuBuffersDirty = true;
+
 			return displaced ? &instances[idx] : nullptr;
 		}
 
@@ -1619,10 +1791,10 @@ namespace FiscionX {
 		// FEATURE: instanced counterparts of depthShaderStatic, used ONLY for the
 		// 2D shadow passes (cascade + spot — NOT the point-light cube pass) of
 		// STATIC (non-skinned) Models, same 25-float/5-float per-instance buffers
-		// as the color pass (shaderStaticInstanced/shaderGrassInstanced). See
+		// as the color pass (shaderStaticInstanced/shaderCompactInstanced). See
 		// Model::drawSubMeshInstancedDepth.
 		static GLuint depthShaderStaticInstanced;
-		static GLuint depthShaderGrassInstanced;
+		static GLuint depthShaderCompactInstanced;
 		static GLuint shaderStatic;
 		static GLuint shaderSkinned;
 		// FEATURE: linked against the SAME `fragment` shader as shaderStatic/shaderSkinned
@@ -1635,8 +1807,17 @@ namespace FiscionX {
 		// Model instances with useCompactInstancing == true (grass). Same
 		// fragment shader; the vertex stage rebuilds model/normalMatrix from
 		// 5 floats/instance instead of reading a pre-built mat4+mat3 — see
-		// vertexGrassInstanced and Model::drawSubMeshInstancedCompact.
-		static GLuint shaderGrassInstanced;
+		// vertexCompactInstanced and Model::drawSubMeshInstancedCompact.
+		static GLuint shaderCompactInstanced;
+		// FEATURE: GPU-driven frustum + distance culling compute shader for
+		// useCompactInstancing Models with useGPUCulling == true — see
+		// cullCompactInstancesCompute in FiscionShaders.h. Culls every instance in
+		// parallel on the GPU and appends survivors directly into a GPU buffer
+		// that doubles as the instanced vertex buffer for the subsequent
+		// glDrawElementsIndirect/glMultiDrawElementsIndirect call, replacing the
+		// CPU `for (Instance& inst : instances)` loop entirely for those Models.
+		// See Model::rebuildGPUCullingBuffersIfNeeded / Model::drawInstancedGPUCulled.
+		static GLuint compactCullComputeShader;
 		static GLuint shaderUI;
 		//static GLuint shaderGeometry;
 
@@ -1747,6 +1928,14 @@ namespace FiscionX {
 		static float deltaTime;
 		static int FPS;
 		static float lastFPSTime;
+
+		// OPTIM: incremented once per frame in ClockTick(). Model::draw() is
+		// called several times per frame (main camera pass + once per shadow
+		// cascade/spot light) with the same Core::Camera.position each time;
+		// Model::lodCache uses this counter to compute each (instance, submesh)
+		// LOD choice only on the first of those calls per frame and reuse it on
+		// the rest, instead of recomputing the same result redundantly.
+		static uint64_t FrameIndex;
 
 		// DEBUG: contadores pra verificar se o frustum culling por instância está
 		// realmente cortando alguma coisa. Zerados/lidos uma vez por segundo junto
