@@ -166,6 +166,70 @@ void main() {
 }
 )";
 
+// FEATURE: instanced counterpart of depth2DstaticVertex — used for the 2D
+// shadow passes (directional cascades + spot lights; NOT the point-light
+// cube pass, which still relies on gl_InstanceID for face selection and
+// isn't compatible with per-object instancing without a bigger redesign)
+// of STATIC (non-skinned) Models. Reads the exact same 25-float/instance
+// buffer (mat4 model + mat3 normalMatrix) that the color pass uploads via
+// uploadInstanceStream — the normalMatrix attributes (locations 10..12)
+// simply go unread here, since depth-only rendering has no lighting.
+// See Model::drawSubMeshInstancedDepth.
+const char* depth2DStaticInstancedVertex = R"(
+#version 420 core
+
+layout(location = 0) in vec3 aPos;
+layout(location = 3) in vec2 aTexCoord;
+layout(location = 6) in mat4 aInstanceModel; // consumes locations 6,7,8,9
+
+out vec2 vTexCoord;
+
+uniform mat4 lightSpaceMatrix;
+
+void main() {
+	vTexCoord = aTexCoord;
+	gl_Position = lightSpaceMatrix * aInstanceModel * vec4(aPos, 1.0);
+}
+)";
+
+// FEATURE: compact counterpart of depth2DStaticInstancedVertex, used for
+// useCompactInstancing Models (grass) during the 2D shadow passes. Reads the
+// same 5-float/instance buffer (position.xyz + rotationY + scale) the color
+// pass uploads via uploadInstanceStreamCompact — see vertexGrassInstanced for
+// the identical matrix-rebuild math (normal matrix omitted here, unneeded).
+const char* depth2DGrassInstancedVertex = R"(
+#version 420 core
+
+layout(location = 0) in vec3 aPos;
+layout(location = 3) in vec2 aTexCoord;
+layout(location = 6) in vec4  aInstancePosRotY;
+layout(location = 7) in float aInstanceScale;
+
+out vec2 vTexCoord;
+
+uniform mat4 lightSpaceMatrix;
+
+void main() {
+	vTexCoord = aTexCoord;
+
+	vec3  instPos = aInstancePosRotY.xyz;
+	float rotY    = aInstancePosRotY.w;
+	float s       = aInstanceScale;
+
+	float c = cos(rotY);
+	float sn = sin(rotY);
+	mat3 rotScale = mat3(
+		c * s,  0.0,   -sn * s,
+		0.0,    s,      0.0,
+		sn * s, 0.0,    c * s
+	);
+	mat4 model = mat4(rotScale);
+	model[3] = vec4(instPos, 1.0);
+
+	gl_Position = lightSpaceMatrix * model * vec4(aPos, 1.0);
+}
+)";
+
 const char* depthCubeSkinnedVertex = R"(
 #version 420 core
 
@@ -838,6 +902,162 @@ void main() {
     vs_out.FragPos = worldPos.xyz;
 
     // OPTIM: use precomputed normalMatrix uniform instead of per-vertex inverse
+    vs_out.Normal = normalize(normalMatrix * aNormal);
+
+    vec3 T = normalize(mat3(model) * aTangent.xyz);
+    vec3 N = normalize(vs_out.Normal);
+    vec3 B = cross(N, T) * aTangent.w;
+    vs_out.Tangent = T;
+    vs_out.Bitangent = B;
+
+    vs_out.TexCoords = aTexCoord;
+
+    for (int i = 0; i < 15; ++i) {
+        vs_out.FragPosLightSpace[i] = lightSpaceMatrices[i] * worldPos;
+    }
+
+    gl_Position = projection * view * worldPos;
+}
+)";
+
+// FEATURE: instanced variant of vertexStatic — used ONLY for the main camera
+// color pass of STATIC (non-skinned) models. Everything downstream (the
+// `fragment` shader) is byte-for-byte identical to the one linked against
+// vertexStatic/vertexSkinned, so every fragment feature (PBR, IBL, fog,
+// shadows, AO/gloss/metal maps, alpha modes, etc.) behaves exactly the same
+// per-pixel — only how "model" and "normalMatrix" reach the vertex shader
+// changes: instead of being uniforms set once per draw call, they arrive as
+// per-instance vertex attributes (divisor = 1), fed by glDrawElementsInstanced.
+// Locations 4/5 are intentionally left free (used by skinned joints/weights
+// on the skinned VAOs; static VAOs never bind anything there, so reusing
+// 6..12 here avoids any collision either way).
+const char* vertexStaticInstanced = R"(
+#version 330 core
+layout(location = 0) in vec3  aPos;
+layout(location = 1) in vec3  aNormal;
+layout(location = 2) in vec4  aTangent;
+layout(location = 3) in vec2  aTexCoord;
+
+// Per-instance data (one set of values per instance, not per vertex).
+layout(location = 6)  in mat4 aInstanceModel;          // consumes locations 6,7,8,9
+layout(location = 10) in vec3 aInstanceNormalMatrix0;  // normalMatrix column 0
+layout(location = 11) in vec3 aInstanceNormalMatrix1;  // normalMatrix column 1
+layout(location = 12) in vec3 aInstanceNormalMatrix2;  // normalMatrix column 2
+
+out VS_OUT {
+    vec3 FragPos;
+    vec3 Normal;
+    vec3 Tangent;
+    vec3 Bitangent;
+    vec2 TexCoords;
+    vec4 FragPosLightSpace[15];
+} vs_out;
+
+out vec3 FragViewPos;
+
+uniform mat4 view;
+uniform mat4 projection;
+uniform mat4 lightSpaceMatrices[15]; // um por luz
+
+void main() {
+    mat4 model = aInstanceModel;
+    mat3 normalMatrix = mat3(aInstanceNormalMatrix0, aInstanceNormalMatrix1, aInstanceNormalMatrix2);
+
+    vec4 viewPos = view * model * vec4(aPos, 1.0);
+    FragViewPos = viewPos.xyz;
+
+    vec4 worldPos = model * vec4(aPos, 1.0);
+    vs_out.FragPos = worldPos.xyz;
+
+    vs_out.Normal = normalize(normalMatrix * aNormal);
+
+    vec3 T = normalize(mat3(model) * aTangent.xyz);
+    vec3 N = normalize(vs_out.Normal);
+    vec3 B = cross(N, T) * aTangent.w;
+    vs_out.Tangent = T;
+    vs_out.Bitangent = B;
+
+    vs_out.TexCoords = aTexCoord;
+
+    for (int i = 0; i < 15; ++i) {
+        vs_out.FragPosLightSpace[i] = lightSpaceMatrices[i] * worldPos;
+    }
+
+    gl_Position = projection * view * worldPos;
+}
+)";
+
+// FEATURE: compact instanced vertex shader used ONLY by Model instances marked
+// `useCompactInstancing` (grass-type instances: axis-aligned Y rotation only,
+// uniform scale, identity mesh.transform). Per-instance data here is 5 floats
+// (position.xyz + rotationY + scale) instead of the 25 floats (mat4 model +
+// mat3 normalMatrix) that vertexStaticInstanced needs — the model matrix is
+// rebuilt right here from those 5 floats instead of being uploaded pre-built,
+// cutting the per-instance upload 5x and removing the CPU-side matrix
+// multiply/inverse entirely for every one of these instances, every frame.
+// Everything else (fragment shader, PBR/shadow/fog behavior) is identical to
+// vertexStaticInstanced — see the comment there.
+const char* vertexGrassInstanced = R"(
+#version 330 core
+layout(location = 0) in vec3  aPos;
+layout(location = 1) in vec3  aNormal;
+layout(location = 2) in vec4  aTangent;
+layout(location = 3) in vec2  aTexCoord;
+
+// Per-instance data (one set of values per instance, not per vertex).
+// aInstancePosRotY = (position.x, position.y, position.z, rotationY)
+// aInstanceScale   = uniform scale factor
+layout(location = 6) in vec4  aInstancePosRotY;
+layout(location = 7) in float aInstanceScale;
+
+out VS_OUT {
+    vec3 FragPos;
+    vec3 Normal;
+    vec3 Tangent;
+    vec3 Bitangent;
+    vec2 TexCoords;
+    vec4 FragPosLightSpace[15];
+} vs_out;
+
+out vec3 FragViewPos;
+
+uniform mat4 view;
+uniform mat4 projection;
+uniform mat4 lightSpaceMatrices[15]; // um por luz
+
+void main() {
+    vec3  instPos = aInstancePosRotY.xyz;
+    float rotY    = aInstancePosRotY.w;
+    float s       = aInstanceScale;
+
+    // Rebuild translate * rotateY * scale here instead of on the CPU — same
+    // matrix Instance::getInstBase() would build for a grass instance (no
+    // pitch/roll, no non-uniform scale, no physics sync: none of those apply
+    // to grass, which is why the compact format can drop them).
+    float c = cos(rotY);
+    float sn = sin(rotY);
+    mat3 rotScale = mat3(
+        c * s,  0.0,   -sn * s,
+        0.0,    s,      0.0,
+        sn * s, 0.0,    c * s
+    );
+    mat4 model = mat4(rotScale);
+    model[3] = vec4(instPos, 1.0);
+
+    // Uniform scale => normal matrix is just the rotation part (no inverse-
+    // transpose needed, mirrors the CPU fast path in Model::draw()).
+    mat3 normalMatrix = mat3(
+        c, 0.0, -sn,
+        0.0, 1.0, 0.0,
+        sn, 0.0, c
+    );
+
+    vec4 viewPos = view * model * vec4(aPos, 1.0);
+    FragViewPos = viewPos.xyz;
+
+    vec4 worldPos = model * vec4(aPos, 1.0);
+    vs_out.FragPos = worldPos.xyz;
+
     vs_out.Normal = normalize(normalMatrix * aNormal);
 
     vec3 T = normalize(mat3(model) * aTangent.xyz);

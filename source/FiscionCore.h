@@ -15,6 +15,8 @@
 #include <math.h>
 #include <climits>
 #include <set>
+#include <bitset>
+#include <array>
 #include <unordered_map>
 #include <random>
 #include <queue>
@@ -553,6 +555,11 @@ namespace FiscionX {
 
 	struct Math {
 		static float getDistance3D(FiscionX::Vector3 pos1, FiscionX::Vector3 pos2);
+		// OPTIM: squared-distance version — skips the sqrt entirely. Use this for
+		// any "is X farther than N units" check (culling, LOD, etc.), which only
+		// needs the comparison, never the actual distance value. Compare against
+		// N*N instead of N.
+		static float getDistanceSq3D(FiscionX::Vector3 pos1, FiscionX::Vector3 pos2);
 		static float radians(float degrees);
 		static float degrees(float radians);
 		static float clamp(float value, float min, float max);
@@ -962,6 +969,14 @@ namespace FiscionX {
 		GLenum indexType = GL_UNSIGNED_INT;
 		glm::mat4 transform = glm::mat4(1.0f);
 
+		// FEATURE: per-instance stream buffer (model matrix + normal matrix) used
+		// only by the instanced draw path (static models, main color pass). Lazily
+		// created/attached to `vao` the first time this submesh is drawn instanced;
+		// re-filled (glBufferData orphaning) every call after that. Never touched
+		// by the regular per-instance drawSubMesh path, so nothing about the
+		// existing non-instanced rendering changes.
+		mutable GLuint instanceVBO = 0;
+
 		// Per-submesh axis-aligned bounding box (local space, computed at load time)
 		glm::vec3 aabbMin = glm::vec3(1e30f);
 		glm::vec3 aabbMax = glm::vec3(-1e30f);
@@ -983,6 +998,10 @@ namespace FiscionX {
 			GLuint jbo = 0, wbo = 0;          // skinning buffers (0 if not skinned)
 			size_t indexCount = 0;
 			GLenum indexType = GL_UNSIGNED_INT;
+			// FEATURE: same purpose as SubMesh::instanceVBO, but for this LOD tier's
+			// own VAO (each LOD has its own vertex/index buffers, so it needs its
+			// own instance stream buffer too).
+			mutable GLuint instanceVBO = 0;
 		};
 		std::vector<LODLevel> lodLevels;
 
@@ -1061,6 +1080,20 @@ namespace FiscionX {
 		bool hasBlendSubMesh = false;
 		float maxViewDistance = 120;
 
+		// OPTIM: grama (e qualquer instância "achatada": só posição, rotação em
+		// Y e escala uniforme, sem physics sync, sem stretch em X/Z) manda 5
+		// floats/instância (posição.xyz + rotY + escala) em vez dos 25 floats
+		// (mat4 model + mat3 normalMatrix) do caminho genérico — 5x menos bytes
+		// por instância no glBufferData de todo frame, e a montagem da matriz
+		// (translate*eulerAngleXYZ*scale + normalMatrix) deixa de rodar na CPU
+		// pra 200k+ instâncias: o vertex shader remonta a matriz a partir dos
+		// 5 floats (ver vertexGrassInstanced em FiscionShaders.h). Habilite
+		// manualmente só em Models cujas instâncias respeitam essas restrições
+		// (ex.: grassModel->useCompactInstancing = true;) — trees/props com
+		// rotação em X/Z, escala não-uniforme ou physics sync devem continuar
+		// no caminho genérico (drawSubMeshInstanced).
+		bool useCompactInstancing = false;
+
 		struct Instance {
 			FiscionX::Vector3 position;
 			FiscionX::Vector3 rotation;
@@ -1099,6 +1132,59 @@ namespace FiscionX {
 			bool cameraAnimFinished = false; // true once a non-repeating anim has reached its end
 
 			glm::mat4 physicsSyncTransformMatrix = glm::mat4(1.0f);
+
+			// OPTIM: cache of the last-built world matrix (translate * eulerAngleXYZ *
+			// scale, or the physics-synced equivalent) plus the position/rotation/
+			// scale/physicsSyncTransformMatrix values it was built from. getInstBase()
+			// below reuses this instead of rebuilding the matrix (eulerAngleXYZ is
+			// trig-heavy) every single frame for every instance — critical when a
+			// Model has hundreds of thousands of instances (grass) that never move.
+			// Comparison is plain float equality: safe because if nothing wrote to
+			// these fields since last frame, the bits are identical; any real change
+			// (movement, wind sway, physics) naturally invalidates the cache.
+			mutable glm::mat4 cachedInstBase = glm::mat4(1.0f);
+			mutable FiscionX::Vector3 cachedPosition;
+			mutable FiscionX::Vector3 cachedRotation;
+			mutable FiscionX::Vector3 cachedScale;
+			mutable glm::mat4 cachedPhysicsSync = glm::mat4(1.0f);
+			mutable bool hasCachedInstBase = false;
+
+			// Returns this instance's world matrix, rebuilding it only if position/
+			// rotation/scale/physicsSyncTransformMatrix changed since the cached copy.
+			inline glm::mat4 getInstBase() const {
+				if (hasCachedInstBase &&
+					position.x == cachedPosition.x && position.y == cachedPosition.y && position.z == cachedPosition.z &&
+					rotation.x == cachedRotation.x && rotation.y == cachedRotation.y && rotation.z == cachedRotation.z &&
+					scale.x == cachedScale.x && scale.y == cachedScale.y && scale.z == cachedScale.z &&
+					physicsSyncTransformMatrix == cachedPhysicsSync) {
+					return cachedInstBase;
+				}
+
+				glm::mat4 instBase = (physicsSyncTransformMatrix != glm::mat4(1.0f))
+					? glm::scale(physicsSyncTransformMatrix, glm::vec3(scale.x, scale.y, scale.z))
+					: glm::translate(glm::mat4(1.0f), glm::vec3(position.x, position.y, position.z))
+					* glm::eulerAngleXYZ(rotation.y, rotation.x, rotation.z)
+					* glm::scale(glm::mat4(1.0f), glm::vec3(scale.x, scale.y, scale.z));
+
+				cachedInstBase = instBase;
+				cachedPosition = position;
+				cachedRotation = rotation;
+				cachedScale = scale;
+				cachedPhysicsSync = physicsSyncTransformMatrix;
+				hasCachedInstBase = true;
+				return instBase;
+			}
+
+			// OPTIM: true when scale.x == scale.y == scale.z (within a small epsilon).
+			// For a uniformly-scaled instance, the normal matrix is just the rotation
+			// part of the model matrix (orthonormal) — no need for the expensive
+			// glm::transpose(glm::inverse(modelMatrix)). Used by both the instanced
+			// and non-instanced draw paths to skip the mat4 inverse for the common
+			// case (grass, trees, props placed without non-uniform stretching).
+			inline bool hasUniformScale() const {
+				const float eps = 1e-5f;
+				return std::abs(scale.x - scale.y) < eps && std::abs(scale.y - scale.z) < eps;
+			}
 
 			float alpha = 1.0f;
 
@@ -1334,6 +1420,100 @@ namespace FiscionX {
 			GLsizei overrideIndexCount = 0,
 			GLenum overrideIndexType = GL_UNSIGNED_INT
 		);
+
+		// FEATURE: instanced counterpart of drawSubMesh, used ONLY for the main
+		// camera color pass (never depthPass) of STATIC (non-skinned) models.
+		// `instanceData` is interleaved per instance as 16 floats (model, column-
+		// major) + 9 floats (normalMatrix, column-major) = 25 floats/instance.
+		// isAffectedByLight/acceptsShadows are still plain uniforms (unchanged
+		// fragment shader), so callers must only batch together instances that
+		// share both flags — see the grouping in Model::draw().
+		// NOTE: `instanceVBORef` must be the instance buffer handle that actually
+		// belongs to `vao` — SubMesh::instanceVBO when `vao == mesh.vao`, or the
+		// matching SubMesh::LODLevel::instanceVBO when `vao` is a LOD tier's VAO.
+		// Each VAO owns its own vertex attribute bindings (locations 6..12), so
+		// passing the wrong instanceVBO here (or reusing the same one across
+		// different VAOs) leaves those locations unconfigured on every VAO except
+		// the first one that ever triggered their setup — instances rendered
+		// through any other VAO then read garbage/default attribute data.
+		void drawSubMeshInstanced(
+			const SubMesh& mesh,
+			GLuint shader,
+			GLuint vao,
+			GLuint& instanceVBORef,
+			GLenum indexType,
+			GLsizei indexCount,
+			const glm::mat4& lightSpaceMatrix,
+			const std::vector<float>& instanceData,
+			GLsizei instanceCount,
+			bool isAffectedByLight,
+			bool acceptsShadows
+		);
+
+		// FEATURE: (re)uploads `data` into the instance stream buffer owned by
+		// `vao` (SubMesh::instanceVBO or SubMesh::LODLevel::instanceVBO), creating
+		// the buffer and wiring up attribute locations 6..12 (divisor = 1) the
+		// first time it's called for that VAO. `instanceVBO` is passed by
+		// reference so the caller's stored handle gets updated on first use.
+		static void uploadInstanceStream(GLuint vao, GLuint& instanceVBO, const std::vector<float>& data);
+
+		// FEATURE: compact counterpart of drawSubMeshInstanced/uploadInstanceStream,
+		// used ONLY when useCompactInstancing == true (grass). `instanceData` is
+		// interleaved per instance as 5 floats: position.xyz, rotationY, scale —
+		// 5x smaller than the 25-float mat4+mat3 format, and built directly from
+		// Instance::position/rotation.y/scale.x with no matrix math on the CPU
+		// side at all (the vertex shader rebuilds the matrix — see
+		// vertexGrassInstanced). Only valid for instances with no pitch/roll, no
+		// non-uniform scale, no physicsSyncTransformMatrix, and an identity
+		// mesh.transform; callers must not mix these into a batch with instances
+		// that violate any of those (Model::draw() decides this once per Model
+		// via useCompactInstancing, so it never mixes formats within one draw).
+		void drawSubMeshInstancedCompact(
+			const SubMesh& mesh,
+			GLuint shader,
+			GLuint vao,
+			GLuint& instanceVBORef,
+			GLenum indexType,
+			GLsizei indexCount,
+			const glm::mat4& lightSpaceMatrix,
+			const std::vector<float>& instanceData,
+			GLsizei instanceCount,
+			bool isAffectedByLight,
+			bool acceptsShadows
+		);
+
+		// FEATURE: (re)uploads `data` (5 floats/instance: position.xyz, rotationY,
+		// scale) into the instance stream buffer owned by `vao`, wiring up
+		// attribute locations 6 (vec4: pos+rotY) and 7 (float: scale) the first
+		// time it's called for that VAO — same orphaning/STREAM_DRAW behavior as
+		// uploadInstanceStream, just a 5-float stride instead of 25.
+		static void uploadInstanceStreamCompact(GLuint vao, GLuint& instanceVBO, const std::vector<float>& data);
+
+		// FEATURE: instanced counterpart of the depthPass branch of drawSubMesh,
+		// used ONLY for the 2D shadow passes (cascade + spot) of STATIC
+		// (non-skinned) Models — see comment on Core::depthShaderStaticInstanced.
+		// Reuses whichever instance buffer format the color pass already builds
+		// for this Model (25-float generic via uploadInstanceStream, or 5-float
+		// compact via uploadInstanceStreamCompact, chosen by `compact`) — pass
+		// `shader` as Core::depthShaderStaticInstanced or
+		// Core::depthShaderGrassInstanced to match. Unlike the color-pass
+		// instanced draw, BLEND submeshes are included here too (shadows don't
+		// need back-to-front sorting, just the stochastic dithered discard
+		// already in depth_fragment), and there's no isAffectedByLight/
+		// acceptsShadows split (those don't affect a depth-only write).
+		void drawSubMeshInstancedDepth(
+			const SubMesh& mesh,
+			GLuint shader,
+			GLuint vao,
+			GLuint& instanceVBORef,
+			GLenum indexType,
+			GLsizei indexCount,
+			const glm::mat4& lightSpaceMatrix,
+			const std::vector<float>& instanceData,
+			GLsizei instanceCount,
+			bool compact
+		);
+
 		void unload();
 		// FiscionCore.h — dentro de Model
 		inline Instance* addInstance(FiscionX::Vector3 position, FiscionX::Vector3 rotation, FiscionX::Vector3 scale) {
@@ -1436,8 +1616,27 @@ namespace FiscionX {
 		static GLuint depthShaderSkinned;
 		static GLuint depthShaderCubeStatic;
 		static GLuint depthShaderCubeSkinned;
+		// FEATURE: instanced counterparts of depthShaderStatic, used ONLY for the
+		// 2D shadow passes (cascade + spot — NOT the point-light cube pass) of
+		// STATIC (non-skinned) Models, same 25-float/5-float per-instance buffers
+		// as the color pass (shaderStaticInstanced/shaderGrassInstanced). See
+		// Model::drawSubMeshInstancedDepth.
+		static GLuint depthShaderStaticInstanced;
+		static GLuint depthShaderGrassInstanced;
 		static GLuint shaderStatic;
 		static GLuint shaderSkinned;
+		// FEATURE: linked against the SAME `fragment` shader as shaderStatic/shaderSkinned
+		// (fragment.glsl is untouched) — only the vertex stage differs, reading
+		// model/normalMatrix from per-instance attributes instead of uniforms. Used
+		// exclusively by Model::draw() for the main camera color pass of static
+		// (non-skinned) models; see Model::drawSubMeshInstanced.
+		static GLuint shaderStaticInstanced;
+		// FEATURE: compact counterpart of shaderStaticInstanced, used only for
+		// Model instances with useCompactInstancing == true (grass). Same
+		// fragment shader; the vertex stage rebuilds model/normalMatrix from
+		// 5 floats/instance instead of reading a pre-built mat4+mat3 — see
+		// vertexGrassInstanced and Model::drawSubMeshInstancedCompact.
+		static GLuint shaderGrassInstanced;
 		static GLuint shaderUI;
 		//static GLuint shaderGeometry;
 

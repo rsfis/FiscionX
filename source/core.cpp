@@ -12,8 +12,12 @@ GLuint FiscionX::Core::depthShaderStatic;
 GLuint FiscionX::Core::depthShaderSkinned;
 GLuint FiscionX::Core::depthShaderCubeStatic;
 GLuint FiscionX::Core::depthShaderCubeSkinned;
+GLuint FiscionX::Core::depthShaderStaticInstanced;
+GLuint FiscionX::Core::depthShaderGrassInstanced;
 GLuint FiscionX::Core::shaderStatic;
 GLuint FiscionX::Core::shaderSkinned;
+GLuint FiscionX::Core::shaderStaticInstanced;
+GLuint FiscionX::Core::shaderGrassInstanced;
 GLuint FiscionX::Core::shaderUI;
 
 GLuint FiscionX::Core::mainFBO;
@@ -742,7 +746,16 @@ void FiscionX::Core::Draw::HDR(FiscionX::Mat4 view, FiscionX::Mat4 projection)
 
 // ====================== Math ========================
 float FiscionX::Math::getDistance3D(FiscionX::Vector3 pos1, FiscionX::Vector3 pos2) {
-	return std::sqrt(std::pow(pos2.x - pos1.x, 2) + std::pow(pos2.y - pos1.y, 2) + std::pow(pos2.z - pos1.z, 2));
+	// OPTIM: std::pow(x, 2) is a full general-purpose power function call — much
+	// slower than a plain multiply for squaring. sqrt is still needed here since
+	// this function promises an actual distance.
+	float dx = pos2.x - pos1.x, dy = pos2.y - pos1.y, dz = pos2.z - pos1.z;
+	return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+float FiscionX::Math::getDistanceSq3D(FiscionX::Vector3 pos1, FiscionX::Vector3 pos2) {
+	float dx = pos2.x - pos1.x, dy = pos2.y - pos1.y, dz = pos2.z - pos1.z;
+	return dx * dx + dy * dy + dz * dz;
 }
 
 float FiscionX::Math::clamp(float value, float min, float max) {
@@ -3136,6 +3149,11 @@ void FiscionX::Model::unload() {
 			glDeleteBuffers(1, &mesh.ebo);
 			mesh.ebo = 0;
 		}
+
+		if (mesh.instanceVBO) {
+			glDeleteBuffers(1, &mesh.instanceVBO);
+			mesh.instanceVBO = 0;
+		}
 	}
 
 	// ========= TEXTURAS =========
@@ -3181,6 +3199,9 @@ void FiscionX::Model::unload() {
 			if (lod.vao) { glDeleteVertexArrays(1, &lod.vao); lod.vao = 0; }
 			if (lod.vbo) { glDeleteBuffers(1, &lod.vbo);      lod.vbo = 0; }
 			if (lod.ebo) { glDeleteBuffers(1, &lod.ebo);      lod.ebo = 0; }
+			if (lod.jbo) { glDeleteBuffers(1, &lod.jbo);      lod.jbo = 0; }
+			if (lod.wbo) { glDeleteBuffers(1, &lod.wbo);      lod.wbo = 0; }
+			if (lod.instanceVBO) { glDeleteBuffers(1, &lod.instanceVBO); lod.instanceVBO = 0; }
 		}
 		mesh.lodLevels.clear();
 	}
@@ -3312,6 +3333,7 @@ void FiscionX::Model::buildLODs(const std::vector<float>& ratios) {
 			if (lod.ebo) { glDeleteBuffers(1, &lod.ebo);      lod.ebo = 0; }
 			if (lod.jbo) { glDeleteBuffers(1, &lod.jbo);      lod.jbo = 0; }
 			if (lod.wbo) { glDeleteBuffers(1, &lod.wbo);      lod.wbo = 0; }
+			if (lod.instanceVBO) { glDeleteBuffers(1, &lod.instanceVBO); lod.instanceVBO = 0; }
 		}
 		sub.lodLevels.clear();
 	}
@@ -3554,14 +3576,9 @@ void FiscionX::Model::Instance::computeSubMeshVisibility(const glm::mat4& viewPr
 	glm::vec4 planes[6];
 	extractFrustumPlanes(viewProj, planes);
 
-	// Build the same base matrix that draw() uses.
-	glm::mat4 baseMatrix =
-		glm::translate(glm::mat4(1.0f), glm::vec3(position.x, position.y, position.z))
-		* glm::eulerAngleXYZ(rotation.y, rotation.x, rotation.z)
-		* glm::scale(glm::mat4(1.0f), glm::vec3(scale.x, scale.y, scale.z));
-
-	if (physicsSyncTransformMatrix != glm::mat4(1.0f))
-		baseMatrix = glm::scale(physicsSyncTransformMatrix, glm::vec3(scale.x, scale.y, scale.z));
+	// OPTIM: reusa a mesma matriz cacheada que draw() usa, em vez de remontar
+	// translate*eulerAngleXYZ*scale do zero.
+	glm::mat4 baseMatrix = getInstBase();
 
 	for (int i = 0; i < n; ++i) {
 		const SubMesh& sub = model->meshes[i];
@@ -3590,9 +3607,9 @@ int FiscionX::Model::selectLOD(float distanceSq) const {
 // "PASS 1: occlusion queries". Esta função assume que esse state já está ativo
 // quando é chamada.
 void FiscionX::Model::Instance::updateOcclusion(const glm::mat4& viewProj) {
-	glm::mat4 baseMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(position.x, position.y, position.z))
-		* glm::eulerAngleXYZ(rotation.y, rotation.x, rotation.z)
-		* glm::scale(glm::mat4(1.0f), glm::vec3(scale.x, scale.y, scale.z));
+	// OPTIM: mesma matriz cacheada usada em draw()/computeSubMeshVisibility, em
+	// vez de reconstruir translate*eulerAngleXYZ*scale aqui de novo.
+	glm::mat4 baseMatrix = getInstBase();
 
 	glm::vec3 camPos(
 		FiscionX::Core::Camera.position.x,
@@ -3938,9 +3955,348 @@ void FiscionX::Model::drawSubMesh(
 	// Model::draw(), em vez de uma vez por submesh-instância (ver lá).
 }
 
+// FEATURE: (re)uploads `data` (25 floats/instance: mat4 model + mat3 normalMatrix,
+// both column-major) into the instance stream buffer owned by `vao`. First call
+// for a given `vao` creates the buffer and wires attribute locations 6..9 (model,
+// one vec4 per column) and 10..12 (normalMatrix, one vec3 per column), each with
+// glVertexAttribDivisor(loc, 1) so they advance once per instance instead of once
+// per vertex. Subsequent calls just re-fill the same buffer (glBufferData
+// re-allocation acts as "orphaning": the driver keeps the old copy alive for any
+// still-in-flight draw and gives us a fresh one, avoiding a stall/sync).
+void FiscionX::Model::uploadInstanceStream(GLuint vao, GLuint& instanceVBO, const std::vector<float>& data) {
+	glBindVertexArray(vao);
+
+	if (instanceVBO == 0) {
+		glGenBuffers(1, &instanceVBO);
+		glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
+
+		const GLsizei stride = 25 * sizeof(float);
+
+		// aInstanceModel (mat4) -> locations 6,7,8,9, one column (vec4) each.
+		for (int col = 0; col < 4; ++col) {
+			GLuint loc = 6 + col;
+			glEnableVertexAttribArray(loc);
+			glVertexAttribPointer(loc, 4, GL_FLOAT, GL_FALSE, stride,
+				(void*)(size_t)(col * 4 * sizeof(float)));
+			glVertexAttribDivisor(loc, 1);
+		}
+
+		// aInstanceNormalMatrix0/1/2 (mat3, split as 3 vec3 attribs) -> locations 10,11,12.
+		const size_t normalMatOffset = 16 * sizeof(float);
+		for (int col = 0; col < 3; ++col) {
+			GLuint loc = 10 + col;
+			glEnableVertexAttribArray(loc);
+			glVertexAttribPointer(loc, 3, GL_FLOAT, GL_FALSE, stride,
+				(void*)(normalMatOffset + col * 3 * sizeof(float)));
+			glVertexAttribDivisor(loc, 1);
+		}
+	}
+	else {
+		glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
+	}
+
+	glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(data.size() * sizeof(float)), data.data(), GL_STREAM_DRAW);
+}
+
+// FEATURE: compact counterpart of uploadInstanceStream — see declaration
+// comment in FiscionCore.h. Stride is 5 floats instead of 25: location 6
+// takes the first 4 (position.xyz, rotationY) as a vec4, location 7 takes
+// the 5th (scale) as a plain float. Same buffer-orphaning behavior via
+// GL_STREAM_DRAW re-allocation as uploadInstanceStream.
+void FiscionX::Model::uploadInstanceStreamCompact(GLuint vao, GLuint& instanceVBO, const std::vector<float>& data) {
+	glBindVertexArray(vao);
+
+	if (instanceVBO == 0) {
+		glGenBuffers(1, &instanceVBO);
+		glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
+
+		const GLsizei stride = 5 * sizeof(float);
+
+		// aInstancePosRotY (vec4: position.xyz + rotationY) -> location 6.
+		glEnableVertexAttribArray(6);
+		glVertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE, stride, (void*)0);
+		glVertexAttribDivisor(6, 1);
+
+		// aInstanceScale (float) -> location 7.
+		glEnableVertexAttribArray(7);
+		glVertexAttribPointer(7, 1, GL_FLOAT, GL_FALSE, stride, (void*)(4 * sizeof(float)));
+		glVertexAttribDivisor(7, 1);
+	}
+	else {
+		glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
+	}
+
+	glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(data.size() * sizeof(float)), data.data(), GL_STREAM_DRAW);
+}
+
+// FEATURE: instanced counterpart of drawSubMesh. Only ever called for the main
+// camera color pass (depthPass == false) of STATIC (non-skinned) models, and only
+// for OPAQUE/MASK submeshes — BLEND submeshes keep going through
+// Core::DrawTransparentPass (which needs per-object back-to-front sorting and
+// gains little from batching anyway). Everything material/lighting-related below
+// mirrors the non-instanced branch of drawSubMesh exactly, so the same submesh
+// drawn instanced or one-by-one looks identical; the only structural difference
+// is that "model"/"normalMatrix" are no longer glUniform* calls — they live in
+// the per-instance buffer uploaded by uploadInstanceStream, and the draw call is
+// glDrawElementsInstanced instead of glDrawElements.
+void FiscionX::Model::drawSubMeshInstanced(
+	const SubMesh& mesh,
+	GLuint shader,
+	GLuint vao,
+	GLuint& instanceVBORef,
+	GLenum indexType,
+	GLsizei indexCount,
+	const glm::mat4& lightSpaceMatrix,
+	const std::vector<float>& instanceData,
+	GLsizei instanceCount,
+	bool isAffectedByLight,
+	bool acceptsShadows
+) {
+	if (instanceCount <= 0) return;
+
+	useProgramIfChanged(shader);
+	bindVAOIfChanged(vao);
+	ensureUniformCache(shader);
+
+	int mode = 0;
+	if (mesh.alphaMode == "MASK") mode = 1;
+	// BLEND never reaches here (filtered out by the caller).
+
+	glDisable(GL_BLEND);
+	glEnable(GL_DEPTH_TEST);
+	glDepthMask(GL_TRUE);
+	if (mesh.doubleSided) glDisable(GL_CULL_FACE);
+	else { glEnable(GL_CULL_FACE); glCullFace(GL_BACK); }
+
+	glUniform1i(uniformCache.alphaMode, mode);
+	glUniform1f(uniformCache.alphaCutoff, mesh.alphaCutoff);
+	glUniformMatrix4fv(uniformCache.lightSpaceMatrix, 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
+
+	bindTexIfChanged(0, mesh.baseColorTex);
+	glUniform1i(uniformCache.baseColorTex, 0);
+
+	bindTexIfChanged(1, mesh.normalMapTex);
+	glUniform1i(uniformCache.normalMapTex, 1);
+	glUniform1i(uniformCache.hasNormalMap, mesh.normalMapTex != 0 ? 1 : 0);
+
+	// shadowMap (slot 2) already bound once per Model::draw() in uploadPerDrawUniforms.
+
+	bindTexIfChanged(3, mesh.glossinessTex);
+	glUniform1i(uniformCache.glossinessTex, 3);
+	glUniform1i(uniformCache.hasGlossinessMap, mesh.glossinessTex != 0 ? 1 : 0);
+	glUniform1i(uniformCache.glossinessInAlphaOfSpecular, mesh.glossinessInAlphaOfSpecular ? 1 : 0);
+
+	bindTexIfChanged(4, mesh.specularF0Tex);
+	glUniform1i(uniformCache.specularF0Tex, 4);
+	glUniform1i(uniformCache.hasSpecularF0Map, mesh.specularF0Tex != 0 ? 1 : 0);
+
+	bindTexIfChanged(5, mesh.metallicTex);
+	glUniform1i(uniformCache.metallicTex, 5);
+	glUniform1i(uniformCache.useMetalRoughness, mesh.useMetalRoughness ? 1 : 0);
+	glUniform1f(uniformCache.metallicFactor, mesh.metallicFactor);
+	glUniform1f(uniformCache.roughnessFactor, mesh.roughnessFactor);
+
+	// isAffectedByLight/acceptsShadows are uniforms, constant for the whole batch
+	// (the caller only groups instances that share both flags into one batch).
+	glUniform1i(uniformCache.isAffectedByLight, isAffectedByLight ? 1 : 0);
+	glUniform1i(uniformCache.acceptsShadows, acceptsShadows ? 1 : 0);
+
+	bindTexIfChanged(9, mesh.aoTex);
+	glUniform1i(uniformCache.aoTex, 9);
+	glUniform1i(uniformCache.hasAOMap, mesh.aoTex != 0 ? 1 : 0);
+
+	uploadInstanceStream(vao, instanceVBORef, instanceData);
+	// uploadInstanceStream does its own glBindVertexArray(vao) — keep the
+	// cache in sync so the next drawSubMesh/drawSubMeshInstanced call in this
+	// same Model::draw() doesn't skip a rebind it actually needs.
+	lastBoundVAO = vao;
+
+	glDrawElementsInstanced(GL_TRIANGLES, indexCount, indexType, 0, instanceCount);
+}
+
+// FEATURE: compact counterpart of drawSubMeshInstanced, used ONLY for
+// useCompactInstancing Models (grass) — see declaration comment in
+// FiscionCore.h. Material/uniform setup below is identical to
+// drawSubMeshInstanced; the only difference is the per-instance buffer format
+// (5 floats via uploadInstanceStreamCompact instead of 25 via
+// uploadInstanceStream) and that `shader` here is expected to be
+// FiscionX::Core::shaderGrassInstanced (which rebuilds model/normalMatrix
+// from those 5 floats — see vertexGrassInstanced).
+void FiscionX::Model::drawSubMeshInstancedCompact(
+	const SubMesh& mesh,
+	GLuint shader,
+	GLuint vao,
+	GLuint& instanceVBORef,
+	GLenum indexType,
+	GLsizei indexCount,
+	const glm::mat4& lightSpaceMatrix,
+	const std::vector<float>& instanceData,
+	GLsizei instanceCount,
+	bool isAffectedByLight,
+	bool acceptsShadows
+) {
+	if (instanceCount <= 0) return;
+
+	useProgramIfChanged(shader);
+	bindVAOIfChanged(vao);
+	ensureUniformCache(shader);
+
+	int mode = 0;
+	if (mesh.alphaMode == "MASK") mode = 1;
+	// BLEND never reaches here (filtered out by the caller).
+
+	glDisable(GL_BLEND);
+	glEnable(GL_DEPTH_TEST);
+	glDepthMask(GL_TRUE);
+	if (mesh.doubleSided) glDisable(GL_CULL_FACE);
+	else { glEnable(GL_CULL_FACE); glCullFace(GL_BACK); }
+
+	glUniform1i(uniformCache.alphaMode, mode);
+	glUniform1f(uniformCache.alphaCutoff, mesh.alphaCutoff);
+	glUniformMatrix4fv(uniformCache.lightSpaceMatrix, 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
+
+	bindTexIfChanged(0, mesh.baseColorTex);
+	glUniform1i(uniformCache.baseColorTex, 0);
+
+	bindTexIfChanged(1, mesh.normalMapTex);
+	glUniform1i(uniformCache.normalMapTex, 1);
+	glUniform1i(uniformCache.hasNormalMap, mesh.normalMapTex != 0 ? 1 : 0);
+
+	// shadowMap (slot 2) already bound once per Model::draw() in uploadPerDrawUniforms.
+
+	bindTexIfChanged(3, mesh.glossinessTex);
+	glUniform1i(uniformCache.glossinessTex, 3);
+	glUniform1i(uniformCache.hasGlossinessMap, mesh.glossinessTex != 0 ? 1 : 0);
+	glUniform1i(uniformCache.glossinessInAlphaOfSpecular, mesh.glossinessInAlphaOfSpecular ? 1 : 0);
+
+	bindTexIfChanged(4, mesh.specularF0Tex);
+	glUniform1i(uniformCache.specularF0Tex, 4);
+	glUniform1i(uniformCache.hasSpecularF0Map, mesh.specularF0Tex != 0 ? 1 : 0);
+
+	bindTexIfChanged(5, mesh.metallicTex);
+	glUniform1i(uniformCache.metallicTex, 5);
+	glUniform1i(uniformCache.useMetalRoughness, mesh.useMetalRoughness ? 1 : 0);
+	glUniform1f(uniformCache.metallicFactor, mesh.metallicFactor);
+	glUniform1f(uniformCache.roughnessFactor, mesh.roughnessFactor);
+
+	glUniform1i(uniformCache.isAffectedByLight, isAffectedByLight ? 1 : 0);
+	glUniform1i(uniformCache.acceptsShadows, acceptsShadows ? 1 : 0);
+
+	bindTexIfChanged(9, mesh.aoTex);
+	glUniform1i(uniformCache.aoTex, 9);
+	glUniform1i(uniformCache.hasAOMap, mesh.aoTex != 0 ? 1 : 0);
+
+	uploadInstanceStreamCompact(vao, instanceVBORef, instanceData);
+	lastBoundVAO = vao;
+
+	glDrawElementsInstanced(GL_TRIANGLES, indexCount, indexType, 0, instanceCount);
+}
+
+// FEATURE: instanced counterpart of the depthPass branch of drawSubMesh — see
+// declaration comment in FiscionCore.h. Only sets the handful of uniforms
+// depth_fragment actually reads (alphaMode/alphaCutoff/transmissionFactor/
+// baseColorTex) plus lightSpaceMatrix; no PBR/lighting uniforms at all, since
+// a shadow map write doesn't need them.
+void FiscionX::Model::drawSubMeshInstancedDepth(
+	const SubMesh& mesh,
+	GLuint shader,
+	GLuint vao,
+	GLuint& instanceVBORef,
+	GLenum indexType,
+	GLsizei indexCount,
+	const glm::mat4& lightSpaceMatrix,
+	const std::vector<float>& instanceData,
+	GLsizei instanceCount,
+	bool compact
+) {
+	if (instanceCount <= 0) return;
+
+	useProgramIfChanged(shader);
+	bindVAOIfChanged(vao);
+
+	// OPTIM: mesmo padrão do cache estático em drawSubMesh (depthPass) — só 2
+	// shaders possíveis aqui (depthShaderStaticInstanced/depthShaderGrassInstanced),
+	// então o cache nunca cresce além de 2 entradas.
+	static GLuint s_diCachedShader = 0;
+	static GLint  s_diLocLightSpace = -1, s_diLocAlphaMode = -1;
+	static GLint  s_diLocAlphaCutoff = -1, s_diLocBaseTex = -1, s_diLocTransFactor = -1;
+	if (s_diCachedShader != shader) {
+		s_diCachedShader = shader;
+		s_diLocLightSpace = glGetUniformLocation(shader, "lightSpaceMatrix");
+		s_diLocAlphaMode = glGetUniformLocation(shader, "alphaMode");
+		s_diLocAlphaCutoff = glGetUniformLocation(shader, "alphaCutoff");
+		s_diLocBaseTex = glGetUniformLocation(shader, "baseColorTex");
+		s_diLocTransFactor = glGetUniformLocation(shader, "transmissionFactor");
+	}
+
+	glEnable(GL_DEPTH_TEST);
+	glDepthMask(GL_TRUE);
+	glDisable(GL_BLEND);
+	if (mesh.doubleSided) glDisable(GL_CULL_FACE);
+	else { glEnable(GL_CULL_FACE); glCullFace(GL_FRONT); }
+
+	int depthAlphaMode = 0;
+	if (mesh.alphaMode == "MASK")       depthAlphaMode = 1;
+	else if (mesh.alphaMode == "BLEND") depthAlphaMode = 2;
+
+	if (s_diLocLightSpace != -1) glUniformMatrix4fv(s_diLocLightSpace, 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
+	if (s_diLocAlphaMode != -1) glUniform1i(s_diLocAlphaMode, depthAlphaMode);
+	if (s_diLocAlphaCutoff != -1) glUniform1f(s_diLocAlphaCutoff, mesh.alphaCutoff);
+	if (s_diLocTransFactor != -1) glUniform1f(s_diLocTransFactor, mesh.transmissionFactor);
+	if (s_diLocBaseTex != -1 && mesh.baseColorTex != 0) {
+		bindTexIfChanged(0, mesh.baseColorTex);
+		glUniform1i(s_diLocBaseTex, 0);
+	}
+
+	if (compact) uploadInstanceStreamCompact(vao, instanceVBORef, instanceData);
+	else uploadInstanceStream(vao, instanceVBORef, instanceData);
+	lastBoundVAO = vao;
+
+	glDrawElementsInstanced(GL_TRIANGLES, indexCount, indexType, 0, instanceCount);
+}
+
 void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLuint depthMap, bool depthPass, FiscionX::Mat4 view, FiscionX::Mat4 projection,
 	bool skipOcclusionAndCulling) {
 	int numLights = static_cast<int>(FiscionX::Core::AllLights.size());
+
+	// FEATURE: the main camera color pass (!depthPass) of a STATIC (non-skinned)
+	// model always runs through an instanced shader instead of the `shader`
+	// the caller passed in — shaderStaticInstanced normally (25 floats/instance:
+	// mat4 model + mat3 normalMatrix), or shaderGrassInstanced when this Model
+	// has useCompactInstancing set (5 floats/instance: position.xyz + rotationY
+	// + scale, rebuilt into a matrix in the vertex shader — see
+	// vertexGrassInstanced and Model::drawSubMeshInstancedCompact). Every
+	// OPAQUE/MASK submesh of this Model is drawn with glDrawElementsInstanced
+	// further down, through whichever of the two paths applies.
+	//
+	// FEATURE: the same instancing now also applies to the 2D shadow passes
+	// (directional cascades + spot lights — both call Model::draw() with
+	// `shader == Core::depthShaderStatic`), using depthShaderStaticInstanced/
+	// depthShaderGrassInstanced instead — same 25/5-float buffers, rebuilt
+	// independently here since the shadow pass's frustum/candidate set differs
+	// from the camera pass's. The point-light CUBE shadow pass keeps using
+	// `shader` (depthShaderCubeStatic) unchanged: it relies on gl_InstanceID
+	// to pick a cube face per draw, which doesn't compose with per-object
+	// instancing without a bigger redesign — see comment on
+	// Core::depthShaderStaticInstanced.
+	//
+	// Skinned models keep using `shader` exactly as before in every pass:
+	// skinning needs its own per-instance bone UBO, so it isn't instanced here.
+	// Because this is decided once per Model::draw() call and used consistently
+	// for every uniform-cache/program lookup below, the different code paths
+	// never mix their shader state within a single call.
+	const bool colorInstanced = (!isSkinned && !depthPass);
+	const bool depthInstanced = (!isSkinned && depthPass && shader == FiscionX::Core::depthShaderStatic);
+	GLuint effectiveShader;
+	if (colorInstanced) {
+		effectiveShader = useCompactInstancing ? FiscionX::Core::shaderGrassInstanced : FiscionX::Core::shaderStaticInstanced;
+	}
+	else if (depthInstanced) {
+		effectiveShader = useCompactInstancing ? FiscionX::Core::depthShaderGrassInstanced : FiscionX::Core::depthShaderStaticInstanced;
+	}
+	else {
+		effectiveShader = shader;
+	}
 
 	// OPTIM: cache de estado (shader/VAO/texturas por unidade) escopado a esta
 	// chamada de draw() é resetado aqui, no início — garante que nunca fica
@@ -3953,7 +4309,7 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 	lastBoundVAO = 0xFFFFFFFFu;
 	for (int i = 0; i < 10; ++i) texUnitCache[i] = 0xFFFFFFFFu;
 
-	useProgramIfChanged(shader);
+	useProgramIfChanged(effectiveShader);
 
 	// ── OPTIM: reconstrói o cache de locations apenas quando o shader muda ──
 	// Antes: ~6 glGetUniformLocation fixos + até 16+16 lookups com std::to_string()
@@ -3961,28 +4317,28 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 	// std::to_string + concatenação de std::string alocam heap e o lookup de uniform
 	// por nome é uma chamada ao driver — ambos extremamente caros para algo que
 	// só muda quando o programa de shader muda.
-	if (frameUniformCache.cachedShader != shader) {
-		frameUniformCache.cachedShader = shader;
-		frameUniformCache.view = glGetUniformLocation(shader, "view");
-		frameUniformCache.projection = glGetUniformLocation(shader, "projection");
-		frameUniformCache.viewPos = glGetUniformLocation(shader, "viewPos");
-		frameUniformCache.numLights = glGetUniformLocation(shader, "numLights");
-		frameUniformCache.reflectionsStrength = glGetUniformLocation(shader, "reflectionsStrength");
-		frameUniformCache.shadowMapDir = glGetUniformLocation(shader, "shadowMapDir");
-		frameUniformCache.cascadeCount = glGetUniformLocation(shader, "cascadeCount");
+	if (frameUniformCache.cachedShader != effectiveShader) {
+		frameUniformCache.cachedShader = effectiveShader;
+		frameUniformCache.view = glGetUniformLocation(effectiveShader, "view");
+		frameUniformCache.projection = glGetUniformLocation(effectiveShader, "projection");
+		frameUniformCache.viewPos = glGetUniformLocation(effectiveShader, "viewPos");
+		frameUniformCache.numLights = glGetUniformLocation(effectiveShader, "numLights");
+		frameUniformCache.reflectionsStrength = glGetUniformLocation(effectiveShader, "reflectionsStrength");
+		frameUniformCache.shadowMapDir = glGetUniformLocation(effectiveShader, "shadowMapDir");
+		frameUniformCache.cascadeCount = glGetUniformLocation(effectiveShader, "cascadeCount");
 
 		char buf[64];
 		for (int i = 0; i < FrameUniformCache::MAX_CASCADES; ++i) {
 			snprintf(buf, sizeof(buf), "cascadePlaneDistances[%d]", i);
-			frameUniformCache.cascadePlaneDistances[i] = glGetUniformLocation(shader, buf);
+			frameUniformCache.cascadePlaneDistances[i] = glGetUniformLocation(effectiveShader, buf);
 			snprintf(buf, sizeof(buf), "cascadeLightSpaceMatrices[%d]", i);
-			frameUniformCache.cascadeLightSpaceMatrices[i] = glGetUniformLocation(shader, buf);
+			frameUniformCache.cascadeLightSpaceMatrices[i] = glGetUniformLocation(effectiveShader, buf);
 		}
 		for (int i = 0; i < 10; ++i) {
 			snprintf(buf, sizeof(buf), "shadowMapPoint[%d]", i);
-			frameUniformCache.pointShadowMap[i] = glGetUniformLocation(shader, buf);
+			frameUniformCache.pointShadowMap[i] = glGetUniformLocation(effectiveShader, buf);
 			snprintf(buf, sizeof(buf), "shadowMapSpot[%d]", i);
-			frameUniformCache.spotShadowMap[i] = glGetUniformLocation(shader, buf);
+			frameUniformCache.spotShadowMap[i] = glGetUniformLocation(effectiveShader, buf);
 		}
 	}
 	const FrameUniformCache& fc = frameUniformCache;
@@ -4096,7 +4452,7 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 	// baseColorTex, tratados dentro do próprio drawSubMesh), então isso só
 	// roda na passagem de câmera.
 	if (!depthPass) {
-		uploadPerDrawUniforms(shader, depthMap);
+		uploadPerDrawUniforms(effectiveShader, depthMap);
 	}
 
 	// OPTIM: camPos era recalculado (mesmo valor, Camera.position) uma vez por
@@ -4116,20 +4472,32 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 	// mesmo sem nenhum draw real acontecendo no meio das queries. Guardamos aqui o
 	// resultado do culling (instBase, instSubVisible) pra não recalcular nada na
 	// fase 2.
+	//
+	// OPTIM: instSubVisible era um std::vector<bool> alocado no heap POR
+	// INSTÂNCIA, todo frame — em modelos com centenas de milhares de instâncias
+	// (grama) isso é centenas de milhares de allocs/frame só pra guardar
+	// tipicamente 1-3 bits. std::bitset<64> vive inline no struct (sem heap),
+	// suporta até 64 submeshes por Model (bem acima de qualquer caso real).
 	struct DrawCandidate {
 		Instance* inst;
 		glm::mat4 instBase;
-		std::vector<bool> instSubVisible;
+		std::bitset<64> instSubVisible;
 	};
 	std::vector<DrawCandidate> candidates;
 	candidates.reserve(instances.size());
+
+	// OPTIM: comparado uma vez por chamada em vez de elevar maxViewDistance ao
+	// quadrado (multiplicação) dentro do loop, uma vez por instância.
+	const float maxViewDistanceSq = maxViewDistance * maxViewDistance;
 
 	for (Instance& inst : instances) {
 		// FIX: instâncias com inst.visible == false continuavam pagando occlusion
 		// query e teste de visibilidade por submesh todo frame, mesmo nunca sendo
 		// desenhadas de fato (só o draw final é que respeitava esse flag). Agora
 		// pula tudo de uma vez.
-		if (FiscionX::Math::getDistance3D(FiscionX::Core::Camera.position, inst.position) > maxViewDistance) {
+		// OPTIM: getDistanceSq3D evita o sqrt (e o antigo std::pow) — só
+		// precisamos comparar distâncias, nunca do valor real.
+		if (FiscionX::Math::getDistanceSq3D(FiscionX::Core::Camera.position, inst.position) > maxViewDistanceSq) {
 			continue;
 		}
 		if (depthPass && !inst.castsShadows) continue;
@@ -4141,16 +4509,15 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 			FiscionX::Core::DEBUG_InstancesTotal++;
 		}
 
-		// OPTIM/FIX: instBase é a matriz de mundo real da instância — antes era
-		// calculada duas vezes: uma vez em "baseMatrix" aqui em cima (que nunca era
-		// lida depois, trabalho jogado fora) e de novo, do zero, como "instBase" lá
-		// embaixo. Agora é montada uma única vez e reusada no teste de frustum da
-		// instância inteira, no teste por submesh, no LOD e no draw.
-		glm::mat4 instBase = (inst.physicsSyncTransformMatrix != glm::mat4(1.0f))
-			? glm::scale(inst.physicsSyncTransformMatrix, glm::vec3(inst.scale.x, inst.scale.y, inst.scale.z))
-			: glm::translate(glm::mat4(1.0f), glm::vec3(inst.position.x, inst.position.y, inst.position.z))
-			* glm::eulerAngleXYZ(inst.rotation.y, inst.rotation.x, inst.rotation.z)
-			* glm::scale(glm::mat4(1.0f), glm::vec3(inst.scale.x, inst.scale.y, inst.scale.z));
+		// OPTIM: instBase agora vem de Instance::getInstBase(), que cacheia a
+		// última matriz montada e só reconstrói (translate * eulerAngleXYZ *
+		// scale, com eulerAngleXYZ sendo a parte cara/trigonométrica) quando
+		// position/rotation/scale/physicsSyncTransformMatrix realmente mudaram
+		// desde o frame anterior. Para instâncias estáticas (grama, árvores,
+		// props) isso elimina o recálculo trigonométrico completo 60x/segundo
+		// por instância — a única coisa paga todo frame passa a ser a comparação
+		// de 9 floats.
+		glm::mat4 instBase = inst.getInstBase();
 
 		// FIX PRINCIPAL: frustum culling por INSTÂNCIA, agora também durante
 		// depthPass (passagens de sombra). Antes só existia o teste por SUBMESH
@@ -4181,19 +4548,19 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 		// Agora cada SubMesh mede sua própria distância via o centro do seu AABB
 		// local transformado para o mundo, então cada parte do modelo escolhe
 		// seu LOD de forma independente.
-		std::vector<bool> instSubVisible;
+		std::bitset<64> instSubVisible;
 		if (inst.enableFrustumCulling && applyFrustumCulling) {
-			instSubVisible.resize(meshes.size());
-			for (int i = 0; i < (int)meshes.size(); ++i) {
+			size_t subCount = std::min(meshes.size(), (size_t)64);
+			for (size_t i = 0; i < subCount; ++i) {
 				glm::mat4 M = instBase * (isSkinned ? glm::mat4(1.0f) : meshes[i].transform);
 				instSubVisible[i] = inst.isSubMeshInFrustum(meshes[i], M, frustumPlanes);
 			}
 		}
 		else {
-			instSubVisible.assign(meshes.size(), true);
+			instSubVisible.set(); // todas visíveis — bitset<64> começa zerado, set() liga todos os 64 bits (só os < meshes.size() são lidos depois)
 		}
 
-		candidates.push_back({ &inst, instBase, std::move(instSubVisible) });
+		candidates.push_back({ &inst, instBase, instSubVisible });
 	}
 
 	// ── PASS 1: occlusion queries, em lote, pra TODAS as instâncias candidatas ──
@@ -4249,38 +4616,243 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 	}
 
 	// ── PASS 2: draw real de todas as instâncias candidatas ──
-	for (auto& c : candidates) {
-		Instance& inst = *c.inst;
-		const glm::mat4& instBase = c.instBase;
-		const std::vector<bool>& instSubVisible = c.instSubVisible;
-
-		if (isSkinned && inst.uboSkin != 0) {
-			glBindBufferBase(GL_UNIFORM_BUFFER, 0, inst.uboSkin);
-		}
-
+	//
+	// FEATURE: STATIC models (!isSkinned) now go through an INSTANCED branch in
+	// BOTH the main camera color pass (colorInstanced) and the 2D shadow passes
+	// — cascades/spot (depthInstanced) — batching every visible candidate
+	// instance into as few glDrawElementsInstanced calls as possible. Only two
+	// cases stay on the original one-draw-call-per-instance drawSubMesh loop,
+	// in the final `else` branch: skinned models (need their own per-instance
+	// bone UBO, in any pass), and the point-light CUBE shadow pass of static
+	// models (relies on gl_InstanceID for face selection — see comment on
+	// Core::depthShaderStaticInstanced for why that doesn't combine with
+	// per-object instancing here).
+	if (colorInstanced) {
+		// Iteration here is submesh-major (opposite of the instance-major loop
+		// below) because instancing needs every instance sharing a given
+		// VAO/LOD/uniform-flag combination gathered into one buffer before a
+		// single draw call goes out, instead of drawing each instance as soon
+		// as it's visited.
 		for (int i = 0; i < (int)meshes.size(); i++) {
 			const auto& mesh = meshes[i];
-			bool isBlend = (mesh.alphaMode == "BLEND");
-			if (!depthPass && isBlend) continue;  // BLEND vai para DrawTransparentPass
-			if (!instSubVisible[i]) continue;      // frustum culling por submesh
-			glm::mat4 modelMatrix = instBase * (isSkinned ? glm::mat4(1.0f) : mesh.transform);
+			if (mesh.alphaMode == "BLEND") continue; // BLEND vai para DrawTransparentPass
 
-			int activeLOD = -1; // -1 = full-resolution base submesh
-			if (!lodDistances.empty() && !skipOcclusionAndCulling) {
-				glm::vec3 subCenterWorld = glm::vec3(modelMatrix * glm::vec4(mesh.aabbCenter(), 1.0f));
-				float dSq = glm::dot(camPos - subCenterWorld, camPos - subCenterWorld);
-				activeLOD = selectLOD(dSq);
-				if (activeLOD == INT_MAX) continue; // essa submesh está além do último LOD → cull por distância (só ela, não o modelo inteiro)
+			// OPTIM: batches keyed by (LOD tier, isAffectedByLight, acceptsShadows)
+			// used to be a std::map<int, std::map<pair<bool,bool>, vector<float>>>
+			// — two red-black-tree lookups (O(log n)) PER CANDIDATE INSTANCE, per
+			// submesh, per frame. With hundreds of thousands of instances (grass)
+			// that's a lot of tree traversal for a key space that's actually tiny
+			// and known ahead of time: LOD tier is -1..lodLevels.size()-1 (slot =
+			// activeLOD+1), and the two bools only have 4 combinations. Flat
+			// arrays turn both lookups into plain O(1) indexing.
+			const int numLODSlots = (int)mesh.lodLevels.size() + 1; // +1 for "no LOD" (activeLOD == -1)
+			std::vector<std::array<std::vector<float>, 4>> batchData(numLODSlots);
+			std::vector<std::array<int, 4>> batchCount(numLODSlots);
+			for (auto& slot : batchCount) slot.fill(0);
+
+			for (auto& c : candidates) {
+				if (!c.instSubVisible[i]) continue; // frustum culling por submesh
+				Instance& inst = *c.inst;
+				const glm::mat4& instBase = c.instBase;
+				glm::mat4 modelMatrix = instBase * mesh.transform;
+
+				int activeLOD = -1; // -1 = full-resolution base submesh
+				if (!lodDistances.empty() && !skipOcclusionAndCulling) {
+					glm::vec3 subCenterWorld = glm::vec3(modelMatrix * glm::vec4(mesh.aabbCenter(), 1.0f));
+					float dSq = glm::dot(camPos - subCenterWorld, camPos - subCenterWorld);
+					activeLOD = selectLOD(dSq);
+					if (activeLOD == INT_MAX) continue; // além do último LOD → cull por distância
+				}
+
+				int lodSlot = activeLOD + 1;
+				int fIdx = (inst.isAffectedByLight ? 2 : 0) + (inst.acceptsShadows ? 1 : 0);
+				std::vector<float>& buf = batchData[lodSlot][fIdx];
+
+				if (useCompactInstancing) {
+					// OPTIM: grama — 5 floats/instância direto dos campos crus
+					// (posição, rotY, escala), SEM montar modelMatrix/normalMatrix
+					// nenhuma na CPU (nem o glm::mat4(1.0f)*... acima entra no
+					// buffer; ele só é usado para o cálculo de LOD por distância).
+					// A montagem final (translate*rotateY*scale + normalMatrix)
+					// acontece no vertex shader — ver vertexGrassInstanced.
+					buf.push_back(inst.position.x);
+					buf.push_back(inst.position.y);
+					buf.push_back(inst.position.z);
+					buf.push_back(inst.rotation.y);
+					buf.push_back(inst.scale.x); // assume escala uniforme (restrição do modo compacto)
+				}
+				else {
+					// OPTIM: pra escala uniforme (o caso comum — grama, árvores, a
+					// maioria dos props), a matriz normal é só a parte 3x3 do model
+					// matrix dividida pelo fator de escala: nenhuma necessidade do
+					// glm::transpose(glm::inverse(modelMatrix)) completo (bem mais caro
+					// — inverte a mat4 inteira). Só paga o inverse de verdade quando a
+					// instância tem escala NÃO uniforme (esticada em um eixo só).
+					glm::mat3 normalMat;
+					if (inst.hasUniformScale()) {
+						normalMat = glm::mat3(modelMatrix);
+						float s = inst.scale.x;
+						float invS = (std::abs(s) > 1e-8f) ? (1.0f / s) : 1.0f;
+						normalMat[0] *= invS;
+						normalMat[1] *= invS;
+						normalMat[2] *= invS;
+					}
+					else {
+						normalMat = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
+					}
+
+					const float* mPtr = glm::value_ptr(modelMatrix);
+					buf.insert(buf.end(), mPtr, mPtr + 16);
+					const float* nPtr = glm::value_ptr(normalMat);
+					buf.insert(buf.end(), nPtr, nPtr + 9);
+				}
+				batchCount[lodSlot][fIdx]++;
 			}
 
-			if (activeLOD >= 0 && activeLOD < (int)mesh.lodLevels.size()) {
-				const SubMesh::LODLevel& lod = mesh.lodLevels[activeLOD];
-				drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass, &inst,
-					lod.vao, lod.ebo, (GLsizei)lod.indexCount, lod.indexType);
+			for (int lodSlot = 0; lodSlot < numLODSlots; ++lodSlot) {
+				int activeLOD = lodSlot - 1;
+				for (int fIdx = 0; fIdx < 4; ++fIdx) {
+					GLsizei count = (GLsizei)batchCount[lodSlot][fIdx];
+					if (count <= 0) continue;
+					bool isAffectedByLight = (fIdx & 2) != 0;
+					bool acceptsShadows = (fIdx & 1) != 0;
+					std::vector<float>& data = batchData[lodSlot][fIdx];
+
+					if (activeLOD >= 0 && activeLOD < (int)mesh.lodLevels.size()) {
+						const SubMesh::LODLevel& lod = mesh.lodLevels[activeLOD];
+						// Use this LOD tier's OWN instance buffer — lod.vao has its own
+						// vertex attribute bindings, distinct from mesh.vao's and from
+						// every other LOD tier's. Reusing mesh.instanceVBO here was the
+						// bug: only the very first VAO ever drawn through this path got
+						// its locations wired up, leaving every other LOD/base VAO
+						// reading garbage per-instance data (the flicker/corruption
+						// artifact).
+						if (useCompactInstancing) {
+							drawSubMeshInstancedCompact(mesh, effectiveShader, lod.vao, lod.instanceVBO, lod.indexType, (GLsizei)lod.indexCount,
+								lightSpaceMatrix, data, count, isAffectedByLight, acceptsShadows);
+						}
+						else {
+							drawSubMeshInstanced(mesh, effectiveShader, lod.vao, lod.instanceVBO, lod.indexType, (GLsizei)lod.indexCount,
+								lightSpaceMatrix, data, count, isAffectedByLight, acceptsShadows);
+						}
+					}
+					else {
+						if (useCompactInstancing) {
+							drawSubMeshInstancedCompact(mesh, effectiveShader, mesh.vao, mesh.instanceVBO, mesh.indexType, (GLsizei)mesh.indexCount,
+								lightSpaceMatrix, data, count, isAffectedByLight, acceptsShadows);
+						}
+						else {
+							drawSubMeshInstanced(mesh, effectiveShader, mesh.vao, mesh.instanceVBO, mesh.indexType, (GLsizei)mesh.indexCount,
+								lightSpaceMatrix, data, count, isAffectedByLight, acceptsShadows);
+						}
+					}
+				}
 			}
-			else {
-				drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass, &inst,
-					0, 0, 0, GL_UNSIGNED_INT);
+		}
+	}
+	else if (depthInstanced) {
+		// FEATURE: same batching strategy as the colorInstanced branch above,
+		// simplified for depth-only output: no isAffectedByLight/acceptsShadows
+		// split (those uniforms don't exist in depth_fragment's inputs), and
+		// BLEND submeshes are included (shadows use the stochastic dithered
+		// discard in depth_fragment instead of back-to-front sorting).
+		for (int i = 0; i < (int)meshes.size(); i++) {
+			const auto& mesh = meshes[i];
+
+			const int numLODSlots = (int)mesh.lodLevels.size() + 1;
+			std::vector<std::vector<float>> batchData(numLODSlots);
+			std::vector<int> batchCount(numLODSlots, 0);
+
+			for (auto& c : candidates) {
+				if (!c.instSubVisible[i]) continue; // frustum culling por submesh
+				Instance& inst = *c.inst;
+				const glm::mat4& instBase = c.instBase;
+				glm::mat4 modelMatrix = instBase * mesh.transform;
+
+				int activeLOD = -1;
+				if (!lodDistances.empty() && !skipOcclusionAndCulling) {
+					glm::vec3 subCenterWorld = glm::vec3(modelMatrix * glm::vec4(mesh.aabbCenter(), 1.0f));
+					float dSq = glm::dot(camPos - subCenterWorld, camPos - subCenterWorld);
+					activeLOD = selectLOD(dSq);
+					if (activeLOD == INT_MAX) continue;
+				}
+
+				int lodSlot = activeLOD + 1;
+				std::vector<float>& buf = batchData[lodSlot];
+
+				if (useCompactInstancing) {
+					buf.push_back(inst.position.x);
+					buf.push_back(inst.position.y);
+					buf.push_back(inst.position.z);
+					buf.push_back(inst.rotation.y);
+					buf.push_back(inst.scale.x);
+				}
+				else {
+					// OPTIM: depth-only write never reads normalMatrix (no lighting),
+					// but the buffer still uses the 25-float layout so it can share
+					// the exact same VAO attribute wiring (locations 6..12) that the
+					// color pass sets up on this same mesh.vao/lod.vao — just push
+					// zeros for the unused 9 floats instead of computing a real
+					// inverse/transpose for data nobody reads.
+					const float* mPtr = glm::value_ptr(modelMatrix);
+					buf.insert(buf.end(), mPtr, mPtr + 16);
+					buf.insert(buf.end(), 9, 0.0f);
+				}
+				batchCount[lodSlot]++;
+			}
+
+			for (int lodSlot = 0; lodSlot < numLODSlots; ++lodSlot) {
+				int count = batchCount[lodSlot];
+				if (count <= 0) continue;
+				int activeLOD = lodSlot - 1;
+				std::vector<float>& data = batchData[lodSlot];
+
+				if (activeLOD >= 0 && activeLOD < (int)mesh.lodLevels.size()) {
+					const SubMesh::LODLevel& lod = mesh.lodLevels[activeLOD];
+					drawSubMeshInstancedDepth(mesh, effectiveShader, lod.vao, lod.instanceVBO, lod.indexType, (GLsizei)lod.indexCount,
+						lightSpaceMatrix, data, count, useCompactInstancing);
+				}
+				else {
+					drawSubMeshInstancedDepth(mesh, effectiveShader, mesh.vao, mesh.instanceVBO, mesh.indexType, (GLsizei)mesh.indexCount,
+						lightSpaceMatrix, data, count, useCompactInstancing);
+				}
+			}
+		}
+	}
+	else {
+		for (auto& c : candidates) {
+			Instance& inst = *c.inst;
+			const glm::mat4& instBase = c.instBase;
+			const std::bitset<64>& instSubVisible = c.instSubVisible;
+
+			if (isSkinned && inst.uboSkin != 0) {
+				glBindBufferBase(GL_UNIFORM_BUFFER, 0, inst.uboSkin);
+			}
+
+			for (int i = 0; i < (int)meshes.size(); i++) {
+				const auto& mesh = meshes[i];
+				bool isBlend = (mesh.alphaMode == "BLEND");
+				if (!depthPass && isBlend) continue;  // BLEND vai para DrawTransparentPass
+				if (!instSubVisible[i]) continue;      // frustum culling por submesh
+				glm::mat4 modelMatrix = instBase * (isSkinned ? glm::mat4(1.0f) : mesh.transform);
+
+				int activeLOD = -1; // -1 = full-resolution base submesh
+				if (!lodDistances.empty() && !skipOcclusionAndCulling) {
+					glm::vec3 subCenterWorld = glm::vec3(modelMatrix * glm::vec4(mesh.aabbCenter(), 1.0f));
+					float dSq = glm::dot(camPos - subCenterWorld, camPos - subCenterWorld);
+					activeLOD = selectLOD(dSq);
+					if (activeLOD == INT_MAX) continue; // essa submesh está além do último LOD → cull por distância (só ela, não o modelo inteiro)
+				}
+
+				if (activeLOD >= 0 && activeLOD < (int)mesh.lodLevels.size()) {
+					const SubMesh::LODLevel& lod = mesh.lodLevels[activeLOD];
+					drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass, &inst,
+						lod.vao, lod.ebo, (GLsizei)lod.indexCount, lod.indexType);
+				}
+				else {
+					drawSubMesh(mesh, shader, modelMatrix, lightSpaceMatrix, depthMap, depthPass, &inst,
+						0, 0, 0, GL_UNSIGNED_INT);
+				}
 			}
 		}
 	}
@@ -5627,8 +6199,19 @@ void FiscionX::Core::NewWindow(int width, int height, const char* window_label) 
 	depthShaderSkinned = LoadShader(depth2DskinnedVertex, depth_fragment);
 	depthShaderCubeStatic = LoadShader(depthCubeStaticVertex, depth_fragment);
 	depthShaderCubeSkinned = LoadShader(depthCubeSkinnedVertex, depth_fragment);
+	// FEATURE: instanced 2D-shadow (cascade/spot) counterparts — see comment on
+	// Core::depthShaderStaticInstanced.
+	depthShaderStaticInstanced = LoadShader(depth2DStaticInstancedVertex, depth_fragment);
+	depthShaderGrassInstanced = LoadShader(depth2DGrassInstancedVertex, depth_fragment);
 	shaderStatic = LoadShader(vertexStatic, fragment);
 	shaderSkinned = LoadShader(vertexSkinned, fragment);
+	// FEATURE: same fragment shader as shaderStatic — only the vertex stage
+	// differs (model/normalMatrix come from per-instance attributes). Used by
+	// Model::draw() for the main color pass of static models.
+	shaderStaticInstanced = LoadShader(vertexStaticInstanced, fragment);
+	// FEATURE: compact instanced path for grass — see comment on
+	// FiscionX::Core::shaderGrassInstanced / vertexGrassInstanced.
+	shaderGrassInstanced = LoadShader(vertexGrassInstanced, fragment);
 	UI::Image::shader = LoadShader(imageVertex, imageFragment);
 	UI::Video::shaderVideo = LoadShader(videoVertex, videoFragment);
 	textShader = LoadShader(textVertexShader, textFragmentShader);
@@ -6140,7 +6723,7 @@ void FiscionX::Core::SetWindowFullscreen(bool fullscreen, int monitorIndex) {
 
 void FiscionX::Core::DrawTransparentPass(FiscionX::Mat4 view, FiscionX::Mat4 projection) {
 	struct BlendEntry {
-		float                      dist;
+		float                      distSq; // distância AO QUADRADO da câmera — ver OPTIM abaixo
 		FiscionX::Model* model;
 		FiscionX::Model::Instance* inst;
 		const FiscionX::SubMesh* mesh;
@@ -6182,24 +6765,26 @@ void FiscionX::Core::DrawTransparentPass(FiscionX::Mat4 view, FiscionX::Mat4 pro
 		// abaixo usava um raio praticamente inútil (~0.01 pra grama).
 		model->computeBoundsIfNeeded();
 
+		// OPTIM: eleva maxViewDistance ao quadrado uma vez por Model em vez de
+		// tirar sqrt (getDistance3D antigo) por instância dentro do loop abaixo.
+		const float maxViewDistanceSq = model->maxViewDistance * model->maxViewDistance;
+
 		for (auto& inst : model->instances) {
 			if (!inst.visible) continue;
 
 			// FIX: corte por distância, igual ao passe opaco — sem isso, grama (e
 			// qualquer outro prop BLEND) continuava sendo desenhada bem além de
 			// maxViewDistance.
-			if (FiscionX::Math::getDistance3D(FiscionX::Core::Camera.position, inst.position) > model->maxViewDistance) {
+			// OPTIM: getDistanceSq3D evita o sqrt.
+			if (FiscionX::Math::getDistanceSq3D(FiscionX::Core::Camera.position, inst.position) > maxViewDistanceSq) {
 				continue;
 			}
 
-			glm::mat4 base;
-			if (inst.physicsSyncTransformMatrix != glm::mat4(1.0f))
-				base = glm::scale(inst.physicsSyncTransformMatrix, glm::vec3(inst.scale.x, inst.scale.y, inst.scale.z));
-			else
-				base =
-				glm::translate(glm::mat4(1.0f), glm::vec3(inst.position.x, inst.position.y, inst.position.z))
-				* glm::eulerAngleXYZ(inst.rotation.y, inst.rotation.x, inst.rotation.z)
-				* glm::scale(glm::mat4(1.0f), glm::vec3(inst.scale.x, inst.scale.y, inst.scale.z));
+			// OPTIM: reusa Instance::getInstBase() (cacheado) em vez de remontar
+			// translate*eulerAngleXYZ*scale do zero pra toda instância BLEND, todo
+			// frame — mesmo ganho do passe opaco, essencial pra grama (que é
+			// justamente o caso BLEND mais numeroso).
+			glm::mat4 base = inst.getInstBase();
 
 			// FIX: corte por frustum, igual ao passe opaco (isSphereInFrustum sobre a
 			// esfera envolvente transformada pra espaço de mundo) — instância inteira
@@ -6218,7 +6803,15 @@ void FiscionX::Core::DrawTransparentPass(FiscionX::Mat4 view, FiscionX::Mat4 pro
 				if (mesh.alphaMode != "BLEND") continue;
 				glm::mat4 mm = base * (model->isSkinned ? glm::mat4(1.0f) : mesh.transform);
 				glm::vec3 wp = glm::vec3(mm * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-				entries.push_back({ glm::length(wp - camPos), model, &inst, &mesh, mm });
+				// OPTIM: guarda distância AO QUADRADO em vez de glm::length (que faz
+				// um sqrt). std::sort só precisa da ORDEM relativa entre entries, e
+				// sqrt é monotônico — comparar dSq dá exatamente a mesma ordenação
+				// que comparar a distância real, sem pagar uma raiz quadrada por
+				// submesh BLEND por instância, todo frame (a grama, por ser o caso
+				// BLEND mais numeroso, é quem mais sente essa troca).
+				glm::vec3 diff = wp - camPos;
+				float distSq = glm::dot(diff, diff);
+				entries.push_back({ distSq, model, &inst, &mesh, mm });
 			}
 		}
 	}
@@ -6226,7 +6819,7 @@ void FiscionX::Core::DrawTransparentPass(FiscionX::Mat4 view, FiscionX::Mat4 pro
 	if (entries.empty()) return;
 
 	std::sort(entries.begin(), entries.end(),
-		[](const BlendEntry& a, const BlendEntry& b) { return a.dist > b.dist; });
+		[](const BlendEntry& a, const BlendEntry& b) { return a.distSq > b.distSq; });
 
 	// Renderiza transparentes DEPOIS do composite (PostProcessing já escreveu no FB 0).
 	// Vincula o FB 0 explicitamente: assim o SSAO/GI já aplicado não escurece as malhas
