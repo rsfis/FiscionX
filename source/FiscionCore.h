@@ -849,6 +849,15 @@ namespace FiscionX {
 			btRigidBody* body;
 			Shape shape;
 			Rigidbody(Shape _shape);
+			// Sem isso, todo Rigidbody deletado (RemoveTreesForChunk,
+			// RemoveGrassForChunk, CleanUp, ou qualquer código futuro que
+			// dê "delete algumRigidbody") deixava um ponteiro solto em
+			// worldBodies pra sempre — o construtor sempre registra "this"
+			// lá (ver Rigidbody::Rigidbody em core.cpp) mas nada removia.
+			// UpdateRigidbodies() (main.cpp) itera worldBodies TODO frame
+			// incondicionalmente, então o próximo frame depois de QUALQUER
+			// delete acessava memória já liberada.
+			~Rigidbody();
 
 			void activate();
 			void applyForce(Vector3 force, Vector3 relPos);

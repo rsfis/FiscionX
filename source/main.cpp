@@ -582,6 +582,9 @@ int main() {
     boxModel = new FiscionX::Model(
         "assets/models/seoul2.glb"
     );
+    boxModel->boundsComputed = false;
+    boxModel->useGPUCulling = false;
+    boxModel->useCompactInstancing = false;
     boxModel->addInstance(
         FiscionX::Vector3(0, 0.09f, 4.2f),
         FiscionX::Vector3(2, 0, 0),

@@ -1,6 +1,6 @@
 ﻿#include "FiscionCore.h"
 #include "FiscionShaders.h"
-#define ENGINE_VERSION "0.7.0"
+#define ENGINE_VERSION "1.0.0"
 
 // last error number: 17
 
@@ -1194,12 +1194,14 @@ FiscionX::UI::Font::Font(const char* fontPath, int pixelSize) {
 	FT_Library ft;
 	if (FT_Init_FreeType(&ft)) {
 		std::cerr << "ERR 0x014 - Could not init FreeType" << std::endl;
+		system("pause");
 		std::exit(-20);
 	}
 
 	FT_Face face;
 	if (FT_New_Face(ft, fontPath, 0, &face)) {
 		std::cerr << "ERR 0x015 - Failed to load font: " << fontPath << std::endl;
+		system("pause");
 		std::exit(-21);
 	}
 
@@ -4469,6 +4471,19 @@ void FiscionX::Model::drawInstancedGPUCulled(const glm::vec4 frustumPlanes[6], c
 	}
 	glMemoryBarrier(GL_COMMAND_BARRIER_BIT | GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT);
 
+	// FIX: glUseProgram(compactCullComputeShader) lá em cima trocou o programa
+	// REAL no driver chamando a API direto, fora do wrapper useProgramIfChanged
+	// — então lastUsedProgram (cache por-Model) nunca soube que o programa
+	// mudou. No frame em que esse Model já tinha usado "shader" antes,
+	// lastUsedProgram já é igual a "shader", então o useProgramIfChanged(shader)
+	// logo abaixo virava um no-op: o real bind no driver continuava sendo o
+	// compute shader (inválido pra um glDraw*), e o draw falhava silenciosamente
+	// — exatamente por isso a grama sumia depois do primeiro frame e ficava só
+	// o resultado congelado do último draw que tinha dado certo. Mesmo padrão
+	// de FIX já usado em PASS 1 (occlusion query) mais abaixo neste arquivo:
+	// qualquer glUseProgram/glBindVertexArray cru precisa invalidar o cache.
+	lastUsedProgram = 0xFFFFFFFFu;
+
 	// ── Real draw ──
 	useProgramIfChanged(shader);
 	ensureUniformCache(shader);
@@ -5591,6 +5606,22 @@ FiscionX::Physics::Rigidbody::Rigidbody(FiscionX::Physics::Shape _shape) : shape
 	body->setCcdMotionThreshold(0.001f);
 	body->setCcdSweptSphereRadius(0.3f);
 	FiscionX::Physics::worldBodies.push_back(this);
+}
+
+FiscionX::Physics::Rigidbody::~Rigidbody() {
+	// Tira "this" de worldBodies ANTES de deletar body — sem isso,
+	// UpdateRigidbodies() (main.cpp, chamado todo frame) fica com um
+	// ponteiro apontando pra memória já liberada assim que este destrutor
+	// terminar, e crasha no frame seguinte ao tentar usá-lo.
+	auto& bodies = FiscionX::Physics::worldBodies;
+	bodies.erase(std::remove(bodies.begin(), bodies.end(), this), bodies.end());
+
+	// NOTA: se "body" ainda estiver no btDiscreteDynamicsWorld (broadphase
+	// handle != nullptr), Bullet mantém uma referência interna a ele; quem
+	// chama "delete" num Rigidbody deve ter removido o body do
+	// DynamicWorld antes (ver TerrainSystem::RemoveTreesForChunk/
+	// RemoveGrassForChunk/CleanUp, que já seguem essa ordem).
+	delete body;
 }
 
 void FiscionX::Physics::Rigidbody::activate() {
