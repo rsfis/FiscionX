@@ -3973,7 +3973,27 @@ void FiscionX::Model::drawSubMesh(
 			s_locNM = glGetUniformLocation(shader, "normalMatrix");
 		}
 		if (s_locNM >= 0) {
-			glm::mat3 nm = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
+			// OPTIM: mesmo fast-path já usado no caminho instanciado (ver o laço de
+			// batching em Model::draw()) — pra escala uniforme (o caso comum: props,
+			// prédios, veículos, personagens sem stretch em um eixo só) a matriz normal
+			// é só a parte 3x3 do modelMatrix dividida pelo fator de escala. Não precisa
+			// do glm::transpose(glm::inverse(modelMatrix)) completo (bem mais caro —
+			// inverte a mat4 inteira). Só paga o inverse de verdade quando a instância
+			// tem escala NÃO uniforme. Antes, essa chamada rodava incondicionalmente
+			// aqui — mesmo pro caso uniforme — em toda submesh, toda instância
+			// não-instanciada, todo frame.
+			glm::mat3 nm;
+			if (inst && inst->hasUniformScale()) {
+				nm = glm::mat3(modelMatrix);
+				float s = inst->scale.x;
+				float invS = (std::abs(s) > 1e-8f) ? (1.0f / s) : 1.0f;
+				nm[0] *= invS;
+				nm[1] *= invS;
+				nm[2] *= invS;
+			}
+			else {
+				nm = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
+			}
 			glUniformMatrix3fv(s_locNM, 1, GL_FALSE, glm::value_ptr(nm));
 		}
 	}
@@ -7276,15 +7296,29 @@ void FiscionX::Core::DrawTransparentPass(FiscionX::Mat4 view, FiscionX::Mat4 pro
 		// tirar sqrt (getDistance3D antigo) por instância dentro do loop abaixo.
 		const float maxViewDistanceSq = model->maxViewDistance * model->maxViewDistance;
 
-		for (auto& inst : model->instances) {
-			if (!inst.visible) continue;
+		// OPTIM (spatial grid broad-phase): corpo do teste por instância isolado numa
+		// lambda pra poder ser alimentado tanto pelas listas de índice de uma célula
+		// do grid (caso comum, grama incluída) quanto por uma varredura linear direta
+		// de `instances` (poucas instâncias, ou grid ainda não construído). A lógica
+		// por instância é EXATAMENTE a mesma de antes — o grid só decide QUAIS
+		// instâncias são visitadas, nunca como cada uma é testada.
+		//
+		// FIX PRINCIPAL: antes este passe testava toda instância de todo Model com
+		// hasBlendSubMesh num loop linear puro, sem nenhum broad-phase — mesmo o
+		// Model já tendo (pro passe opaco) um spatialGrid pronto e mantido. Pra
+		// grama, que é justamente o caso BLEND com mais instâncias (bordas com
+		// alpha suave), isso significava testar distância + frustum de CADA UMA
+		// das centenas de milhares de instâncias, todo frame, só pra este passe —
+		// o dobro do trabalho que o Model::draw já faz de graça usando o grid.
+		auto testAndCollectBlendInstance = [&](FiscionX::Model::Instance& inst) {
+			if (!inst.visible) return;
 
 			// FIX: corte por distância, igual ao passe opaco — sem isso, grama (e
 			// qualquer outro prop BLEND) continuava sendo desenhada bem além de
 			// maxViewDistance.
 			// OPTIM: getDistanceSq3D evita o sqrt.
 			if (FiscionX::Math::getDistanceSq3D(FiscionX::Core::Camera.position, inst.position) > maxViewDistanceSq) {
-				continue;
+				return;
 			}
 
 			// OPTIM: reusa Instance::getInstBase() (cacheado) em vez de remontar
@@ -7302,7 +7336,7 @@ void FiscionX::Core::DrawTransparentPass(FiscionX::Mat4 view, FiscionX::Mat4 pro
 				float worldRadius = model->boundingRadius * maxScale;
 
 				if (!FiscionX::Model::isSphereInFrustum(worldCenter, worldRadius, frustumPlanes)) {
-					continue;
+					return;
 				}
 			}
 
@@ -7319,6 +7353,45 @@ void FiscionX::Core::DrawTransparentPass(FiscionX::Mat4 view, FiscionX::Mat4 pro
 				glm::vec3 diff = wp - camPos;
 				float distSq = glm::dot(diff, diff);
 				entries.push_back({ distSq, model, &inst, &mesh, mm });
+			}
+			};
+
+		// OPTIM (spatial grid broad-phase): mesmo critério/estrutura já usados no
+		// passe opaco (ver Model::draw) — abaixo de GRID_INSTANCE_THRESHOLD o grid
+		// custa mais do que economiza, então segue a varredura linear antiga.
+		// Acima disso, reconstrói o grid se necessário (no-op na maioria dos frames
+		// — só reconstrói depois de um addInstance/removeInstance de verdade) e
+		// visita só as células dentro de maxViewDistance da câmera E cujo AABB
+		// (com margem) passa no frustum atual, pulando de uma vez toda instância
+		// dentro de uma célula rejeitada.
+		if (model->instances.size() >= (size_t)FiscionX::Model::GRID_INSTANCE_THRESHOLD) {
+			model->rebuildSpatialGridIfNeeded();
+
+			int camCellX, camCellZ;
+			model->gridCellCoord(camPos, camCellX, camCellZ);
+			int cellRadius = (int)std::ceil(model->maxViewDistance / model->spatialGrid.cellSize) + 1;
+
+			for (int dz = -cellRadius; dz <= cellRadius; ++dz) {
+				for (int dx = -cellRadius; dx <= cellRadius; ++dx) {
+					auto it = model->spatialGrid.cells.find(FiscionX::Model::gridCellKey(camCellX + dx, camCellZ + dz));
+					if (it == model->spatialGrid.cells.end()) continue;
+					const auto& cell = it->second;
+
+					glm::vec3 cellCenter = (cell.aabbMin + cell.aabbMax) * 0.5f;
+					float cellRadiusWorld = glm::length(cell.aabbMax - cellCenter);
+					if (!FiscionX::Model::isSphereInFrustum(cellCenter, cellRadiusWorld, frustumPlanes)) {
+						continue; // toda a célula fora do frustum: pula todas as instâncias dela de uma vez
+					}
+
+					for (uint32_t idx : cell.indices) {
+						testAndCollectBlendInstance(model->instances[idx]);
+					}
+				}
+			}
+		}
+		else {
+			for (auto& inst : model->instances) {
+				testAndCollectBlendInstance(inst);
 			}
 		}
 	}

@@ -630,7 +630,6 @@ int main() {
     groundBody->setBouncingFactor(0.0f);
     FiscionX::Physics::DynamicWorld->addRigidBody(groundBody->body);
 
-    // === Capsule ===
     FiscionX::Physics::Shape capsuleShape = FiscionX::Physics::CreateCapsuleShape(FiscionX::Vector3(-11, 4, 0), FiscionX::Vector3(0, 0, 0), 0.5f, 1.5f, 1.0f);
     capsuleBody = new FiscionX::Physics::Rigidbody(capsuleShape);
     capsuleBody->setFriction(0.5f);
@@ -640,7 +639,6 @@ int main() {
     capsuleBody->setBouncingFactor(0.0f);
     FiscionX::Physics::DynamicWorld->addRigidBody(capsuleBody->body);
 
-    // == Mesh Collider ==
     FiscionX::Physics::Shape staticCarShape = FiscionX::Physics::CreateMeshShape("assets/models/car_scene.glb", FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(0, 0, 0), FiscionX::Vector3(0.01f, 0.01f, 0.01f), 0.0f);
     staticCarShape.gshape->updateBound();
     staticCarBody = new FiscionX::Physics::Rigidbody(staticCarShape);
