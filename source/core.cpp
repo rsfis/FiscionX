@@ -6503,14 +6503,6 @@ namespace {
 void FiscionX::Core::RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 projection, FiscionX::Mat4 viewProj) {
 	float now = static_cast<float>(glfwGetTime());
 
-	// OPTIM: this loop only ever does anything for isSkinned Models (the
-	// `model->isSkinned` check used to sit INSIDE the per-instance loop, so
-	// every non-skinned Model — static props, trees, and especially grass/any
-	// useCompactInstancing Model with hundreds of thousands of instances —
-	// still paid for a full `for (auto& inst : model->instances)` walk every
-	// single frame just to immediately fail that check on each one. Skipping
-	// the whole Model up front when it isn't skinned turns that into a no-op
-	// for every non-skinned Model instead of an O(instances) walk.
 	for (auto& model : AllModels) {
 		if (!model->isSkinned) continue;
 		for (auto& inst : model->instances) {
