@@ -8,6 +8,10 @@
 GLFWwindow* FiscionX::Core::Window;
 int FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT;
 
+// --- MULTITHREADING ---
+FiscionX::ThreadPool* FiscionX::Core::WorkerPool = nullptr;
+FiscionX::MainThreadQueue FiscionX::Core::GLQueue;
+
 GLuint FiscionX::Core::depthShaderStatic;
 GLuint FiscionX::Core::depthShaderSkinned;
 GLuint FiscionX::Core::depthShaderCubeStatic;
@@ -67,6 +71,31 @@ float FiscionX::Core::fogDensity = 0.015f;
 float FiscionX::Core::fogStart = 30.0f;
 float FiscionX::Core::fogEnd = 120.0f;
 int FiscionX::Core::fogType = 2;
+
+GLuint FiscionX::Core::volumetricFogFBO;
+GLuint FiscionX::Core::volumetricFogColorBuffer;
+GLuint FiscionX::Core::volumetricFogBlurFBO;
+GLuint FiscionX::Core::volumetricFogBlurColorBuffer;
+GLuint FiscionX::Core::volumetricFogCompositeFBO;
+GLuint FiscionX::Core::volumetricFogCompositeColorBuffer;
+GLuint FiscionX::Core::volumetricFogShader;
+GLuint FiscionX::Core::volumetricFogBlurShader;
+GLuint FiscionX::Core::volumetricFogCompositeShader;
+
+bool   FiscionX::Core::VOLUMETRIC_FOG_ENABLED = false;
+FiscionX::Vector3 FiscionX::Core::VOLUMETRIC_FOG_COLOR = FiscionX::Vector3(0.55f, 0.6f, 0.65f);
+float  FiscionX::Core::VOLUMETRIC_FOG_DENSITY = 0.04f;
+float  FiscionX::Core::VOLUMETRIC_FOG_HEIGHT_FALLOFF = 0.15f;
+float  FiscionX::Core::VOLUMETRIC_FOG_HEIGHT_START = 0.0f;
+float  FiscionX::Core::VOLUMETRIC_FOG_ANISOTROPY = 0.6f;
+float  FiscionX::Core::VOLUMETRIC_FOG_SCATTERING = 1.0f;
+float  FiscionX::Core::VOLUMETRIC_FOG_AMBIENT = 0.15f;
+float  FiscionX::Core::VOLUMETRIC_FOG_MAX_DISTANCE = 100.0f;
+int    FiscionX::Core::VOLUMETRIC_FOG_STEPS = 32;
+float  FiscionX::Core::VOLUMETRIC_FOG_NOISE_SCALE = 0.08f;
+float  FiscionX::Core::VOLUMETRIC_FOG_NOISE_SPEED = 0.6f;
+float  FiscionX::Core::VOLUMETRIC_FOG_NOISE_INTENSITY = 0.5f;
+float  FiscionX::Core::VOLUMETRIC_FOG_BLUR_RADIUS = 2.5f;
 
 float FiscionX::Core::sunDiskSize = 0.030;
 float FiscionX::Core::sunHaloSize = 0.3;
@@ -1906,13 +1935,66 @@ void FiscionX::Model::Instance::playAnim(const std::string& name, bool repeat, c
 	currentAnim.time = 0.0f;
 }
 
+// MULTITHREADING: fans the pure-CPU animation/bone math for every instance out
+// across Core::WorkerPool's least-busy worker threads and blocks until they're all
+// done, then does the GL-only bits (occlusion query poll + skin UBO upload)
+// sequentially, back on the calling thread. Model::update() is only ever called from
+// the GL thread, so this is the boundary where "leave the GL thread with only
+// OpenGL" actually happens for skinned models.
 void FiscionX::Model::update(float deltaTime) {
+	// Instances currently driving Core::Camera write into that single shared object,
+	// so they're excluded from the parallel batch and handled synchronously below —
+	// everything else (the vast majority of instances, e.g. all skinned NPCs/props)
+	// is pure per-instance CPU work and safe to parallelize.
+	std::vector<Instance*> parallelizable;
+	parallelizable.reserve(instances.size());
+
 	for (auto& inst : instances) {
-		inst.update(deltaTime, isSkinned);
+		// GL-ONLY: must run on the GL thread. Cheap (just a couple of query reads),
+		// so no benefit to offloading it even if it could be.
+		inst.pollOcclusion();
+
+		bool hasCameraAnim = (inst.cameraNodeIndex >= 0 && !inst.currentAnim.name.empty());
+		if (!isSkinned && !hasCameraAnim) continue;
+
+		if (hasCameraAnim) {
+			// Touches Core::Camera -> keep synchronous, on this (GL) thread.
+			inst.computeAnimation(deltaTime, isSkinned);
+			inst.uploadSkinUBO();
+		}
+		else {
+			parallelizable.push_back(&inst);
+		}
+	}
+
+	if (!parallelizable.empty()) {
+		if (Core::WorkerPool) {
+			// Automatically split across whichever worker threads currently have the
+			// fewest pending tasks (see ThreadPool::pickLeastBusyWorker). Blocks this
+			// (GL) thread until every instance's animation has been computed, which is
+			// fine: we need the results before the GL-only upload loop right below,
+			// and before this Model gets drawn later this frame.
+			Core::WorkerPool->ParallelFor(parallelizable.size(), /*minChunk=*/1,
+				[&](size_t begin, size_t end) {
+					for (size_t i = begin; i < end; ++i)
+						parallelizable[i]->computeAnimation(deltaTime, isSkinned);
+				});
+		}
+		else {
+			// Pool not initialized (e.g. Core::NewWindow wasn't called yet) — fall
+			// back to sequential, still correct.
+			for (auto* inst : parallelizable)
+				inst->computeAnimation(deltaTime, isSkinned);
+		}
+
+		// GL-ONLY: every instance's finalBoneMatrices is ready now — upload them.
+		// Must happen on the GL thread, after the parallel section above completes.
+		for (auto* inst : parallelizable)
+			inst->uploadSkinUBO();
 	}
 }
 
-void FiscionX::Model::Instance::update(float deltaTime, bool isSkinned) {
+void FiscionX::Model::Instance::pollOcclusion() {
 	for (size_t i = 0; i < occlusionQueries.size(); ++i) {
 		GLuint available = 0;
 		glGetQueryObjectuiv(occlusionQueries[i], GL_QUERY_RESULT_AVAILABLE, &available);
@@ -1922,13 +2004,15 @@ void FiscionX::Model::Instance::update(float deltaTime, bool isSkinned) {
 			isVisible[i] = (samples != 0);
 		}
 	}
+}
 
+bool FiscionX::Model::Instance::computeAnimation(float deltaTime, bool isSkinned) {
 	bool hasCameraAnim = (cameraNodeIndex >= 0 && !currentAnim.name.empty());
-	if (!isSkinned && !hasCameraAnim) return;
+	if (!isSkinned && !hasCameraAnim) return false;
 
-	if (!model) return;
+	if (!model) return false;
 	auto itAnim = animations.find(currentAnim.name);
-	if (itAnim == animations.end()) return;
+	if (itAnim == animations.end()) return false;
 	const tinygltf::Animation& anim = itAnim->second;
 
 	currentAnim.time += deltaTime;
@@ -2002,8 +2086,12 @@ void FiscionX::Model::Instance::update(float deltaTime, bool isSkinned) {
 			currentAnim.time = t;
 		}
 		else if (!currentAnim.nextAnim.empty()) {
+			// NOTE: playAnim() only touches this instance's own currentAnim/flags —
+			// safe to call from a worker thread. It resets currentAnim.time to 0, so
+			// this frame's transforms simply aren't recomputed; the next call to
+			// computeAnimation() (next frame) picks up the new animation cleanly.
 			playAnim(currentAnim.nextAnim, true);
-			return;
+			return false;
 		}
 		else {
 			t = maxTime;
@@ -2063,26 +2151,45 @@ void FiscionX::Model::Instance::update(float deltaTime, bool isSkinned) {
 		}
 	}
 
-	if (!model->skins.empty()) {
-		const tinygltf::Skin& skin = model->skins[0];
-		finalBoneMatrices.resize(skin.joints.size());
+	if (model->skins.empty()) return false;
 
-		const tinygltf::Accessor& invBindAcc = model->gltfModel.accessors[skin.inverseBindMatrices];
-		const tinygltf::BufferView& invBindView = model->gltfModel.bufferViews[invBindAcc.bufferView];
-		const tinygltf::Buffer& invBindBuf = model->gltfModel.buffers[invBindView.buffer];
+	const tinygltf::Skin& skin = model->skins[0];
+	finalBoneMatrices.resize(skin.joints.size());
 
-		for (size_t i = 0; i < skin.joints.size(); ++i) {
-			int jointIdx = skin.joints[i];
-			const float* matData = reinterpret_cast<const float*>(
-				&invBindBuf.data[invBindView.byteOffset + invBindAcc.byteOffset + sizeof(float) * 16 * i]);
-			finalBoneMatrices[i] = nodeGlobalTransforms[jointIdx] * glm::make_mat4(matData);
-		}
+	const tinygltf::Accessor& invBindAcc = model->gltfModel.accessors[skin.inverseBindMatrices];
+	const tinygltf::BufferView& invBindView = model->gltfModel.bufferViews[invBindAcc.bufferView];
+	const tinygltf::Buffer& invBindBuf = model->gltfModel.buffers[invBindView.buffer];
 
-		glBindBuffer(GL_UNIFORM_BUFFER, uboSkin);
-		glBufferSubData(GL_UNIFORM_BUFFER, 0,
-			sizeof(glm::mat4) * finalBoneMatrices.size(),
-			finalBoneMatrices.data());
-		glBindBufferBase(GL_UNIFORM_BUFFER, 0, uboSkin);
+	for (size_t i = 0; i < skin.joints.size(); ++i) {
+		int jointIdx = skin.joints[i];
+		const float* matData = reinterpret_cast<const float*>(
+			&invBindBuf.data[invBindView.byteOffset + invBindAcc.byteOffset + sizeof(float) * 16 * i]);
+		finalBoneMatrices[i] = nodeGlobalTransforms[jointIdx] * glm::make_mat4(matData);
+	}
+
+	return true; // finalBoneMatrices is ready -> uploadSkinUBO() should run next
+}
+
+void FiscionX::Model::Instance::uploadSkinUBO() {
+	if (uboSkin == 0 || finalBoneMatrices.empty()) return;
+
+	glBindBuffer(GL_UNIFORM_BUFFER, uboSkin);
+	glBufferSubData(GL_UNIFORM_BUFFER, 0,
+		sizeof(glm::mat4) * finalBoneMatrices.size(),
+		finalBoneMatrices.data());
+	glBindBufferBase(GL_UNIFORM_BUFFER, 0, uboSkin);
+}
+
+// Kept for API compatibility with any external caller that still invokes
+// Instance::update() directly (instead of going through Model::update()). Runs the
+// full sequence synchronously on whichever thread calls it — that thread MUST own
+// the OpenGL context, since this touches occlusionQueries/uboSkin directly. Prefer
+// Model::update() for anything performance-sensitive, since it parallelizes the CPU
+// work across FiscionX::Core::WorkerPool instead.
+void FiscionX::Model::Instance::update(float deltaTime, bool isSkinned) {
+	pollOcclusion();
+	if (computeAnimation(deltaTime, isSkinned)) {
+		uploadSkinUBO();
 	}
 }
 
@@ -2302,6 +2409,7 @@ static glm::mat4 FiscionX_BuildNodeWorldTransform(
 }
 
 void FiscionX::Model::init(const std::string& path) {
+	mpath = path;
 	tinygltf::TinyGLTF loader;
 	std::string err, warn;
 	bool ret = loader.LoadBinaryFromFile(&gltfModel, &err, &warn, path);
@@ -3221,6 +3329,180 @@ void FiscionX::Model::unload() {
 	);
 }
 
+// MULTITHREADING: see the declaration in FiscionCore.h for the full rationale.
+// Must be called from the GL thread (same requirement the old single-instance
+// addInstance() always had) — the CPU-only per-instance setup is fanned out to
+// Core::WorkerPool, but the skin-UBO allocation at the end is real OpenGL.
+std::vector<FiscionX::Model::Instance*> FiscionX::Model::addInstances(const std::vector<InstanceDesc>& descs) {
+	std::vector<Instance*> result;
+	if (descs.empty()) return result;
+
+	const size_t base = instances.size();
+	const size_t count = descs.size();
+
+	// Sized to its FINAL count up front — the ParallelFor below writes directly
+	// into instances[base + i] on worker threads, which is only safe because no
+	// push_back/resize happens anywhere else in this function (nothing here can
+	// reallocate mid-flight and invalidate a pointer another worker just wrote).
+	instances.resize(base + count);
+
+	// PURE CPU per instance: deep copies of nodes/skins/animation maps/occlusion
+	// buffers, each instance needs its own independent copy (see FIX comment on
+	// uboSkin below for why sharing would break per-instance animation). Touches
+	// no GL state, so — exactly like Model::update()'s computeAnimation() fan-out —
+	// it's safe to run on Core::WorkerPool workers. Each iteration only ever
+	// touches its own instances[base+i]; no shared mutable state between them.
+	auto fillOne = [&](size_t i) {
+		Instance& inst = instances[base + i];
+		const InstanceDesc& d = descs[i];
+		inst.position = d.position;
+		inst.rotation = d.rotation;
+		inst.scale = d.scale;
+		inst.model = this;
+		inst.nodes = nodes;
+		inst.skins = skins;
+		inst.physicsSyncTransformMatrix = glm::mat4(1.0f);
+		inst.animTranslations = animTranslations;
+		inst.animRotations = animRotations;
+		inst.animScales = animScales;
+		inst.nodeGlobalTransforms = nodeGlobalTransforms;
+		inst.nodeParents = nodeParents;
+		inst.finalBoneMatrices = finalBoneMatrices;
+		inst.animations = animations;   // cada instância tem sua própria cópia
+		inst.boneTransforms = boneTransforms;
+		inst.occlusionQueries = occlusionQueries;
+		inst.isVisible = isVisible;
+		inst.cameraNodeIndex = cameraNodeIndex;   // FIX: propaga o nó de câmera para a instância
+		inst.uboSkin = 0; // filled in below (GL-only, batched, sequential)
+		};
+
+	if (Core::WorkerPool && count > 1) {
+		Core::WorkerPool->ParallelFor(count, /*minChunk=*/1, [&](size_t begin, size_t end) {
+			for (size_t i = begin; i < end; ++i) fillOne(i);
+			});
+	}
+	else {
+		// Pool not initialized yet, or a single instance — sequential fallback,
+		// still correct, and avoids thread-pool dispatch overhead for count == 1.
+		for (size_t i = 0; i < count; ++i) fillOne(i);
+	}
+
+	// ===== GL-ONLY, must run sequentially on the calling (GL) thread =====
+	// Cada instância precisa de seu próprio UBO de skinning independente.
+	// Compartilhar o uboSkin do Model faz com que todas as instâncias
+	// usem os ossos da última a atualizar, quebrando a animação individual.
+	// Batched into ONE glGenBuffers(n, ...) call instead of one call per
+	// instance — same idea as the CPU-side batching above, just for the GL
+	// API's own per-call overhead.
+	if (isSkinned) {
+		std::vector<GLuint> ubos(count);
+		glGenBuffers((GLsizei)count, ubos.data());
+		std::vector<glm::mat4> identityMats(100, glm::mat4(1.0f));
+		for (size_t i = 0; i < count; ++i) {
+			Instance& inst = instances[base + i];
+			inst.uboSkin = ubos[i];
+			glBindBuffer(GL_UNIFORM_BUFFER, inst.uboSkin);
+			glBufferData(GL_UNIFORM_BUFFER, sizeof(glm::mat4) * 100, identityMats.data(), GL_DYNAMIC_DRAW);
+			glBindBufferBase(GL_UNIFORM_BUFFER, 0, inst.uboSkin);
+		}
+	}
+
+	// OPTIM: novos índices invalidam o grid espacial (ver SpatialGrid) e o
+	// buffer bruto do GPU culling — reconstruídos sob demanda na próxima
+	// chamada de draw(). Feito UMA vez pro lote inteiro, não por instância.
+	spatialGrid.dirty = true;
+	gpuBuffersDirty = true;
+
+	result.reserve(count);
+	for (size_t i = 0; i < count; ++i) result.push_back(&instances[base + i]);
+	return result;
+}
+
+// MULTITHREADING: see the declaration in FiscionCore.h for the full rationale.
+// Must be called from the GL thread — glDeleteBuffers is real OpenGL — but the
+// actual freeing of each victim's per-instance CPU containers is handed off to
+// Core::WorkerPool so the GL thread doesn't pay for it this frame.
+std::vector<FiscionX::Model::Instance*> FiscionX::Model::removeInstances(const std::vector<Instance*>& insts) {
+	std::vector<Instance*> displaced(insts.size(), nullptr);
+	if (insts.empty() || instances.empty()) return displaced;
+
+	// Convert every input pointer to a slot index UP FRONT (before any removal
+	// happens), then process in DESCENDING slot order: a swap-and-pop at slot i
+	// only ever touches slot i and the current back() (both >= i), so going
+	// highest-to-lowest guarantees a slot we haven't gotten to yet is never
+	// disturbed by an earlier removal in this same batch.
+	struct Target { size_t slot; size_t origPos; };
+	std::vector<Target> targets;
+	targets.reserve(insts.size());
+	for (size_t i = 0; i < insts.size(); ++i) {
+		Instance* inst = insts[i];
+		if (!inst) continue;
+		size_t idx = inst - instances.data();
+		if (idx >= instances.size()) continue;
+		targets.push_back({ idx, i });
+	}
+	std::sort(targets.begin(), targets.end(), [](const Target& a, const Target& b) { return a.slot > b.slot; });
+	targets.erase(std::unique(targets.begin(), targets.end(),
+		[](const Target& a, const Target& b) { return a.slot == b.slot; }), targets.end());
+
+	if (targets.empty()) return displaced;
+
+	// Victims are MOVED OUT of `instances` (cheap: a handful of move-constructions)
+	// instead of being torn down in place, so their heavy per-instance containers
+	// (nodes/skins/animation maps, occlusion vectors) can be freed off the GL
+	// thread below, once their GL handles are already gone.
+	std::vector<Instance> victims;
+	victims.reserve(targets.size());
+	std::vector<GLuint> ubosToDelete;
+	ubosToDelete.reserve(targets.size());
+
+	for (const Target& t : targets) {
+		size_t idx = t.slot;
+		size_t lastIdx = instances.size() - 1;
+		bool wasDisplaced = (idx != lastIdx);
+
+		victims.push_back(std::move(instances[idx]));
+		if (victims.back().uboSkin != 0) ubosToDelete.push_back(victims.back().uboSkin);
+
+		if (wasDisplaced) {
+			instances[idx] = std::move(instances[lastIdx]);
+		}
+		instances.pop_back();
+
+		// OPTIM: swap-and-pop just changed the index of whichever instance was
+		// at back() (if any), which the spatial grid (keyed by index into
+		// `instances`) has no cheap way to patch incrementally — rebuilt on the
+		// next draw() call instead. See SpatialGrid above.
+		displaced[t.origPos] = wasDisplaced ? &instances[idx] : nullptr;
+	}
+
+	// ===== GL-ONLY, sequential on the calling (GL) thread =====
+	// FIX: the old single-instance removeInstance() never freed a skinned
+	// instance's uboSkin at all — every removal leaked one GL buffer. Batched
+	// into a SINGLE glDeleteBuffers(n, ...) call instead of one call per victim.
+	if (!ubosToDelete.empty()) {
+		glDeleteBuffers((GLsizei)ubosToDelete.size(), ubosToDelete.data());
+	}
+
+	// MULTITHREADING: every victim's remaining fields are pure CPU memory (no GL
+	// handles left in them — uboSkin was just freed above) — hand the whole
+	// batch off to a worker thread to actually be destroyed there instead of
+	// paying for that deallocation on the GL thread right now. Fire-and-forget:
+	// nothing later this frame depends on it finishing.
+	if (Core::WorkerPool && !victims.empty()) {
+		Core::WorkerPool->SubmitDetached([v = std::move(victims)]() mutable {
+			v.clear();
+			});
+	}
+	// else: `victims` just destructs normally (on this thread) when it goes out
+	// of scope right below — still correct, just not offloaded.
+
+	spatialGrid.dirty = true;
+	gpuBuffersDirty = true;
+
+	return displaced;
+}
+
 namespace {
 	void meshSimplify(
 		const std::vector<glm::vec3>& inPos,
@@ -3247,15 +3529,8 @@ namespace {
 		float ratio = glm::clamp(targetRatio, 0.02f, 1.0f);
 		size_t targetIdx = std::max((size_t)3, (size_t)(I * ratio)) / 3 * 3;
 
-		std::vector<uint32_t> posRemap(V);
-		size_t uniqueV = meshopt_generateVertexRemapMulti(
-			posRemap.data(),
-			inIdx.data(), I,
-			V,
-			nullptr, 0
-		);
 		std::vector<uint32_t> posRemapClean(V);
-		uniqueV = meshopt_generateVertexRemap(
+		size_t uniqueV = meshopt_generateVertexRemap(
 			posRemapClean.data(),
 			inIdx.data(), I,
 			inPos.data(), V, sizeof(glm::vec3)
@@ -3758,6 +4033,8 @@ void FiscionX::Model::ensureUniformCache(GLuint shader) {
 	uniformCache.reflectionsStrength = glGetUniformLocation(shader, "reflectionsStrength");
 	uniformCache.isAffectedByLight = glGetUniformLocation(shader, "isAffectedByLight");
 	uniformCache.acceptsShadows = glGetUniformLocation(shader, "acceptsShadows");
+	uniformCache.enableSSAO = glGetUniformLocation(shader, "enableSSAO");
+	uniformCache.enableSSR = glGetUniformLocation(shader, "enableSSR");
 	uniformCache.alpha = glGetUniformLocation(shader, "alpha");
 	uniformCache.hdrExposure = glGetUniformLocation(shader, "hdrExposure");
 	uniformCache.fogColor = glGetUniformLocation(shader, "fogColor");
@@ -3793,6 +4070,38 @@ void FiscionX::Model::ensureUniformCache(GLuint shader) {
 		snprintf(buf, sizeof(buf), "lightGlowColor[%d]", i); Lu.glowColor = glGetUniformLocation(shader, buf);
 		snprintf(buf, sizeof(buf), "lightGlowRadius[%d]", i); Lu.glowRadius = glGetUniformLocation(shader, buf);
 	}
+
+	// OPTIM PRINCIPAL (sampler units): baseColorTex/normalMapTex/shadowMap/
+	// glossinessTex/specularF0Tex/metallicTex/irradianceMap/prefilterMap/
+	// brdfLUT/aoTex are sampler uniforms whose VALUE is just "which texture
+	// unit to read from" (0,1,2,3,4,5,6,7,8,9) — fixed by this engine's own
+	// bindTexIfChanged/glActiveTexture calls elsewhere, and never dependent on
+	// which mesh/instance/LOD is being drawn. Before this fix, every one of
+	// drawSubMesh/drawSubMeshInstanced/drawSubMeshInstancedCompact/
+	// drawInstancedGPUCulled's bindSubMeshMaterial re-sent all 6 of the
+	// material sampler uniforms via glUniform1i on EVERY submesh, EVERY
+	// LOD-tier/isAffectedByLight/acceptsShadows batch, of EVERY Model::draw()
+	// call — a value that is provably identical every single time for a given
+	// shader program. A scene with, say, 40 Models * 4 submeshes * 3 LOD tiers
+	// was paying ~480 * 6 = 2880 fully redundant glUniform1i driver calls per
+	// pass (camera pass + once per shadow cascade/spot light) for numbers that
+	// never change. A sampler uniform only needs to be set again if the
+	// program is relinked (which invalidates cachedShader below anyway,
+	// forcing this whole block to rerun) — so setting it once here, right
+	// after the location lookup, is both correct and sufficient. The
+	// glUniform1i calls formerly inline at each call site were removed; the
+	// bindTexIfChanged(unit, texId) calls (the actual, per-submesh-varying
+	// texture bind) stay exactly where they were.
+	glUniform1i(uniformCache.baseColorTex, 0);
+	glUniform1i(uniformCache.normalMapTex, 1);
+	glUniform1i(uniformCache.shadowMap, 2);
+	glUniform1i(uniformCache.glossinessTex, 3);
+	glUniform1i(uniformCache.specularF0Tex, 4);
+	glUniform1i(uniformCache.metallicTex, 5);
+	glUniform1i(uniformCache.irradianceMap, 6);
+	glUniform1i(uniformCache.prefilterMap, 7);
+	glUniform1i(uniformCache.brdfLUT, 8);
+	glUniform1i(uniformCache.aoTex, 9);
 }
 
 // OPTIM PRINCIPAL: todo esse bloco (luzes, ambiente/IBL, fog, shadowMap da
@@ -3821,21 +4130,23 @@ void FiscionX::Model::uploadPerDrawUniforms(GLuint shader, GLuint depthMap) {
 	glUniform1f(uniformCache.fogEnd, FiscionX::Core::fogEnd);
 	glUniform1i(uniformCache.fogType, FiscionX::Core::fogType);
 
+	// OPTIM: shadowMap/irradianceMap/prefilterMap/brdfLUT sampler UNIT
+	// uniforms (which texture unit: 2/6/7/8) are now set once in
+	// ensureUniformCache when the shader changes — see the comment there.
+	// Only the actual texture bind (glActiveTexture+glBindTexture, or
+	// bindTexIfChanged for the depth map) still needs to happen here, since
+	// depthMap/iblIrradianceMap/etc. are the values that can actually vary.
 	bindTexIfChanged(2, depthMap);
-	glUniform1i(uniformCache.shadowMap, 2);
 
 	if (FiscionX::Core::iblReady) {
 		glActiveTexture(GL_TEXTURE6);
 		glBindTexture(GL_TEXTURE_CUBE_MAP, FiscionX::Core::iblIrradianceMap);
-		glUniform1i(uniformCache.irradianceMap, 6);
 
 		glActiveTexture(GL_TEXTURE7);
 		glBindTexture(GL_TEXTURE_CUBE_MAP, FiscionX::Core::iblPrefilterMap);
-		glUniform1i(uniformCache.prefilterMap, 7);
 
 		glActiveTexture(GL_TEXTURE8);
 		glBindTexture(GL_TEXTURE_2D, FiscionX::Core::iblBrdfLUT);
-		glUniform1i(uniformCache.brdfLUT, 8);
 
 		glUniform1i(uniformCache.hasIBL, 1);
 	}
@@ -3916,6 +4227,10 @@ void FiscionX::Model::drawSubMesh(
 			s_dpLocAlphaCutoff = glGetUniformLocation(shader, "alphaCutoff");
 			s_dpLocBaseTex = glGetUniformLocation(shader, "baseColorTex");
 			s_dpLocTransFactor = glGetUniformLocation(shader, "transmissionFactor");
+			// OPTIM: baseColorTex's VALUE (texture unit 0) never changes for this
+			// shader — set it once here instead of on every drawSubMesh(depthPass)
+			// call (previously: once per submesh, per instance, per shadow pass).
+			if (s_dpLocBaseTex != -1) glUniform1i(s_dpLocBaseTex, 0);
 		}
 		GLint locAlphaMode = s_dpLocAlphaMode;
 		GLint locAlphaCutoff = s_dpLocAlphaCutoff;
@@ -3928,7 +4243,6 @@ void FiscionX::Model::drawSubMesh(
 
 		if (locBaseTex != -1 && mesh.baseColorTex != 0) {
 			bindTexIfChanged(0, mesh.baseColorTex);
-			glUniform1i(locBaseTex, 0);
 		}
 		// ========================================
 
@@ -3944,7 +4258,16 @@ void FiscionX::Model::drawSubMesh(
 	if (mesh.alphaMode == "MASK")  mode = 1;
 	else if (mesh.alphaMode == "BLEND") mode = 2;
 
-	if (mode == 2 || alpha < 1.0f) {
+	// FEATURE: alpha efetivo deste draw = alpha do Model inteiro (`alpha`,
+	// compartilhado por todas as instâncias) * alpha desta Instance específica
+	// (`inst->alpha`). Instance::alpha já existia como campo mas não era lido
+	// em lugar nenhum — isso permite, por exemplo, um preview fantasma de
+	// construção (ver Entity::Player::DrawBuildingPreview) com alpha reduzido
+	// SEM alterar `alpha` do Model e sem afetar as instâncias já colocadas
+	// desse mesmo Model (que continuam com Instance::alpha == 1.0f).
+	float effectiveAlpha = alpha * (inst ? inst->alpha : 1.0f);
+
+	if (mode == 2 || effectiveAlpha < 1.0f) {
 		glEnable(GL_BLEND);
 		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 		glEnable(GL_DEPTH_TEST);
@@ -3962,6 +4285,7 @@ void FiscionX::Model::drawSubMesh(
 
 	glUniform1i(uniformCache.alphaMode, mode);
 	glUniform1f(uniformCache.alphaCutoff, mesh.alphaCutoff);
+	glUniform1f(uniformCache.alpha, effectiveAlpha);
 	glUniformMatrix4fv(uniformCache.model, 1, GL_FALSE, glm::value_ptr(modelMatrix));
 	glUniformMatrix4fv(uniformCache.lightSpaceMatrix, 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
 
@@ -3998,11 +4322,15 @@ void FiscionX::Model::drawSubMesh(
 		}
 	}
 
+	// OPTIM: baseColorTex/normalMapTex/glossinessTex/specularF0Tex/metallicTex/
+	// aoTex sampler UNIT uniforms (which texture unit: 0/1/3/4/5/9) are now
+	// set once in ensureUniformCache when the shader changes — see the
+	// comment there. bindTexIfChanged (the actual, per-submesh texture bind)
+	// stays here unchanged; only the redundant glUniform1i(..., unit) after
+	// each one was removed.
 	bindTexIfChanged(0, mesh.baseColorTex);
-	glUniform1i(uniformCache.baseColorTex, 0);
 
 	bindTexIfChanged(1, mesh.normalMapTex);
-	glUniform1i(uniformCache.normalMapTex, 1);
 	glUniform1i(uniformCache.hasNormalMap, mesh.normalMapTex != 0 ? 1 : 0);
 
 	// shadowMap (slot 2) já foi vinculado uma única vez por Model::draw() em
@@ -4010,16 +4338,13 @@ void FiscionX::Model::drawSubMesh(
 	// desta chamada, não precisa ser refeito aqui.
 
 	bindTexIfChanged(3, mesh.glossinessTex);
-	glUniform1i(uniformCache.glossinessTex, 3);
 	glUniform1i(uniformCache.hasGlossinessMap, mesh.glossinessTex != 0 ? 1 : 0);
 	glUniform1i(uniformCache.glossinessInAlphaOfSpecular, mesh.glossinessInAlphaOfSpecular ? 1 : 0);
 
 	bindTexIfChanged(4, mesh.specularF0Tex);
-	glUniform1i(uniformCache.specularF0Tex, 4);
 	glUniform1i(uniformCache.hasSpecularF0Map, mesh.specularF0Tex != 0 ? 1 : 0);
 
 	bindTexIfChanged(5, mesh.metallicTex);
-	glUniform1i(uniformCache.metallicTex, 5);
 	glUniform1i(uniformCache.useMetalRoughness, mesh.useMetalRoughness ? 1 : 0);
 	glUniform1f(uniformCache.metallicFactor, mesh.metallicFactor);
 	glUniform1f(uniformCache.roughnessFactor, mesh.roughnessFactor);
@@ -4031,10 +4356,11 @@ void FiscionX::Model::drawSubMesh(
 	// realmente varia por Instance continua aqui:
 	glUniform1i(uniformCache.isAffectedByLight, inst->isAffectedByLight ? 1 : 0);
 	glUniform1i(uniformCache.acceptsShadows, inst->acceptsShadows ? 1 : 0);
+	glUniform1i(uniformCache.enableSSAO, inst->enableSSAO ? 1 : 0);
+	glUniform1i(uniformCache.enableSSR, inst->enableSSR ? 1 : 0);
 
 	// ── Ambient Occlusion Map (slot 9) ───────────────────────────────────────
 	bindTexIfChanged(9, mesh.aoTex); // mesh.aoTex == 0 é um bind válido (limpa o slot)
-	glUniform1i(uniformCache.aoTex, 9);
 	glUniform1i(uniformCache.hasAOMap, mesh.aoTex != 0 ? 1 : 0);
 	// ─────────────────────────────────────────────────────────────────────────
 
@@ -4147,7 +4473,9 @@ void FiscionX::Model::drawSubMeshInstanced(
 	const std::vector<float>& instanceData,
 	GLsizei instanceCount,
 	bool isAffectedByLight,
-	bool acceptsShadows
+	bool acceptsShadows,
+	bool enableSSAO,
+	bool enableSSR
 ) {
 	if (instanceCount <= 0) return;
 
@@ -4169,37 +4497,38 @@ void FiscionX::Model::drawSubMeshInstanced(
 	glUniform1f(uniformCache.alphaCutoff, mesh.alphaCutoff);
 	glUniformMatrix4fv(uniformCache.lightSpaceMatrix, 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
 
+	// OPTIM: sampler UNIT uniforms (baseColorTex/normalMapTex/glossinessTex/
+	// specularF0Tex/metallicTex/aoTex) are now set once in ensureUniformCache
+	// when the shader changes — see the comment there. bindTexIfChanged (the
+	// actual, per-batch texture bind) stays unchanged.
 	bindTexIfChanged(0, mesh.baseColorTex);
-	glUniform1i(uniformCache.baseColorTex, 0);
 
 	bindTexIfChanged(1, mesh.normalMapTex);
-	glUniform1i(uniformCache.normalMapTex, 1);
 	glUniform1i(uniformCache.hasNormalMap, mesh.normalMapTex != 0 ? 1 : 0);
 
 	// shadowMap (slot 2) already bound once per Model::draw() in uploadPerDrawUniforms.
 
 	bindTexIfChanged(3, mesh.glossinessTex);
-	glUniform1i(uniformCache.glossinessTex, 3);
 	glUniform1i(uniformCache.hasGlossinessMap, mesh.glossinessTex != 0 ? 1 : 0);
 	glUniform1i(uniformCache.glossinessInAlphaOfSpecular, mesh.glossinessInAlphaOfSpecular ? 1 : 0);
 
 	bindTexIfChanged(4, mesh.specularF0Tex);
-	glUniform1i(uniformCache.specularF0Tex, 4);
 	glUniform1i(uniformCache.hasSpecularF0Map, mesh.specularF0Tex != 0 ? 1 : 0);
 
 	bindTexIfChanged(5, mesh.metallicTex);
-	glUniform1i(uniformCache.metallicTex, 5);
 	glUniform1i(uniformCache.useMetalRoughness, mesh.useMetalRoughness ? 1 : 0);
 	glUniform1f(uniformCache.metallicFactor, mesh.metallicFactor);
 	glUniform1f(uniformCache.roughnessFactor, mesh.roughnessFactor);
 
-	// isAffectedByLight/acceptsShadows are uniforms, constant for the whole batch
-	// (the caller only groups instances that share both flags into one batch).
+	// isAffectedByLight/acceptsShadows/enableSSAO/enableSSR are uniforms,
+	// constant for the whole batch (the caller only groups instances that
+	// share all four flags into one batch).
 	glUniform1i(uniformCache.isAffectedByLight, isAffectedByLight ? 1 : 0);
 	glUniform1i(uniformCache.acceptsShadows, acceptsShadows ? 1 : 0);
+	glUniform1i(uniformCache.enableSSAO, enableSSAO ? 1 : 0);
+	glUniform1i(uniformCache.enableSSR, enableSSR ? 1 : 0);
 
 	bindTexIfChanged(9, mesh.aoTex);
-	glUniform1i(uniformCache.aoTex, 9);
 	glUniform1i(uniformCache.hasAOMap, mesh.aoTex != 0 ? 1 : 0);
 
 	uploadInstanceStream(vao, instanceVBORef, instanceData);
@@ -4230,7 +4559,9 @@ void FiscionX::Model::drawSubMeshInstancedCompact(
 	const std::vector<float>& instanceData,
 	GLsizei instanceCount,
 	bool isAffectedByLight,
-	bool acceptsShadows
+	bool acceptsShadows,
+	bool enableSSAO,
+	bool enableSSR
 ) {
 	if (instanceCount <= 0) return;
 
@@ -4252,35 +4583,33 @@ void FiscionX::Model::drawSubMeshInstancedCompact(
 	glUniform1f(uniformCache.alphaCutoff, mesh.alphaCutoff);
 	glUniformMatrix4fv(uniformCache.lightSpaceMatrix, 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
 
+	// OPTIM: sampler UNIT uniforms are now set once in ensureUniformCache when
+	// the shader changes — see the comment there.
 	bindTexIfChanged(0, mesh.baseColorTex);
-	glUniform1i(uniformCache.baseColorTex, 0);
 
 	bindTexIfChanged(1, mesh.normalMapTex);
-	glUniform1i(uniformCache.normalMapTex, 1);
 	glUniform1i(uniformCache.hasNormalMap, mesh.normalMapTex != 0 ? 1 : 0);
 
 	// shadowMap (slot 2) already bound once per Model::draw() in uploadPerDrawUniforms.
 
 	bindTexIfChanged(3, mesh.glossinessTex);
-	glUniform1i(uniformCache.glossinessTex, 3);
 	glUniform1i(uniformCache.hasGlossinessMap, mesh.glossinessTex != 0 ? 1 : 0);
 	glUniform1i(uniformCache.glossinessInAlphaOfSpecular, mesh.glossinessInAlphaOfSpecular ? 1 : 0);
 
 	bindTexIfChanged(4, mesh.specularF0Tex);
-	glUniform1i(uniformCache.specularF0Tex, 4);
 	glUniform1i(uniformCache.hasSpecularF0Map, mesh.specularF0Tex != 0 ? 1 : 0);
 
 	bindTexIfChanged(5, mesh.metallicTex);
-	glUniform1i(uniformCache.metallicTex, 5);
 	glUniform1i(uniformCache.useMetalRoughness, mesh.useMetalRoughness ? 1 : 0);
 	glUniform1f(uniformCache.metallicFactor, mesh.metallicFactor);
 	glUniform1f(uniformCache.roughnessFactor, mesh.roughnessFactor);
 
 	glUniform1i(uniformCache.isAffectedByLight, isAffectedByLight ? 1 : 0);
 	glUniform1i(uniformCache.acceptsShadows, acceptsShadows ? 1 : 0);
+	glUniform1i(uniformCache.enableSSAO, enableSSAO ? 1 : 0);
+	glUniform1i(uniformCache.enableSSR, enableSSR ? 1 : 0);
 
 	bindTexIfChanged(9, mesh.aoTex);
-	glUniform1i(uniformCache.aoTex, 9);
 	glUniform1i(uniformCache.hasAOMap, mesh.aoTex != 0 ? 1 : 0);
 
 	uploadInstanceStreamCompact(vao, instanceVBORef, instanceData);
@@ -4333,11 +4662,14 @@ void FiscionX::Model::rebuildGPUCullingBuffersIfNeeded() {
 	// fIdx grouping is what normally lets these differ per instance).
 	bool light0 = instances[0].isAffectedByLight;
 	bool shadow0 = instances[0].acceptsShadows;
+	bool ssao0 = instances[0].enableSSAO;
+	bool ssr0 = instances[0].enableSSR;
 	for (const auto& inst : instances) {
-		if (inst.isAffectedByLight != light0 || inst.acceptsShadows != shadow0) {
+		if (inst.isAffectedByLight != light0 || inst.acceptsShadows != shadow0 ||
+			inst.enableSSAO != ssao0 || inst.enableSSR != ssr0) {
 			gpuCullingSupported = false;
 			std::cerr << "WARN 0x021: Model::useGPUCulling requires every Instance to share "
-				"isAffectedByLight/acceptsShadows -- falling back to CPU culling for this Model.\n";
+				"isAffectedByLight/acceptsShadows/enableSSAO/enableSSR -- falling back to CPU culling for this Model.\n";
 			return;
 		}
 	}
@@ -4510,6 +4842,8 @@ void FiscionX::Model::drawInstancedGPUCulled(const glm::vec4 frustumPlanes[6], c
 	glUniformMatrix4fv(uniformCache.lightSpaceMatrix, 1, GL_FALSE, glm::value_ptr(lightSpaceMatrix));
 	glUniform1i(uniformCache.isAffectedByLight, instances[0].isAffectedByLight ? 1 : 0);
 	glUniform1i(uniformCache.acceptsShadows, instances[0].acceptsShadows ? 1 : 0);
+	glUniform1i(uniformCache.enableSSAO, instances[0].enableSSAO ? 1 : 0);
+	glUniform1i(uniformCache.enableSSR, instances[0].enableSSR ? 1 : 0);
 
 	glDisable(GL_BLEND);
 	glEnable(GL_DEPTH_TEST);
@@ -4522,25 +4856,21 @@ void FiscionX::Model::drawInstancedGPUCulled(const glm::vec4 frustumPlanes[6], c
 		if (mesh.doubleSided) glDisable(GL_CULL_FACE);
 		else { glEnable(GL_CULL_FACE); glCullFace(GL_BACK); }
 
+		// OPTIM: sampler UNIT uniforms are now set once in ensureUniformCache
+		// when the shader changes — see the comment there.
 		bindTexIfChanged(0, mesh.baseColorTex);
-		glUniform1i(uniformCache.baseColorTex, 0);
 		bindTexIfChanged(1, mesh.normalMapTex);
-		glUniform1i(uniformCache.normalMapTex, 1);
 		glUniform1i(uniformCache.hasNormalMap, mesh.normalMapTex != 0 ? 1 : 0);
 		bindTexIfChanged(3, mesh.glossinessTex);
-		glUniform1i(uniformCache.glossinessTex, 3);
 		glUniform1i(uniformCache.hasGlossinessMap, mesh.glossinessTex != 0 ? 1 : 0);
 		glUniform1i(uniformCache.glossinessInAlphaOfSpecular, mesh.glossinessInAlphaOfSpecular ? 1 : 0);
 		bindTexIfChanged(4, mesh.specularF0Tex);
-		glUniform1i(uniformCache.specularF0Tex, 4);
 		glUniform1i(uniformCache.hasSpecularF0Map, mesh.specularF0Tex != 0 ? 1 : 0);
 		bindTexIfChanged(5, mesh.metallicTex);
-		glUniform1i(uniformCache.metallicTex, 5);
 		glUniform1i(uniformCache.useMetalRoughness, mesh.useMetalRoughness ? 1 : 0);
 		glUniform1f(uniformCache.metallicFactor, mesh.metallicFactor);
 		glUniform1f(uniformCache.roughnessFactor, mesh.roughnessFactor);
 		bindTexIfChanged(9, mesh.aoTex);
-		glUniform1i(uniformCache.aoTex, 9);
 		glUniform1i(uniformCache.hasAOMap, mesh.aoTex != 0 ? 1 : 0);
 		};
 
@@ -4603,6 +4933,9 @@ void FiscionX::Model::drawSubMeshInstancedDepth(
 		s_diLocAlphaCutoff = glGetUniformLocation(shader, "alphaCutoff");
 		s_diLocBaseTex = glGetUniformLocation(shader, "baseColorTex");
 		s_diLocTransFactor = glGetUniformLocation(shader, "transmissionFactor");
+		// OPTIM: baseColorTex's VALUE (texture unit 0) never changes for this
+		// shader — set it once here instead of on every call.
+		if (s_diLocBaseTex != -1) glUniform1i(s_diLocBaseTex, 0);
 	}
 
 	glEnable(GL_DEPTH_TEST);
@@ -4621,7 +4954,6 @@ void FiscionX::Model::drawSubMeshInstancedDepth(
 	if (s_diLocTransFactor != -1) glUniform1f(s_diLocTransFactor, mesh.transmissionFactor);
 	if (s_diLocBaseTex != -1 && mesh.baseColorTex != 0) {
 		bindTexIfChanged(0, mesh.baseColorTex);
-		glUniform1i(s_diLocBaseTex, 0);
 	}
 
 	if (compact) uploadInstanceStreamCompact(vao, instanceVBORef, instanceData);
@@ -5128,7 +5460,7 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 			// keeping their already-grown capacity instead of reallocating it.
 			if (mesh.colorBatchScratch.size() != (size_t)numLODSlots) {
 				mesh.colorBatchScratch.assign(numLODSlots, {});
-				mesh.colorBatchCountScratch.assign(numLODSlots, { 0, 0, 0, 0 });
+				mesh.colorBatchCountScratch.assign(numLODSlots, {}); // {} zero-inits all 16 slots
 			}
 			auto& batchData = mesh.colorBatchScratch;
 			auto& batchCount = mesh.colorBatchCountScratch;
@@ -5152,7 +5484,11 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 				}
 
 				int lodSlot = activeLOD + 1;
-				int fIdx = (inst.isAffectedByLight ? 2 : 0) + (inst.acceptsShadows ? 1 : 0);
+				// FEATURE: fIdx now packs 4 booleans instead of 2, so instances only
+				// batch together (and thus share the same enableSSAO/enableSSR
+				// uniforms — see drawSubMeshInstanced/Compact) when all four agree.
+				int fIdx = (inst.isAffectedByLight ? 8 : 0) + (inst.acceptsShadows ? 4 : 0)
+					+ (inst.enableSSAO ? 2 : 0) + (inst.enableSSR ? 1 : 0);
 				std::vector<float>& buf = batchData[lodSlot][fIdx];
 
 				if (useCompactInstancing) {
@@ -5198,11 +5534,13 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 
 			for (int lodSlot = 0; lodSlot < numLODSlots; ++lodSlot) {
 				int activeLOD = lodSlot - 1;
-				for (int fIdx = 0; fIdx < 4; ++fIdx) {
+				for (int fIdx = 0; fIdx < 16; ++fIdx) {
 					GLsizei count = (GLsizei)batchCount[lodSlot][fIdx];
 					if (count <= 0) continue;
-					bool isAffectedByLight = (fIdx & 2) != 0;
-					bool acceptsShadows = (fIdx & 1) != 0;
+					bool isAffectedByLight = (fIdx & 8) != 0;
+					bool acceptsShadows = (fIdx & 4) != 0;
+					bool enableSSAO = (fIdx & 2) != 0;
+					bool enableSSR = (fIdx & 1) != 0;
 					std::vector<float>& data = batchData[lodSlot][fIdx];
 
 					if (activeLOD >= 0 && activeLOD < (int)mesh.lodLevels.size()) {
@@ -5216,21 +5554,21 @@ void FiscionX::Model::draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLu
 						// artifact).
 						if (useCompactInstancing) {
 							drawSubMeshInstancedCompact(mesh, effectiveShader, lod.vao, lod.instanceVBO, lod.indexType, (GLsizei)lod.indexCount,
-								lightSpaceMatrix, data, count, isAffectedByLight, acceptsShadows);
+								lightSpaceMatrix, data, count, isAffectedByLight, acceptsShadows, enableSSAO, enableSSR);
 						}
 						else {
 							drawSubMeshInstanced(mesh, effectiveShader, lod.vao, lod.instanceVBO, lod.indexType, (GLsizei)lod.indexCount,
-								lightSpaceMatrix, data, count, isAffectedByLight, acceptsShadows);
+								lightSpaceMatrix, data, count, isAffectedByLight, acceptsShadows, enableSSAO, enableSSR);
 						}
 					}
 					else {
 						if (useCompactInstancing) {
 							drawSubMeshInstancedCompact(mesh, effectiveShader, mesh.vao, mesh.instanceVBO, mesh.indexType, (GLsizei)mesh.indexCount,
-								lightSpaceMatrix, data, count, isAffectedByLight, acceptsShadows);
+								lightSpaceMatrix, data, count, isAffectedByLight, acceptsShadows, enableSSAO, enableSSR);
 						}
 						else {
 							drawSubMeshInstanced(mesh, effectiveShader, mesh.vao, mesh.instanceVBO, mesh.indexType, (GLsizei)mesh.indexCount,
-								lightSpaceMatrix, data, count, isAffectedByLight, acceptsShadows);
+								lightSpaceMatrix, data, count, isAffectedByLight, acceptsShadows, enableSSAO, enableSSR);
 						}
 					}
 				}
@@ -6148,7 +6486,7 @@ FiscionX::Physics::Vehicle::Vehicle(FiscionX::Physics::Rigidbody* chassiBody) {
 
 void FiscionX::Physics::Vehicle::addWheel(FiscionX::Vector3 relativePosition, FiscionX::Vector3 wheelDirectionCS0, FiscionX::Vector3 wheelAxleCS,
 	float suspensionRestLength, float wheelRadius, bool isFrontWheel) {
-
+	
 	vehicle->addWheel(btVector3(relativePosition.x, relativePosition.y, relativePosition.z),
 		btVector3(wheelDirectionCS0.x, wheelDirectionCS0.y, wheelDirectionCS0.z),
 		btVector3(wheelAxleCS.x, wheelAxleCS.y, wheelAxleCS.z),
@@ -6503,6 +6841,14 @@ namespace {
 void FiscionX::Core::RenderAllShadowPasses(FiscionX::Mat4 view, FiscionX::Mat4 projection, FiscionX::Mat4 viewProj) {
 	float now = static_cast<float>(glfwGetTime());
 
+	// OPTIM: this loop only ever does anything for isSkinned Models (the
+	// `model->isSkinned` check used to sit INSIDE the per-instance loop, so
+	// every non-skinned Model — static props, trees, and especially grass/any
+	// useCompactInstancing Model with hundreds of thousands of instances —
+	// still paid for a full `for (auto& inst : model->instances)` walk every
+	// single frame just to immediately fail that check on each one. Skipping
+	// the whole Model up front when it isn't skinned turns that into a no-op
+	// for every non-skinned Model instead of an O(instances) walk.
 	for (auto& model : AllModels) {
 		if (!model->isSkinned) continue;
 		for (auto& inst : model->instances) {
@@ -6651,11 +6997,40 @@ void FiscionX::Core::SetCacheSettings(bool _enableShaderCache, bool _enableModel
 	FiscionX::Core::enableModelCache = _enableModelCache;
 }
 
+// --- MULTITHREADING ---
+
+void FiscionX::Core::InitThreadPool(unsigned int reservedThreadsForGL) {
+	if (WorkerPool) return; // already initialized
+	WorkerPool = new FiscionX::ThreadPool(reservedThreadsForGL);
+	std::cout << "FiscionX - Thread pool started with " << WorkerPool->WorkerCount()
+		<< " worker thread(s) (GL thread kept free)\n";
+}
+
+void FiscionX::Core::ShutdownThreadPool() {
+	if (!WorkerPool) return;
+	delete WorkerPool; // joins every worker thread
+	WorkerPool = nullptr;
+}
+
+void FiscionX::Core::RunOnGLThread(std::function<void()> task) {
+	GLQueue.Push(std::move(task));
+}
+
+void FiscionX::Core::FlushGLThreadTasks(size_t maxPerFrame) {
+	GLQueue.Flush(maxPerFrame);
+}
+
 void FiscionX::Core::NewWindow(int width, int height, const char* window_label) {
 	std::cout << "FiscionX - " << ENGINE_VERSION << std::endl;
 
 	SCREEN_WIDTH = width;
 	SCREEN_HEIGHT = height;
+
+	// Start the worker pool before anything else. This thread (the one calling
+	// NewWindow) is about to own the OpenGL context, so it's the reserved
+	// "GL thread" — every pool worker is a DIFFERENT hardware thread, automatically
+	// picking up whatever CPU-bound work gets submitted to it (see Model::update()).
+	InitThreadPool();
 
 	glfwInit();
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
@@ -6792,15 +7167,19 @@ void FiscionX::Core::NewWindow(int width, int height, const char* window_label) 
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, mainNormalRoughBuffer, 0);
 
-	// Textura de Metallic (G-buffer-lite, canal único) — usada pelo SSR composite para calcular
+	// Textura de Metallic (G-buffer-lite) — canal r usado pelo SSR composite para calcular
 	// o F0 físico do reflexo (dielétrico ~0.04 vs condutor/metal, banda larga). Antes o composite
 	// usava F0 dielétrico fixo pra qualquer material, então metais refletiam com a mesma
 	// intensidade "fraca de frente, forte só de raspão" de um plástico — fisicamente errado:
 	// metal não tem termo difuso, então o reflexo precisa carregar praticamente toda a resposta
 	// visual do material, com intensidade alta mesmo de frente (NdotV alto).
+	// FEATURE: canal g é uma máscara por instância (bit0 = Instance::enableSSAO, bit1 =
+	// Instance::enableSSR), escrita pelo `fragment` shader e lida por ssaoFragment/ssrFragment
+	// pra pular o efeito nos pixels de instâncias que o desligaram — ver comentário no campo
+	// mainMetallicBuffer em FiscionCore.h.
 	glGenTextures(1, &mainMetallicBuffer);
 	glBindTexture(GL_TEXTURE_2D, mainMetallicBuffer);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, w, h, 0, GL_RED, GL_FLOAT, NULL);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RG16F, w, h, 0, GL_RG, GL_FLOAT, NULL);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -6935,6 +7314,53 @@ void FiscionX::Core::NewWindow(int width, int height, const char* window_label) 
 	ssrBlurShader = LoadShader(postProcessVertex, ssrBlurFragment);
 	ssrCompositeShader = LoadShader(postProcessVertex, ssrCompositeFragment);
 
+	// === Volumetric Fog FBOs (same 3-stage shape as SSR just above) ===
+	glGenFramebuffers(1, &volumetricFogFBO);
+	glBindFramebuffer(GL_FRAMEBUFFER, volumetricFogFBO);
+
+	glGenTextures(1, &volumetricFogColorBuffer);
+	glBindTexture(GL_TEXTURE_2D, volumetricFogColorBuffer);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, NULL);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, volumetricFogColorBuffer, 0);
+
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	glGenFramebuffers(1, &volumetricFogBlurFBO);
+	glBindFramebuffer(GL_FRAMEBUFFER, volumetricFogBlurFBO);
+
+	glGenTextures(1, &volumetricFogBlurColorBuffer);
+	glBindTexture(GL_TEXTURE_2D, volumetricFogBlurColorBuffer);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, NULL);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, volumetricFogBlurColorBuffer, 0);
+
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	glGenFramebuffers(1, &volumetricFogCompositeFBO);
+	glBindFramebuffer(GL_FRAMEBUFFER, volumetricFogCompositeFBO);
+
+	glGenTextures(1, &volumetricFogCompositeColorBuffer);
+	glBindTexture(GL_TEXTURE_2D, volumetricFogCompositeColorBuffer);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, volumetricFogCompositeColorBuffer, 0);
+
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	volumetricFogShader = LoadShader(postProcessVertex, volumetricFogFragment);
+	volumetricFogBlurShader = LoadShader(postProcessVertex, volumetricFogBlurFragment);
+	volumetricFogCompositeShader = LoadShader(postProcessVertex, volumetricFogCompositeFragment);
+
 
 	std::mt19937 ssaoRng(12345);
 	std::uniform_real_distribution<float> ssaoDist(-1.0f, 1.0f);
@@ -7003,6 +7429,12 @@ void FiscionX::Core::ClockTick() {
 		sound.updateValues();
 	}
 
+	// Drain callbacks background worker threads queued up for the GL thread (e.g.
+	// uploads finishing after an async load). This thread owns the OpenGL context,
+	// so this is the only safe place/thread to run them. Cap it so a burst of
+	// completions in one frame can't spike frame time; the rest run next frame(s).
+	FlushGLThreadTasks(/*maxPerFrame=*/8);
+
 	if (currentFrame - lastFPSTime >= 1.0f) {
 		std::cout << "FPS: " << FPS << std::endl;
 		FPS = 0;
@@ -7037,6 +7469,13 @@ static void RecreatePostProcessBuffers(int w, int h) {
 	if (Core::ssrCompositeFBO)      glDeleteFramebuffers(1, &Core::ssrCompositeFBO);
 	if (Core::ssrCompositeColorBuffer) glDeleteTextures(1, &Core::ssrCompositeColorBuffer);
 
+	if (Core::volumetricFogFBO)          glDeleteFramebuffers(1, &Core::volumetricFogFBO);
+	if (Core::volumetricFogColorBuffer)  glDeleteTextures(1, &Core::volumetricFogColorBuffer);
+	if (Core::volumetricFogBlurFBO)      glDeleteFramebuffers(1, &Core::volumetricFogBlurFBO);
+	if (Core::volumetricFogBlurColorBuffer) glDeleteTextures(1, &Core::volumetricFogBlurColorBuffer);
+	if (Core::volumetricFogCompositeFBO) glDeleteFramebuffers(1, &Core::volumetricFogCompositeFBO);
+	if (Core::volumetricFogCompositeColorBuffer) glDeleteTextures(1, &Core::volumetricFogCompositeColorBuffer);
+
 	// --- main FBO (color + normal/rough + metallic + depth-stencil) ---
 	glGenFramebuffers(1, &Core::mainFBO);
 	glBindFramebuffer(GL_FRAMEBUFFER, Core::mainFBO);
@@ -7057,9 +7496,11 @@ static void RecreatePostProcessBuffers(int w, int h) {
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, Core::mainNormalRoughBuffer, 0);
 
+	// RG16F: r = metallic, g = per-instance SSAO/SSR mask — see comment on the
+	// original creation site above (Core::NewWindow) and on the field in FiscionCore.h.
 	glGenTextures(1, &Core::mainMetallicBuffer);
 	glBindTexture(GL_TEXTURE_2D, Core::mainMetallicBuffer);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, w, h, 0, GL_RED, GL_FLOAT, NULL);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RG16F, w, h, 0, GL_RG, GL_FLOAT, NULL);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -7145,6 +7586,43 @@ static void RecreatePostProcessBuffers(int w, int h) {
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, Core::ssrCompositeColorBuffer, 0);
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	// --- Volumetric Fog ---
+	glGenFramebuffers(1, &Core::volumetricFogFBO);
+	glBindFramebuffer(GL_FRAMEBUFFER, Core::volumetricFogFBO);
+	glGenTextures(1, &Core::volumetricFogColorBuffer);
+	glBindTexture(GL_TEXTURE_2D, Core::volumetricFogColorBuffer);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, NULL);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, Core::volumetricFogColorBuffer, 0);
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	glGenFramebuffers(1, &Core::volumetricFogBlurFBO);
+	glBindFramebuffer(GL_FRAMEBUFFER, Core::volumetricFogBlurFBO);
+	glGenTextures(1, &Core::volumetricFogBlurColorBuffer);
+	glBindTexture(GL_TEXTURE_2D, Core::volumetricFogBlurColorBuffer);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, w, h, 0, GL_RGBA, GL_FLOAT, NULL);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, Core::volumetricFogBlurColorBuffer, 0);
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	glGenFramebuffers(1, &Core::volumetricFogCompositeFBO);
+	glBindFramebuffer(GL_FRAMEBUFFER, Core::volumetricFogCompositeFBO);
+	glGenTextures(1, &Core::volumetricFogCompositeColorBuffer);
+	glBindTexture(GL_TEXTURE_2D, Core::volumetricFogCompositeColorBuffer);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, Core::volumetricFogCompositeColorBuffer, 0);
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
@@ -7514,6 +7992,11 @@ void FiscionX::Core::Terminate() {
 
 	// ========= WINDOW =========
 	glfwTerminate();
+
+	// ========= THREAD POOL =========
+	// Joins every worker thread. Done last, after every GL resource is already
+	// freed, since workers never touch GL themselves (see FiscionThreadPool.h).
+	ShutdownThreadPool();
 }
 
 // ===================== DRAW ========================
@@ -7582,6 +8065,7 @@ void FiscionX::Core::Draw::PostProcessing(FiscionX::Mat4 viewProj, FiscionX::Lig
 	static GLint  s_ssaoLocNear = -1, s_ssaoLocFar = -1, s_ssaoLocRadius = -1;
 	static GLint  s_ssaoLocBias = -1, s_ssaoLocIntensity = -1, s_ssaoLocGiStrength = -1;
 	static GLint  s_ssaoLocDepthTex = -1, s_ssaoLocColorTex = -1, s_ssaoLocNoiseTex = -1;
+	static GLint  s_ssaoLocMaskTex = -1;
 	static constexpr int MAX_SSAO_SAMPLES = 64;
 	static GLint  s_ssaoLocSamples[MAX_SSAO_SAMPLES];
 
@@ -7599,6 +8083,7 @@ void FiscionX::Core::Draw::PostProcessing(FiscionX::Mat4 viewProj, FiscionX::Lig
 		s_ssaoLocDepthTex = glGetUniformLocation(FiscionX::Core::ssaoShader, "depthTexture");
 		s_ssaoLocColorTex = glGetUniformLocation(FiscionX::Core::ssaoShader, "colorTexture");
 		s_ssaoLocNoiseTex = glGetUniformLocation(FiscionX::Core::ssaoShader, "noiseTex");
+		s_ssaoLocMaskTex = glGetUniformLocation(FiscionX::Core::ssaoShader, "maskTexture");
 		char buf[32];
 		for (int i = 0; i < MAX_SSAO_SAMPLES; ++i) {
 			snprintf(buf, sizeof(buf), "samples[%d]", i);
@@ -7609,10 +8094,12 @@ void FiscionX::Core::Draw::PostProcessing(FiscionX::Mat4 viewProj, FiscionX::Lig
 	// OPTIM: cache uniform locations for ssaoBlurShader (queried once per shader handle)
 	static GLuint s_ssaoBlurCachedShader = 0;
 	static GLint  s_ssaoBlurLocScreenSize = -1, s_ssaoBlurLocInput = -1;
+	static GLint  s_ssaoBlurLocMaskTex = -1;
 	if (s_ssaoBlurCachedShader != FiscionX::Core::ssaoBlurShader) {
 		s_ssaoBlurCachedShader = FiscionX::Core::ssaoBlurShader;
 		s_ssaoBlurLocScreenSize = glGetUniformLocation(FiscionX::Core::ssaoBlurShader, "screenSize");
 		s_ssaoBlurLocInput = glGetUniformLocation(FiscionX::Core::ssaoBlurShader, "ssaoInput");
+		s_ssaoBlurLocMaskTex = glGetUniformLocation(FiscionX::Core::ssaoBlurShader, "maskTexture");
 	}
 
 	// OPTIM: cache uniform locations for ssrShader (queried once per shader handle)
@@ -7622,6 +8109,7 @@ void FiscionX::Core::Draw::PostProcessing(FiscionX::Mat4 viewProj, FiscionX::Lig
 	static GLint  s_ssrLocMaxDist = -1, s_ssrLocThickness = -1, s_ssrLocMaxSteps = -1;
 	static GLint  s_ssrLocBinarySteps = -1, s_ssrLocStride = -1, s_ssrLocEdgeFade = -1;
 	static GLint  s_ssrLocDepthTex = -1, s_ssrLocColorTex = -1, s_ssrLocNormalRoughTex = -1;
+	static GLint  s_ssrLocMaskTex = -1;
 	if (s_ssrCachedShader != FiscionX::Core::ssrShader) {
 		s_ssrCachedShader = FiscionX::Core::ssrShader;
 		s_ssrLocProj = glGetUniformLocation(FiscionX::Core::ssrShader, "projection");
@@ -7638,6 +8126,7 @@ void FiscionX::Core::Draw::PostProcessing(FiscionX::Mat4 viewProj, FiscionX::Lig
 		s_ssrLocDepthTex = glGetUniformLocation(FiscionX::Core::ssrShader, "depthTexture");
 		s_ssrLocColorTex = glGetUniformLocation(FiscionX::Core::ssrShader, "colorTexture");
 		s_ssrLocNormalRoughTex = glGetUniformLocation(FiscionX::Core::ssrShader, "normalRoughTexture");
+		s_ssrLocMaskTex = glGetUniformLocation(FiscionX::Core::ssrShader, "maskTexture");
 	}
 
 	// OPTIM: cache uniform locations for ssrBlurShader (queried once per shader handle)
@@ -7666,6 +8155,78 @@ void FiscionX::Core::Draw::PostProcessing(FiscionX::Mat4 viewProj, FiscionX::Lig
 		s_ssrCompLocDepthTex = glGetUniformLocation(FiscionX::Core::ssrCompositeShader, "depthTexture");
 		s_ssrCompLocInvProj = glGetUniformLocation(FiscionX::Core::ssrCompositeShader, "invProjection");
 		s_ssrCompLocMetallicTex = glGetUniformLocation(FiscionX::Core::ssrCompositeShader, "metallicTexture");
+	}
+
+	// OPTIM: cache uniform locations for volumetricFogShader (queried once per shader handle)
+	static GLuint s_vfCachedShader = 0;
+	static GLint  s_vfLocDepthTex = -1, s_vfLocShadowMapDir = -1;
+	static GLint  s_vfLocInvProj = -1, s_vfLocInvView = -1, s_vfLocView = -1;
+	static GLint  s_vfLocCamPos = -1, s_vfLocNear = -1, s_vfLocFar = -1;
+	static GLint  s_vfLocFogColor = -1, s_vfLocDensity = -1, s_vfLocHeightFalloff = -1, s_vfLocHeightStart = -1;
+	static GLint  s_vfLocAnisotropy = -1, s_vfLocScattering = -1, s_vfLocAmbient = -1, s_vfLocMaxDistance = -1;
+	static GLint  s_vfLocSteps = -1, s_vfLocNoiseScale = -1, s_vfLocNoiseSpeed = -1, s_vfLocNoiseIntensity = -1, s_vfLocTime = -1;
+	static GLint  s_vfLocLightDir = -1, s_vfLocLightColor = -1, s_vfLocLightIntensity = -1, s_vfLocHasDirLight = -1;
+	static GLint  s_vfLocCascadeCount = -1;
+	static GLint  s_vfLocCascadePlaneDistances[16];
+	static GLint  s_vfLocCascadeLightSpaceMatrices[16];
+	if (s_vfCachedShader != FiscionX::Core::volumetricFogShader) {
+		s_vfCachedShader = FiscionX::Core::volumetricFogShader;
+		s_vfLocDepthTex = glGetUniformLocation(FiscionX::Core::volumetricFogShader, "depthTexture");
+		s_vfLocShadowMapDir = glGetUniformLocation(FiscionX::Core::volumetricFogShader, "shadowMapDir");
+		s_vfLocInvProj = glGetUniformLocation(FiscionX::Core::volumetricFogShader, "invProjection");
+		s_vfLocInvView = glGetUniformLocation(FiscionX::Core::volumetricFogShader, "invView");
+		s_vfLocView = glGetUniformLocation(FiscionX::Core::volumetricFogShader, "view");
+		s_vfLocCamPos = glGetUniformLocation(FiscionX::Core::volumetricFogShader, "camPos");
+		s_vfLocNear = glGetUniformLocation(FiscionX::Core::volumetricFogShader, "nearPlane");
+		s_vfLocFar = glGetUniformLocation(FiscionX::Core::volumetricFogShader, "farPlane");
+		s_vfLocFogColor = glGetUniformLocation(FiscionX::Core::volumetricFogShader, "fogColor");
+		s_vfLocDensity = glGetUniformLocation(FiscionX::Core::volumetricFogShader, "density");
+		s_vfLocHeightFalloff = glGetUniformLocation(FiscionX::Core::volumetricFogShader, "heightFalloff");
+		s_vfLocHeightStart = glGetUniformLocation(FiscionX::Core::volumetricFogShader, "heightStart");
+		s_vfLocAnisotropy = glGetUniformLocation(FiscionX::Core::volumetricFogShader, "anisotropy");
+		s_vfLocScattering = glGetUniformLocation(FiscionX::Core::volumetricFogShader, "scattering");
+		s_vfLocAmbient = glGetUniformLocation(FiscionX::Core::volumetricFogShader, "ambient");
+		s_vfLocMaxDistance = glGetUniformLocation(FiscionX::Core::volumetricFogShader, "maxDistance");
+		s_vfLocSteps = glGetUniformLocation(FiscionX::Core::volumetricFogShader, "steps");
+		s_vfLocNoiseScale = glGetUniformLocation(FiscionX::Core::volumetricFogShader, "noiseScale");
+		s_vfLocNoiseSpeed = glGetUniformLocation(FiscionX::Core::volumetricFogShader, "noiseSpeed");
+		s_vfLocNoiseIntensity = glGetUniformLocation(FiscionX::Core::volumetricFogShader, "noiseIntensity");
+		s_vfLocTime = glGetUniformLocation(FiscionX::Core::volumetricFogShader, "time");
+		s_vfLocLightDir = glGetUniformLocation(FiscionX::Core::volumetricFogShader, "lightDirWorld");
+		s_vfLocLightColor = glGetUniformLocation(FiscionX::Core::volumetricFogShader, "lightColor");
+		s_vfLocLightIntensity = glGetUniformLocation(FiscionX::Core::volumetricFogShader, "lightIntensity");
+		s_vfLocHasDirLight = glGetUniformLocation(FiscionX::Core::volumetricFogShader, "hasDirLight");
+		s_vfLocCascadeCount = glGetUniformLocation(FiscionX::Core::volumetricFogShader, "cascadeCount");
+		char buf[64];
+		for (int i = 0; i < 16; ++i) {
+			snprintf(buf, sizeof(buf), "cascadePlaneDistances[%d]", i);
+			s_vfLocCascadePlaneDistances[i] = glGetUniformLocation(FiscionX::Core::volumetricFogShader, buf);
+			snprintf(buf, sizeof(buf), "cascadeLightSpaceMatrices[%d]", i);
+			s_vfLocCascadeLightSpaceMatrices[i] = glGetUniformLocation(FiscionX::Core::volumetricFogShader, buf);
+		}
+	}
+
+	// OPTIM: cache uniform locations for volumetricFogBlurShader
+	static GLuint s_vfBlurCachedShader = 0;
+	static GLint  s_vfBlurLocInput = -1, s_vfBlurLocDepthTex = -1, s_vfBlurLocScreenSize = -1;
+	static GLint  s_vfBlurLocRadius = -1, s_vfBlurLocNear = -1, s_vfBlurLocFar = -1;
+	if (s_vfBlurCachedShader != FiscionX::Core::volumetricFogBlurShader) {
+		s_vfBlurCachedShader = FiscionX::Core::volumetricFogBlurShader;
+		s_vfBlurLocInput = glGetUniformLocation(FiscionX::Core::volumetricFogBlurShader, "fogInput");
+		s_vfBlurLocDepthTex = glGetUniformLocation(FiscionX::Core::volumetricFogBlurShader, "depthTexture");
+		s_vfBlurLocScreenSize = glGetUniformLocation(FiscionX::Core::volumetricFogBlurShader, "screenSize");
+		s_vfBlurLocRadius = glGetUniformLocation(FiscionX::Core::volumetricFogBlurShader, "blurRadius");
+		s_vfBlurLocNear = glGetUniformLocation(FiscionX::Core::volumetricFogBlurShader, "nearPlane");
+		s_vfBlurLocFar = glGetUniformLocation(FiscionX::Core::volumetricFogBlurShader, "farPlane");
+	}
+
+	// OPTIM: cache uniform locations for volumetricFogCompositeShader
+	static GLuint s_vfCompCachedShader = 0;
+	static GLint  s_vfCompLocSceneTex = -1, s_vfCompLocFogTex = -1;
+	if (s_vfCompCachedShader != FiscionX::Core::volumetricFogCompositeShader) {
+		s_vfCompCachedShader = FiscionX::Core::volumetricFogCompositeShader;
+		s_vfCompLocSceneTex = glGetUniformLocation(FiscionX::Core::volumetricFogCompositeShader, "sceneColorTexture");
+		s_vfCompLocFogTex = glGetUniformLocation(FiscionX::Core::volumetricFogCompositeShader, "fogTexture");
 	}
 
 	// OPTIM: cache uniform locations for godRaysShader (queried once per shader handle)
@@ -7734,6 +8295,10 @@ void FiscionX::Core::Draw::PostProcessing(FiscionX::Mat4 viewProj, FiscionX::Lig
 		glBindTexture(GL_TEXTURE_2D, FiscionX::Core::ssaoNoiseTex);
 		glUniform1i(s_ssaoLocNoiseTex, 2);
 
+		glActiveTexture(GL_TEXTURE3);
+		glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainMetallicBuffer);
+		glUniform1i(s_ssaoLocMaskTex, 3);
+
 		glBindVertexArray(FiscionX::Core::screenQuadVAO);
 		glDrawArrays(GL_TRIANGLES, 0, 6);
 		glBindVertexArray(0);
@@ -7748,6 +8313,10 @@ void FiscionX::Core::Draw::PostProcessing(FiscionX::Mat4 viewProj, FiscionX::Lig
 		glActiveTexture(GL_TEXTURE0);
 		glBindTexture(GL_TEXTURE_2D, FiscionX::Core::ssaoColorBuffer);
 		glUniform1i(s_ssaoBlurLocInput, 0);
+
+		glActiveTexture(GL_TEXTURE1);
+		glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainMetallicBuffer);
+		glUniform1i(s_ssaoBlurLocMaskTex, 1);
 
 		glBindVertexArray(FiscionX::Core::screenQuadVAO);
 		glDrawArrays(GL_TRIANGLES, 0, 6);
@@ -7807,6 +8376,10 @@ void FiscionX::Core::Draw::PostProcessing(FiscionX::Mat4 viewProj, FiscionX::Lig
 		glActiveTexture(GL_TEXTURE2);
 		glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainNormalRoughBuffer);
 		glUniform1i(s_ssrLocNormalRoughTex, 2);
+
+		glActiveTexture(GL_TEXTURE3);
+		glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainMetallicBuffer);
+		glUniform1i(s_ssrLocMaskTex, 3);
 
 		glBindVertexArray(FiscionX::Core::screenQuadVAO);
 		glDrawArrays(GL_TRIANGLES, 0, 6);
@@ -7883,6 +8456,147 @@ void FiscionX::Core::Draw::PostProcessing(FiscionX::Mat4 viewProj, FiscionX::Lig
 		// Restaura os dois draw buffers do mainFBO (mexido acima por glDrawBuffer), já que
 		// outros pontos do pipeline (ex.: o próximo frame, em ClearBackground) esperam que
 		// ATTACHMENT0 + ATTACHMENT1 estejam ambos ativos para limpar/escrever corretamente.
+		glBindFramebuffer(GL_FRAMEBUFFER, FiscionX::Core::mainFBO);
+		{
+			GLenum mainDrawBuffers[3] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2 };
+			glDrawBuffers(3, mainDrawBuffers);
+		}
+	}
+
+	// ===================== VOLUMETRIC FOG =====================
+	// Runs after SSR (so the fog sits "in front of" reflections, like real fog would)
+	// and before God Rays (which then reads a mainColorBuffer that already includes
+	// the fog, so the two effects don't fight over who owns the sky/haze look).
+	if (FiscionX::Core::VOLUMETRIC_FOG_ENABLED) {
+		glm::mat4 viewMat = glm::mat4(FiscionX::Core::Camera.GetView());
+		glm::mat4 invViewMat = glm::inverse(viewMat);
+
+		int dirLightIdx = -1;
+		for (size_t i = 0; i < FiscionX::Core::AllLights.size(); ++i) {
+			if (FiscionX::Core::AllLights[i] == dirLight) {
+				dirLightIdx = (int)i;
+				break;
+			}
+		}
+		bool hasShadowData = (dirLightIdx != -1) && (dirLightIdx < (int)FiscionX::Core::AllShadowMaps.size());
+
+		// --- 1) raymarch (raw) ---
+		glBindFramebuffer(GL_FRAMEBUFFER, FiscionX::Core::volumetricFogFBO);
+		glViewport(0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
+
+		glUseProgram(FiscionX::Core::volumetricFogShader);
+
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainDepthBuffer);
+		glUniform1i(s_vfLocDepthTex, 0);
+
+		glUniformMatrix4fv(s_vfLocInvProj, 1, GL_FALSE, glm::value_ptr(invProjection));
+		glUniformMatrix4fv(s_vfLocInvView, 1, GL_FALSE, glm::value_ptr(invViewMat));
+		glUniformMatrix4fv(s_vfLocView, 1, GL_FALSE, glm::value_ptr(viewMat));
+		glUniform3f(s_vfLocCamPos, FiscionX::Core::Camera.position.x, FiscionX::Core::Camera.position.y, FiscionX::Core::Camera.position.z);
+		glUniform1f(s_vfLocNear, FiscionX::Core::NEAR_PLANE);
+		glUniform1f(s_vfLocFar, FiscionX::Core::FAR_PLANE);
+
+		glUniform3f(s_vfLocFogColor, FiscionX::Core::VOLUMETRIC_FOG_COLOR.x, FiscionX::Core::VOLUMETRIC_FOG_COLOR.y, FiscionX::Core::VOLUMETRIC_FOG_COLOR.z);
+		glUniform1f(s_vfLocDensity, FiscionX::Core::VOLUMETRIC_FOG_DENSITY);
+		glUniform1f(s_vfLocHeightFalloff, FiscionX::Core::VOLUMETRIC_FOG_HEIGHT_FALLOFF);
+		glUniform1f(s_vfLocHeightStart, FiscionX::Core::VOLUMETRIC_FOG_HEIGHT_START);
+		glUniform1f(s_vfLocAnisotropy, FiscionX::Core::VOLUMETRIC_FOG_ANISOTROPY);
+		glUniform1f(s_vfLocScattering, FiscionX::Core::VOLUMETRIC_FOG_SCATTERING);
+		glUniform1f(s_vfLocAmbient, FiscionX::Core::VOLUMETRIC_FOG_AMBIENT);
+		glUniform1f(s_vfLocMaxDistance, FiscionX::Core::VOLUMETRIC_FOG_MAX_DISTANCE);
+		glUniform1i(s_vfLocSteps, FiscionX::Core::VOLUMETRIC_FOG_STEPS);
+		glUniform1f(s_vfLocNoiseScale, FiscionX::Core::VOLUMETRIC_FOG_NOISE_SCALE);
+		glUniform1f(s_vfLocNoiseSpeed, FiscionX::Core::VOLUMETRIC_FOG_NOISE_SPEED);
+		glUniform1f(s_vfLocNoiseIntensity, FiscionX::Core::VOLUMETRIC_FOG_NOISE_INTENSITY);
+		glUniform1f(s_vfLocTime, (float)glfwGetTime());
+
+		if (dirLight != nullptr) {
+			glUniform3f(s_vfLocLightDir, dirLight->direction.x, dirLight->direction.y, dirLight->direction.z);
+			glUniform3f(s_vfLocLightColor, dirLight->color.x, dirLight->color.y, dirLight->color.z);
+			glUniform1f(s_vfLocLightIntensity, dirLight->intensity);
+			glUniform1i(s_vfLocHasDirLight, 1);
+		}
+		else {
+			glUniform1i(s_vfLocHasDirLight, 0);
+		}
+
+		if (hasShadowData) {
+			const FiscionX::ShadowMap& sm = FiscionX::Core::AllShadowMaps[dirLightIdx];
+
+			glActiveTexture(GL_TEXTURE1);
+			glBindTexture(GL_TEXTURE_2D_ARRAY, sm.depthMap);
+			glUniform1i(s_vfLocShadowMapDir, 1);
+
+			int cascadeN = std::min((int)FiscionX::Core::shadowCascadeLevels.size(), 16);
+			glUniform1i(s_vfLocCascadeCount, cascadeN);
+			for (int i = 0; i < cascadeN; ++i) {
+				glUniform1f(s_vfLocCascadePlaneDistances[i], FiscionX::Core::shadowCascadeLevels[i]);
+			}
+			int matN = std::min((int)sm.cascadeLightSpaceMatrices.size(), 16);
+			for (int i = 0; i < matN; ++i) {
+				glUniformMatrix4fv(s_vfLocCascadeLightSpaceMatrices[i], 1, GL_FALSE, glm::value_ptr(sm.cascadeLightSpaceMatrices[i]));
+			}
+		}
+		else {
+			glUniform1i(s_vfLocCascadeCount, 0);
+		}
+
+		glBindVertexArray(FiscionX::Core::screenQuadVAO);
+		glDrawArrays(GL_TRIANGLES, 0, 6);
+		glBindVertexArray(0);
+
+		// --- 2) depth-aware blur ---
+		glBindFramebuffer(GL_FRAMEBUFFER, FiscionX::Core::volumetricFogBlurFBO);
+		glViewport(0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
+
+		glUseProgram(FiscionX::Core::volumetricFogBlurShader);
+		glUniform2f(s_vfBlurLocScreenSize, (float)FiscionX::Core::SCREEN_WIDTH, (float)FiscionX::Core::SCREEN_HEIGHT);
+		glUniform1f(s_vfBlurLocRadius, FiscionX::Core::VOLUMETRIC_FOG_BLUR_RADIUS);
+		glUniform1f(s_vfBlurLocNear, FiscionX::Core::NEAR_PLANE);
+		glUniform1f(s_vfBlurLocFar, FiscionX::Core::FAR_PLANE);
+
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, FiscionX::Core::volumetricFogColorBuffer);
+		glUniform1i(s_vfBlurLocInput, 0);
+
+		glActiveTexture(GL_TEXTURE1);
+		glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainDepthBuffer);
+		glUniform1i(s_vfBlurLocDepthTex, 1);
+
+		glBindVertexArray(FiscionX::Core::screenQuadVAO);
+		glDrawArrays(GL_TRIANGLES, 0, 6);
+		glBindVertexArray(0);
+
+		// --- 3) composite (scene * transmittance + inscatter) into a dedicated FBO,
+		// then blit back into mainColorBuffer — same reasoning as the SSR composite
+		// step above: mainColorBuffer can't be read and written in the same draw call.
+		glBindFramebuffer(GL_FRAMEBUFFER, FiscionX::Core::volumetricFogCompositeFBO);
+		glViewport(0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT);
+
+		glUseProgram(FiscionX::Core::volumetricFogCompositeShader);
+
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, FiscionX::Core::mainColorBuffer);
+		glUniform1i(s_vfCompLocSceneTex, 0);
+
+		glActiveTexture(GL_TEXTURE1);
+		glBindTexture(GL_TEXTURE_2D, FiscionX::Core::volumetricFogBlurColorBuffer);
+		glUniform1i(s_vfCompLocFogTex, 1);
+
+		glBindVertexArray(FiscionX::Core::screenQuadVAO);
+		glDrawArrays(GL_TRIANGLES, 0, 6);
+		glBindVertexArray(0);
+
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, FiscionX::Core::volumetricFogCompositeFBO);
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, FiscionX::Core::mainFBO);
+		glReadBuffer(GL_COLOR_ATTACHMENT0);
+		glDrawBuffer(GL_COLOR_ATTACHMENT0);
+		glBlitFramebuffer(
+			0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT,
+			0, 0, FiscionX::Core::SCREEN_WIDTH, FiscionX::Core::SCREEN_HEIGHT,
+			GL_COLOR_BUFFER_BIT, GL_NEAREST
+		);
 		glBindFramebuffer(GL_FRAMEBUFFER, FiscionX::Core::mainFBO);
 		{
 			GLenum mainDrawBuffers[3] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2 };

@@ -311,412 +311,13 @@ void main() {
 // For FiscionX High Quality Render Pipeline
 const char* fragment = R"(
 #version 330 core
-const int LIGHT_DIRECTIONAL = 0;
-const int LIGHT_POINT = 1;
-const int LIGHT_SPOT = 2;
-const float PI = 3.14159265359;
-const int PCF_SAMPLES = 8;
-const vec3 gridSamplingOffset[PCF_SAMPLES] = vec3[](
-    vec3( 0.1,  0.1,  0.0),
-    vec3(-0.1,  0.1,  0.0),
-    vec3( 0.1, -0.1,  0.0),
-    vec3(-0.1, -0.1,  0.0),
-    vec3( 0.15, 0.0,  0.15),
-    vec3(-0.15, 0.0,  0.15),
-    vec3( 0.15, 0.0, -0.15),
-    vec3(-0.15, 0.0, -0.15)
-);
-out vec4 FragColor;
-layout(location = 1) out vec4 NormalRough;
-layout(location = 2) out float MetallicOut;
-in VS_OUT {
-    vec3 FragPos;
-    vec3 Normal;
-    vec3 Tangent;
-    vec3 Bitangent;
-    vec2 TexCoords;
-    vec4 FragPosLightSpace[15];
-} fs_in;
-in vec3 FragViewPos;
-uniform float reflectionsStrength = 0.5;
-uniform sampler2D baseColorTex;
-uniform sampler2D normalMapTex;
-uniform sampler2D glossinessTex;
-uniform sampler2D specularF0Tex;
-uniform int hasGlossinessMap;
-uniform int hasSpecularF0Map;
-uniform int useMetalRoughness;
-uniform sampler2D metallicTex;
-uniform float metallicFactor;
-uniform float roughnessFactor;
-uniform sampler2D shadowMaps[15];
-uniform samplerCube shadowCubeMaps[15];
-uniform sampler2D transmissionTex;
-uniform sampler2DArray shadowMapDir;
-uniform float cascadePlaneDistances[16];
-uniform int cascadeCount;
-uniform mat4 cascadeLightSpaceMatrices[16];
-uniform mat4 view;
-uniform samplerCube irradianceMap;
-uniform samplerCube prefilterMap;
-uniform sampler2D   brdfLUT;
-uniform int         hasIBL;
-uniform float transmissionFactor;
-uniform int hasNormalMap;
-uniform int numLights;
-uniform sampler2D aoTex;
-uniform int hasAOMap;
-uniform int lightType[15];
-uniform vec3 lightPos[15];
-uniform vec3 lightDir[15];
-uniform vec3 lightColor[15];
-uniform float lightIntensity[15];
-uniform float lightMaxDistance[15];
-uniform float lightCutOff[15];
-uniform float lightOuterCutOff[15];
-uniform float lightConstant[15];
-uniform float lightLinear[15];
-uniform float lightQuadratic[15];
-uniform vec3 viewPos;
-uniform int alphaMode;
-uniform float alphaCutoff;
-uniform float environmentStrength;
-uniform vec3 environmentSkyColor;
-uniform vec3 environmentGroundColor;
-uniform int isAffectedByLight;
-uniform int acceptsShadows;
-uniform float hdrExposure = 1.0;
-uniform vec3 fogColor;
-uniform float fogDensity;
-uniform float fogStart;
-uniform float fogEnd;
-uniform int fogType;
-const float diskRadius = 0.1;
-vec4 baseSample = vec4(1.0);
-const vec2 poisson16[16] = vec2[](
-    vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725),
-    vec2(-0.094184101, -0.92938870), vec2(0.34495938, 0.29387760),
-    vec2(-0.91588581, 0.45771432), vec2(-0.81544232, -0.87912464),
-    vec2(-0.38277543, 0.27676845), vec2(0.97484398, 0.75648379),
-    vec2(0.44323325, -0.97511554), vec2(0.53742981, -0.47373420),
-    vec2(-0.26496911, -0.41893023), vec2(0.79197514, 0.19090188),
-    vec2(-0.24188840, 0.99706507), vec2(-0.81409955, 0.91437590),
-    vec2(0.19984126, 0.78641367), vec2(0.14383161, -0.14100790)
-);
-float interleavedGradientNoise(vec2 n) {
-    return fract(3.378 * fract(dot(n, vec2(0.754877666, 0.56984029))));
-}
-vec3 ShadowTintColor(vec3 lightCol, float shadowAmt) {
-    vec3 ambientAvg = (environmentSkyColor + environmentGroundColor) * 0.5;
-    vec3 complementary = vec3(1.0) - lightCol;
-    vec3 scatterColor = mix(ambientAvg, complementary, 0.35);
-    scatterColor = max(scatterColor, vec3(0.02));
-    float occlusion = clamp(shadowAmt, 0.0, 1.0);
-    float scatterLum = dot(scatterColor, vec3(0.299, 0.587, 0.114));
-    float darken = mix(1.0, 0.08 + 0.4 * scatterLum, occlusion);
-    return mix(vec3(1.0), scatterColor * darken, occlusion);
-}
-float SampleCascadeShadow(int layer, vec3 fragPosWorld, vec3 N, vec3 L) {
-    vec4 fragPosLS = cascadeLightSpaceMatrices[layer] * vec4(fragPosWorld, 1.0);
-    vec3 projCoords = fragPosLS.xyz / fragPosLS.w;
-    projCoords = projCoords * 0.5 + 0.5;
-    float currentDepth = projCoords.z;
-    if (currentDepth > 1.0) return 0.0;
-    float layerScale = 1.0 + float(layer) * 1.5;
-    float bias = max(0.0007 * (1.0 - dot(N, L)), 0.00007) * layerScale;
-    float shadow = 0.0;
-    vec2 texelSize = 1.0 / vec2(textureSize(shadowMapDir, 0));
-    float noise = interleavedGradientNoise(gl_FragCoord.xy);
-    float angle = noise * 2.0 * PI;
-    float s = sin(angle);
-    float c = cos(angle);
-    mat2 rotation = mat2(c, -s, s, c);
-    float spread = 1.5;
-    for (int i = 0; i < 16; ++i) {
-        vec2 offset = (rotation * poisson16[i]) * texelSize * spread;
-        float pcfDepth = texture(shadowMapDir, vec3(projCoords.xy + offset, layer)).r;
-        shadow += (currentDepth - bias) > pcfDepth ? 1.0 : 0.0;
-    }
-    return shadow / 16.0;
-}
-float ShadowCalculationCSM(vec3 fragPosWorld, vec3 N, vec3 L) {
-    if (acceptsShadows == 0) return 0.0;
-    vec4 fragPosViewSpace = view * vec4(fragPosWorld, 1.0);
-    float depthValue = abs(fragPosViewSpace.z);
-    int layer = -1;
-    for (int i = 0; i < cascadeCount; ++i) {
-        if (depthValue < cascadePlaneDistances[i]) {
-            layer = i;
-            break;
-        }
-    }
-    if (layer == -1) layer = max(0, cascadeCount - 1);
-    float shadow = SampleCascadeShadow(layer, fragPosWorld, N, L);
-    if (layer < cascadeCount - 1) {
-        float splitDist = cascadePlaneDistances[layer];
-        float blendRange = splitDist * 0.1;
-        float distToSplit = splitDist - depthValue;
-        if (distToSplit < blendRange) {
-            float nextShadow = SampleCascadeShadow(layer + 1, fragPosWorld, N, L);
-            float t = clamp(1.0 - (distToSplit / blendRange), 0.0, 1.0);
-            shadow = mix(shadow, nextShadow, t);
-        }
-    }
-    return shadow;
-}
-float ShadowCalculation2D(vec4 fragPosLS, sampler2D shadowMap, vec3 N, vec3 L) {
-    if (acceptsShadows == 0) return 0.0;
-    vec3 projCoords = fragPosLS.xyz / fragPosLS.w;
-    projCoords = projCoords * 0.5 + 0.5;
-    if (projCoords.z > 1.0 || projCoords.x < 0.0 || projCoords.y < 0.0 || projCoords.x > 1.0 || projCoords.y > 1.0)
-        return 0.0;
-    float currentDepth = projCoords.z;
-    vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
-    float bias = max(0.003 * (1.0 - dot(N, L)), 0.001);
-    float noise = interleavedGradientNoise(gl_FragCoord.xy);
-    float angle = noise * 2.0 * PI;
-    float s = sin(angle);
-    float c = cos(angle);
-    mat2 rotation = mat2(c, -s, s, c);
-    float shadow = 0.0;
-    float spread = 1.8;
-    for (int i = 0; i < 16; ++i) {
-        vec2 offset = (rotation * poisson16[i]) * texelSize * spread;
-        float closestDepth = texture(shadowMap, projCoords.xy + offset).r;
-        if (currentDepth - bias > closestDepth) shadow += 1.0;
-    }
-    return shadow / 16.0;
-}
-float ShadowCalculationPoint(int idx, vec3 fragPos) {
-    if (acceptsShadows == 0) return 0.0;
-    vec3 fragToLight = fragPos - lightPos[idx];
-    float currentDepth = length(fragToLight);
-    float bias = 0.15;
-    float shadow = 0.0;
-    int samples = 16;
-    float viewDistance = length(viewPos - fragPos);
-    float diskRadiusLocal = (1.0 + (viewDistance / lightMaxDistance[idx])) * diskRadius;
-    for (int i = 0; i < samples; ++i) {
-        vec3 samplePos = fragToLight + gridSamplingOffset[i % 8] * diskRadiusLocal;
-        float closestDepth = texture(shadowCubeMaps[idx], samplePos).r;
-        closestDepth *= lightMaxDistance[idx];
-        if (currentDepth - bias > closestDepth) shadow += 1.0;
-    }
-    return shadow / float(samples);
-}
-vec3 fresnelSchlick(float cosTheta, vec3 F0) {
-    vec3 fresnel = F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
-    return mix(F0, fresnel, reflectionsStrength);
-}
-vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness) {
-    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
-}
-float DistributionGGX(vec3 N, vec3 H, float roughness) {
-    float a = roughness * roughness;
-    float a2 = a * a;
-    float NdotH = max(dot(N, H), 0.0);
-    float NdotH2 = NdotH * NdotH;
-    float denom = (NdotH2 * (a2 - 1.0) + 1.0);
-    denom = PI * denom * denom;
-    return a2 / max(denom, 0.0000001);
-}
-float GeometrySchlickGGX(float NdotV, float roughness) {
-    float r = (roughness + 1.0);
-    float k = (r * r) / 8.0;
-    float denom = NdotV * (1.0 - k) + k;
-    return NdotV / max(denom, 0.0000001);
-}
-float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
-    float NdotV = max(dot(N, V), 0.0);
-    float NdotL = max(dot(N, L), 0.0);
-    float ggx2 = GeometrySchlickGGX(NdotV, roughness);
-    float ggx1 = GeometrySchlickGGX(NdotL, roughness);
-    return ggx1 * ggx2;
-}
-void main() {
-    baseSample = texture(baseColorTex, fs_in.TexCoords);
-    if (alphaMode == 1 && baseSample.a < alphaCutoff) discard;
-    vec3 baseColor = baseSample.rgb;
-    float metallic;
-    float roughness;
-    vec3  F0_base;
-    if (useMetalRoughness == 1) {
-        vec4 metallicProps = texture(metallicTex, fs_in.TexCoords);
-        roughness = metallicProps.g * roughnessFactor;
-        metallic = metallicProps.b * metallicFactor;
-        F0_base = mix(vec3(0.04), baseColor, metallic);
-    }
-    else if (hasGlossinessMap == 1) {
-        float glossiness = texture(glossinessTex, fs_in.TexCoords).a;
-        roughness = 1.0 - glossiness;
-        metallic = 0.0;
-        if (hasSpecularF0Map == 1) {
-            F0_base = texture(specularF0Tex, fs_in.TexCoords).rgb;
-        }
-        else {
-            F0_base = vec3(0.04);
-        }
-    }
-    else {
-        metallic = metallicFactor;
-        roughness = roughnessFactor;
-        F0_base = mix(vec3(0.04), baseColor, metallic);
-    }
-    roughness = clamp(roughness, 0.01, 1.0);
-    vec3 N;
-    if (hasNormalMap == 1) {
-        vec2 rg = texture(normalMapTex, fs_in.TexCoords).rg * 2.0 - 1.0;
-        vec3 tangentNormal = vec3(rg, sqrt(max(0.0, 1.0 - dot(rg, rg))));
-        vec3 T = normalize(fs_in.Tangent);
-        vec3 B = normalize(fs_in.Bitangent);
-        vec3 Nor = normalize(fs_in.Normal);
-        mat3 TBN = mat3(T, B, Nor);
-        N = normalize(TBN * tangentNormal);
-    }
-    else {
-        N = normalize(fs_in.Normal);
-    }
-    vec3 V = normalize(viewPos - fs_in.FragPos);
-    
-    if (!gl_FrontFacing) {
-        N = -N;
-    }
-    vec3 ambientSum = vec3(0.0);
-    vec3 directLightSum = vec3(0.0);
-    vec3 ambientContribution;
-    if (hasIBL == 1) {
-        vec3 kS_amb = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0_base, roughness);
-        vec3 kD_amb = (vec3(1.0) - kS_amb) * (1.0 - metallic);
-        const float IBL_SAMPLE_MAX = 20.0;
-        vec3 irradianceDir = N;
-        vec3 reflectDirForSample = reflect(-V, N);
-        vec3 irradiance = min(texture(irradianceMap, irradianceDir).rgb, vec3(IBL_SAMPLE_MAX));
-        vec3 diffuse_ibl = irradiance * baseColor;
-        const float MAX_REFLECTION_LOD = 4.0;
-        vec3 R = reflectDirForSample;
-        vec3 prefilteredColor = min(textureLod(prefilterMap, R, roughness * MAX_REFLECTION_LOD).rgb, vec3(IBL_SAMPLE_MAX));
-        vec2 envBRDF = texture(brdfLUT, vec2(max(dot(N, V), 0.0), roughness)).rg;
-        vec3 specular_ibl = prefilteredColor * (F0_base * envBRDF.x + envBRDF.y) * reflectionsStrength;
-        ambientContribution = (kD_amb * diffuse_ibl + specular_ibl) * environmentStrength;
-    }
-    else {
-        float hemi = 0.5 * (dot(N, vec3(0, 1, 0)) + 1.0);
-        vec3 ambientHemi = mix(environmentGroundColor, environmentSkyColor, hemi);
-        ambientContribution = baseColor * ambientHemi * environmentStrength;
-    }
-    const float IBL_MAX = 10.0;
-    ambientContribution = min(ambientContribution, vec3(IBL_MAX));
-    float ao = 1.0;
-    if (hasAOMap == 1) {
-        ao = texture(aoTex, fs_in.TexCoords).r;
-    }
-    ambientContribution *= ao;
-    const float localAmbientFactor = 0.05;
-    for (int i = 0; i < 15; ++i) {
-        if (i >= numLights) break;
-        int ltype = lightType[i];
-        vec3 L;
-        float attenuation = 1.0;
-        float intensity = lightIntensity[i];
-        float shadow = 0.0;
-        vec3 lightCol = lightColor[i];
-        if (ltype == LIGHT_DIRECTIONAL) {
-            L = normalize(-lightDir[i]);
-            float NdotL = dot(N, L);
-            if (NdotL <= 0.0) {
-                ambientSum += localAmbientFactor * baseColor * lightCol * intensity;
-                continue;
-            }
-            shadow = ShadowCalculationCSM(fs_in.FragPos, N, L);
-        }
-        else if (ltype == LIGHT_POINT) {
-            vec3 toLight = lightPos[i] - fs_in.FragPos;
-            float dist = length(toLight);
-            if (dist > lightMaxDistance[i]) continue;
-            L = normalize(toLight);
-            float attFactor = clamp(1.0 - dist / lightMaxDistance[i], 0.0, 1.0);
-            attenuation = attFactor * attFactor;
-            float NdotL = dot(N, L);
-            if (NdotL <= 0.0) {
-                ambientSum += attenuation * localAmbientFactor * baseColor * lightCol * intensity;
-                continue;
-            }
-            shadow = ShadowCalculationPoint(i, fs_in.FragPos);
-        }
-        else {
-            vec3 toLight = lightPos[i] - fs_in.FragPos;
-            float dist = length(toLight);
-            if (dist > lightMaxDistance[i]) continue;
-            L = normalize(toLight);
-            attenuation = 1.0 / (lightConstant[i] + lightLinear[i] * dist + lightQuadratic[i] * dist * dist);
-            float theta = dot(-L, normalize(lightDir[i]));
-            float eps = max(lightCutOff[i] - lightOuterCutOff[i], 0.001);
-            float spotIntensity = clamp((theta - lightOuterCutOff[i]) / eps, 0.0, 1.0);
-            intensity *= spotIntensity;
-            float NdotL = dot(N, L);
-            if (NdotL <= 0.0) {
-                ambientSum += attenuation * localAmbientFactor * baseColor * lightCol * intensity;
-                continue;
-            }
-            shadow = ShadowCalculation2D(fs_in.FragPosLightSpace[i], shadowMaps[i], N, L);
-        }
-        vec3 H = normalize(L + V);
-        float NdotL = max(dot(N, L), 0.0);
-        float VdotH = max(dot(V, H), 0.0);
-        vec3 F = fresnelSchlick(VdotH, F0_base);
-        float D = DistributionGGX(N, H, roughness);
-        float G = GeometrySmith(N, V, L, roughness);
-        vec3 specularBRDF = (D * G * F) / max(4.0 * NdotL * max(dot(N, V), 0.0), 0.000001);
-        specularBRDF *= reflectionsStrength;
-        vec3 kS = F;
-        vec3 kD = (vec3(1.0) - kS) * (1.0 - metallic);
-        vec3 diffuse = kD * baseColor / PI;
-        vec3 directContrib = (diffuse + specularBRDF) * lightCol * NdotL * intensity;
-        vec3 shadowColor = ShadowTintColor(lightCol, shadow);
-        directLightSum += attenuation * directContrib * shadowColor;
-        ambientSum += attenuation * localAmbientFactor * baseColor * lightCol * intensity;
-    }
-    float transAmt = texture(transmissionTex, fs_in.TexCoords).r * transmissionFactor;
-    vec3 transLight = baseColor * transAmt * 0.5;
-    vec3 result = ambientContribution + ambientSum + directLightSum;
-    result = mix(result, result + transLight, transAmt);
+const int LIGHT_DIRECTIONAL=0;const int LIGHT_POINT=1;const int LIGHT_SPOT=2;const float PI=3.14159265359;const int PCF_SAMPLES=8;const vec3 gridSamplingOffset[PCF_SAMPLES]=vec3[](vec3(0.1,0.1,0.0),vec3(-0.1,0.1,0.0),vec3(0.1,-0.1,0.0),vec3(-0.1,-0.1,0.0),vec3(0.15,0.0,0.15),vec3(-0.15,0.0,0.15),vec3(0.15,0.0,-0.15),vec3(-0.15,0.0,-0.15));out vec4 FragColor;layout(location=1)out vec4 NormalRough;layout(location=2)out vec2 MetallicOut;in VS_OUT{vec3 FragPos;vec3 Normal;vec3 Tangent;vec3 Bitangent;vec2 TexCoords;vec4 FragPosLightSpace[15];}fs_in;in vec3 FragViewPos;uniform float reflectionsStrength=0.5;uniform sampler2D baseColorTex;uniform sampler2D normalMapTex;uniform sampler2D glossinessTex;uniform sampler2D specularF0Tex;uniform int hasGlossinessMap;uniform int hasSpecularF0Map;uniform int useMetalRoughness;uniform sampler2D metallicTex;uniform float metallicFactor;uniform float roughnessFactor;uniform sampler2D shadowMaps[15];uniform samplerCube shadowCubeMaps[15];uniform sampler2D transmissionTex;uniform sampler2DArray shadowMapDir;uniform float cascadePlaneDistances[16];uniform int cascadeCount;uniform mat4 cascadeLightSpaceMatrices[16];uniform mat4 view;uniform samplerCube irradianceMap;uniform samplerCube prefilterMap;uniform sampler2D brdfLUT;uniform int hasIBL;uniform float transmissionFactor;uniform int hasNormalMap;uniform int numLights;uniform sampler2D aoTex;uniform int hasAOMap;uniform int lightType[15];uniform vec3 lightPos[15];uniform vec3 lightDir[15];uniform vec3 lightColor[15];uniform float lightIntensity[15];uniform float lightMaxDistance[15];uniform float lightCutOff[15];uniform float lightOuterCutOff[15];uniform float lightConstant[15];uniform float lightLinear[15];uniform float lightQuadratic[15];uniform vec3 viewPos;uniform int alphaMode;uniform float alphaCutoff;uniform float alpha=1.0;uniform float environmentStrength;uniform vec3 environmentSkyColor;uniform vec3 environmentGroundColor;uniform int isAffectedByLight;uniform int acceptsShadows;uniform int enableSSAO=1;uniform int enableSSR=1;uniform float hdrExposure=1.0;uniform vec3 fogColor;uniform float fogDensity;uniform float fogStart;uniform float fogEnd;uniform int fogType;const float diskRadius=0.1;vec4 baseSample=vec4(1.0);const vec2 poisson16[16]=vec2[](vec2(-0.94201624,-0.39906216),vec2(0.94558609,-0.76890725),vec2(-0.094184101,-0.92938870),vec2(0.34495938,0.29387760),vec2(-0.91588581,0.45771432),vec2(-0.81544232,-0.87912464),vec2(-0.38277543,0.27676845),vec2(0.97484398,0.75648379),vec2(0.44323325,-0.97511554),vec2(0.53742981,-0.47373420),vec2(-0.26496911,-0.41893023),vec2(0.79197514,0.19090188),vec2(-0.24188840,0.99706507),vec2(-0.81409955,0.91437590),vec2(0.19984126,0.78641367),vec2(0.14383161,-0.14100790));float interleavedGradientNoise(vec2 n){return fract(3.378*fract(dot(n,vec2(0.754877666,0.56984029))));}vec3 ShadowTintColor(vec3 lightCol,float shadowAmt){vec3 ambientAvg=(environmentSkyColor+environmentGroundColor)*0.5;vec3 complementary=vec3(1.0)-lightCol;vec3 scatterColor=mix(ambientAvg,complementary,0.35);scatterColor=max(scatterColor,vec3(0.02));float occlusion=clamp(shadowAmt,0.0,1.0);float scatterLum=dot(scatterColor,vec3(0.299,0.587,0.114));float darken=mix(1.0,0.08+0.4*scatterLum,occlusion);return mix(vec3(1.0),scatterColor*darken,occlusion);}float SampleCascadeShadow(int layer,vec3 fragPosWorld,vec3 N,vec3 L){vec4 fragPosLS=cascadeLightSpaceMatrices[layer]*vec4(fragPosWorld,1.0);vec3 projCoords=fragPosLS.xyz/fragPosLS.w;projCoords=projCoords*0.5+0.5;float currentDepth=projCoords.z;if(currentDepth>1.0)return 0.0;float layerScale=1.0+float(layer)*1.5;float bias=max(0.0007*(1.0-dot(N,L)),0.00007)*layerScale;float shadow=0.0;vec2 texelSize=1.0/vec2(textureSize(shadowMapDir,0));float noise=interleavedGradientNoise(gl_FragCoord.xy);float angle=noise*2.0*PI;float s=sin(angle);float c=cos(angle);mat2 rotation=mat2(c,-s,s,c);float spread=1.5;for(int i=0;i<16;++i){vec2 offset=(rotation*poisson16[i])*texelSize*spread;float pcfDepth=texture(shadowMapDir,vec3(projCoords.xy+offset,layer)).r;shadow+=(currentDepth-bias)>pcfDepth?1.0:0.0;}return shadow/16.0;}float ShadowCalculationCSM(vec3 fragPosWorld,vec3 N,vec3 L){if(acceptsShadows==0)return 0.0;vec4 fragPosViewSpace=view*vec4(fragPosWorld,1.0);float depthValue=abs(fragPosViewSpace.z);int layer=-1;for(int i=0;i<cascadeCount;++i){if(depthValue<cascadePlaneDistances[i]){layer=i;break;}}if(layer==-1)layer=max(0,cascadeCount-1);float shadow=SampleCascadeShadow(layer,fragPosWorld,N,L);if(layer<cascadeCount-1){float splitDist=cascadePlaneDistances[layer];float blendRange=splitDist*0.1;float distToSplit=splitDist-depthValue;if(distToSplit<blendRange){float nextShadow=SampleCascadeShadow(layer+1,fragPosWorld,N,L);float t=clamp(1.0-(distToSplit/blendRange),0.0,1.0);shadow=mix(shadow,nextShadow,t);}}return shadow;}float ShadowCalculation2D(vec4 fragPosLS,sampler2D shadowMap,vec3 N,vec3 L){if(acceptsShadows==0)return 0.0;vec3 projCoords=fragPosLS.xyz/fragPosLS.w;projCoords=projCoords*0.5+0.5;if(projCoords.z>1.0||projCoords.x<0.0||projCoords.y<0.0||projCoords.x>1.0||projCoords.y>1.0)return 0.0;float currentDepth=projCoords.z;vec2 texelSize=1.0/textureSize(shadowMap,0);float bias=max(0.003*(1.0-dot(N,L)),0.001);float noise=interleavedGradientNoise(gl_FragCoord.xy);float angle=noise*2.0*PI;float s=sin(angle);float c=cos(angle);mat2 rotation=mat2(c,-s,s,c);float shadow=0.0;float spread=1.8;for(int i=0;i<16;++i){vec2 offset=(rotation*poisson16[i])*texelSize*spread;float closestDepth=texture(shadowMap,projCoords.xy+offset).r;if(currentDepth-bias>closestDepth)shadow+=1.0;}return shadow/16.0;}float ShadowCalculationPoint(int idx,vec3 fragPos){if(acceptsShadows==0)return 0.0;vec3 fragToLight=fragPos-lightPos[idx];float currentDepth=length(fragToLight);float bias=0.15;float shadow=0.0;int samples=16;float viewDistance=length(viewPos-fragPos);float diskRadiusLocal=(1.0+(viewDistance/lightMaxDistance[idx]))*diskRadius;for(int i=0;i<samples;++i){vec3 samplePos=fragToLight+gridSamplingOffset[i%8]*diskRadiusLocal;float closestDepth=texture(shadowCubeMaps[idx],samplePos).r;closestDepth*=lightMaxDistance[idx];if(currentDepth-bias>closestDepth)shadow+=1.0;}return shadow/float(samples);}vec3 fresnelSchlick(float cosTheta,vec3 F0){vec3 fresnel=F0+(1.0-F0)*pow(clamp(1.0-cosTheta,0.0,1.0),5.0);return mix(F0,fresnel,reflectionsStrength);}vec3 fresnelSchlickRoughness(float cosTheta,vec3 F0,float roughness){return F0+(max(vec3(1.0-roughness),F0)-F0)*pow(clamp(1.0-cosTheta,0.0,1.0),5.0);}float DistributionGGX(vec3 N,vec3 H,float roughness){float a=roughness*roughness;float a2=a*a;float NdotH=max(dot(N,H),0.0);float NdotH2=NdotH*NdotH;float denom=(NdotH2*(a2-1.0)+1.0);denom=PI*denom*denom;return a2/max(denom,0.0000001);}float GeometrySchlickGGX(float NdotV,float roughness){float r=(roughness+1.0);float k=(r*r)/8.0;float denom=NdotV*(1.0-k)+k;return NdotV/max(denom,0.0000001);}float GeometrySmith(vec3 N,vec3 V,vec3 L,float roughness){float NdotV=max(dot(N,V),0.0);float NdotL=max(dot(N,L),0.0);float ggx2=GeometrySchlickGGX(NdotV,roughness);float ggx1=GeometrySchlickGGX(NdotL,roughness);return ggx1*ggx2;}void main(){baseSample=texture(baseColorTex,fs_in.TexCoords);if(alphaMode==1&&baseSample.a<alphaCutoff)discard;vec3 baseColor=baseSample.rgb;float metallic;float roughness;vec3 F0_base;if(useMetalRoughness==1){vec4 metallicProps=texture(metallicTex,fs_in.TexCoords);roughness=metallicProps.g*roughnessFactor;metallic=metallicProps.b*metallicFactor;F0_base=mix(vec3(0.04),baseColor,metallic);}else if(hasGlossinessMap==1){float glossiness=texture(glossinessTex,fs_in.TexCoords).a;roughness=1.0-glossiness;metallic=0.0;if(hasSpecularF0Map==1){F0_base=texture(specularF0Tex,fs_in.TexCoords).rgb;}else{F0_base=vec3(0.04);}}else{metallic=metallicFactor;roughness=roughnessFactor;F0_base=mix(vec3(0.04),baseColor,metallic);}roughness=clamp(roughness,0.01,1.0);vec3 N;if(hasNormalMap==1){vec2 rg=texture(normalMapTex,fs_in.TexCoords).rg*2.0-1.0;vec3 tangentNormal=vec3(rg,sqrt(max(0.0,1.0-dot(rg,rg))));vec3 T=normalize(fs_in.Tangent);vec3 B=normalize(fs_in.Bitangent);vec3 Nor=normalize(fs_in.Normal);mat3 TBN=mat3(T,B,Nor);N=normalize(TBN*tangentNormal);}else{N=normalize(fs_in.Normal);}vec3 V=normalize(viewPos-fs_in.FragPos);if(!gl_FrontFacing){N=-N;}vec3 ambientSum=vec3(0.0);vec3 directLightSum=vec3(0.0);vec3 ambientContribution;if(hasIBL==1){vec3 kS_amb=fresnelSchlickRoughness(max(dot(N,V),0.0),F0_base,roughness);vec3 kD_amb=(vec3(1.0)-kS_amb)*(1.0-metallic);const float IBL_SAMPLE_MAX=20.0;vec3 irradianceDir=N;vec3 reflectDirForSample=reflect(-V,N);vec3 irradiance=min(texture(irradianceMap,irradianceDir).rgb,vec3(IBL_SAMPLE_MAX));vec3 diffuse_ibl=irradiance*baseColor;const float MAX_REFLECTION_LOD=4.0;vec3 R=reflectDirForSample;vec3 prefilteredColor=min(textureLod(prefilterMap,R,roughness*MAX_REFLECTION_LOD).rgb,vec3(IBL_SAMPLE_MAX));vec2 envBRDF=texture(brdfLUT,vec2(max(dot(N,V),0.0),roughness)).rg;vec3 specular_ibl=prefilteredColor*(F0_base*envBRDF.x+envBRDF.y)*reflectionsStrength;ambientContribution=(kD_amb*diffuse_ibl+specular_ibl)*environmentStrength;}else{float hemi=0.5*(dot(N,vec3(0,1,0))+1.0);vec3 ambientHemi=mix(environmentGroundColor,environmentSkyColor,hemi);ambientContribution=baseColor*ambientHemi*environmentStrength;}const float IBL_MAX=10.0;ambientContribution=min(ambientContribution,vec3(IBL_MAX));float ao=1.0;if(hasAOMap==1){ao=texture(aoTex,fs_in.TexCoords).r;}ambientContribution*=ao;const float localAmbientFactor=0.05;vec3 dirLightInfluence=vec3(1.0);vec3 unlitShadowTint=vec3(1.0);for(int i=0;i<15;++i){if(i>=numLights)break;int ltype=lightType[i];vec3 L;float attenuation=1.0;float intensity=lightIntensity[i];float shadow=0.0;vec3 lightCol=lightColor[i];if(ltype==LIGHT_DIRECTIONAL){dirLightInfluence=lightCol*intensity;L=normalize(-lightDir[i]);float NdotL=dot(N,L);if(NdotL<=0.0){ambientSum+=localAmbientFactor*baseColor*lightCol*intensity;if(isAffectedByLight==0){float unlitShadow=ShadowCalculationCSM(fs_in.FragPos,N,L);unlitShadowTint*=ShadowTintColor(lightCol,unlitShadow);}continue;}shadow=ShadowCalculationCSM(fs_in.FragPos,N,L);}else if(ltype==LIGHT_POINT){vec3 toLight=lightPos[i]-fs_in.FragPos;float dist=length(toLight);if(dist>lightMaxDistance[i])continue;L=normalize(toLight);float attFactor=clamp(1.0-dist/lightMaxDistance[i],0.0,1.0);attenuation=attFactor*attFactor;float NdotL=dot(N,L);if(NdotL<=0.0){ambientSum+=attenuation*localAmbientFactor*baseColor*lightCol*intensity;if(isAffectedByLight==0){float unlitShadow=ShadowCalculationPoint(i,fs_in.FragPos);unlitShadowTint*=ShadowTintColor(lightCol,unlitShadow);}continue;}shadow=ShadowCalculationPoint(i,fs_in.FragPos);}else{vec3 toLight=lightPos[i]-fs_in.FragPos;float dist=length(toLight);if(dist>lightMaxDistance[i])continue;L=normalize(toLight);attenuation=1.0/(lightConstant[i]+lightLinear[i]*dist+lightQuadratic[i]*dist*dist);float theta=dot(-L,normalize(lightDir[i]));float eps=max(lightCutOff[i]-lightOuterCutOff[i],0.001);float spotIntensity=clamp((theta-lightOuterCutOff[i])/eps,0.0,1.0);intensity*=spotIntensity;float NdotL=dot(N,L);if(NdotL<=0.0){ambientSum+=attenuation*localAmbientFactor*baseColor*lightCol*intensity;if(isAffectedByLight==0){float unlitShadow=ShadowCalculation2D(fs_in.FragPosLightSpace[i],shadowMaps[i],N,L);unlitShadowTint*=ShadowTintColor(lightCol,unlitShadow);}continue;}shadow=ShadowCalculation2D(fs_in.FragPosLightSpace[i],shadowMaps[i],N,L);}vec3 H=normalize(L+V);float NdotL=max(dot(N,L),0.0);float VdotH=max(dot(V,H),0.0);vec3 F=fresnelSchlick(VdotH,F0_base);float D=DistributionGGX(N,H,roughness);float G=GeometrySmith(N,V,L,roughness);vec3 specularBRDF=(D*G*F)/max(4.0*NdotL*max(dot(N,V),0.0),0.000001);specularBRDF*=reflectionsStrength;vec3 kS=F;vec3 kD=(vec3(1.0)-kS)*(1.0-metallic);vec3 diffuse=kD*baseColor/PI;vec3 directContrib=(diffuse+specularBRDF)*lightCol*NdotL*intensity;vec3 shadowColor=ShadowTintColor(lightCol,shadow);unlitShadowTint*=shadowColor;directLightSum+=attenuation*directContrib*shadowColor;ambientSum+=attenuation*localAmbientFactor*baseColor*lightCol*intensity;}float transAmt=texture(transmissionTex,fs_in.TexCoords).r*transmissionFactor;vec3 transLight=baseColor*transAmt*0.5;vec3 result=ambientContribution+ambientSum+directLightSum;result=mix(result,result+transLight,transAmt);
 #define ACES(c) clamp(((c)*(2.51*(c)+0.03))/((c)*(2.43*(c)+0.59)+0.14),0.0,1.0)
 #define TO_SRGB(c) pow(max((c),vec3(0.0)),vec3(1.0/2.2))
-    float distance = length(FragViewPos);
-    float fogFactor = 1.0;
-    if (fogType == 0) {
-        fogFactor = (fogEnd - distance) / (fogEnd - fogStart);
-    }
-    else if (fogType == 1) {
-        fogFactor = exp(-fogDensity * distance);
-    }
-    else if (fogType == 2) {
-        fogFactor = exp(-pow(fogDensity * distance, 2.0));
-    }
-    fogFactor = clamp(fogFactor, 0.0, 1.0);
-    vec4 finalPixelColour;
-    if (isAffectedByLight == 0) {
-        vec3 fallback = ambientContribution + ambientSum;
-        fallback = max(fallback, baseColor * 0.7);
-        fallback = mix(fallback, fallback + transLight, transAmt);
-        finalPixelColour = vec4(TO_SRGB(ACES(fallback * hdrExposure)), (alphaMode == 2 ? baseSample.a : 1.0));
-    }
-    else {
-        finalPixelColour = vec4(TO_SRGB(ACES(result * hdrExposure)), (alphaMode == 2 ? baseSample.a : 1.0));
-    }
-    FragColor = vec4(mix(fogColor, finalPixelColour.rgb, fogFactor), finalPixelColour.a);
+float distance=length(FragViewPos);float fogFactor=1.0;if(fogType==0){fogFactor=(fogEnd-distance)/(fogEnd-fogStart);}else if(fogType==1){fogFactor=exp(-fogDensity*distance);}else if(fogType==2){fogFactor=exp(-pow(fogDensity*distance,2.0));}fogFactor=clamp(fogFactor,0.0,1.0);vec4 finalPixelColour;if(isAffectedByLight==0){vec3 fallback=ambientContribution+ambientSum;fallback=max(fallback,baseColor*dirLightInfluence*0.7*unlitShadowTint);fallback=mix(fallback,fallback+transLight,transAmt);finalPixelColour=vec4(TO_SRGB(ACES(fallback*hdrExposure)),(alphaMode==2?baseSample.a:1.0));}else{finalPixelColour=vec4(TO_SRGB(ACES(result*hdrExposure)),(alphaMode==2?baseSample.a:1.0));}FragColor=vec4(mix(fogColor,finalPixelColour.rgb,fogFactor),finalPixelColour.a*alpha);
 #undef ACES
 #undef TO_SRGB
-    if (alphaMode == 2) {
-        NormalRough = vec4(0.0, 0.0, 0.0, -1.0);
-        MetallicOut = 0.0;
-    }
-    else {
-        vec3 viewSpaceN = normalize(mat3(view) * N);
-        NormalRough = vec4(viewSpaceN, roughness);
-        MetallicOut = metallic;
-    }
-}
+if(alphaMode==2){NormalRough=vec4(0.0,0.0,0.0,-1.0);MetallicOut=vec2(0.0,0.0);}else{vec3 viewSpaceN=normalize(mat3(view)*N);NormalRough=vec4(viewSpaceN,roughness);float fxMask=(enableSSAO!=0?1.0:0.0)+(enableSSR!=0?2.0:0.0);MetallicOut=vec2(metallic,fxMask);}}
 )";
 
 const char* imageFragment = R"(
@@ -1343,6 +944,9 @@ in vec2 TexCoords;
 uniform sampler2D depthTexture;
 uniform sampler2D colorTexture;
 uniform sampler2D noiseTex;
+// r = metallic, g = per-instance effect mask written by the `fragment` shader:
+// bit0 (1) = this instance has enableSSAO, bit1 (2) = enableSSR (unused here).
+uniform sampler2D maskTexture;
 
 uniform mat4 projection;
 uniform mat4 invProjection;
@@ -1409,6 +1013,15 @@ void main() {
         return;
     }
 
+    int fxMask = int(texture(maskTexture, TexCoords).g + 0.5);
+    if ((fxMask & 1) == 0) {
+        // Esta instância tem enableSSAO=false: não recebe AO/GI (mas continua
+        // podendo OCLUIR outros pixels normalmente, já que o teste acima é só
+        // sobre o pixel de origem, igual acceptsShadows/isAffectedByLight).
+        FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+
     vec3 fragPos = ViewPosFromDepth(TexCoords, depth);
     vec3 normal = ViewNormalFromDepth(TexCoords, fragPos);
 
@@ -1466,9 +1079,21 @@ out vec4 FragColor;
 in vec2 TexCoords;
 
 uniform sampler2D ssaoInput;
+// Mesma máscara de mainMetallicBuffer.g usada em ssaoFragment (bit0 = enableSSAO).
+// Sem isso, mesmo com ssaoFragment já escrevendo neutro (0,0,0,1) pro pixel de uma
+// instância com enableSSAO=false, o blur 5x5 abaixo pega valores de AO dos vizinhos
+// (que TÊM SSAO ligado) e "vaza" escurecimento de volta pra esse pixel — exatamente
+// o sintoma de "ainda tá sendo aplicado" mesmo com a flag desligada.
+uniform sampler2D maskTexture;
 uniform vec2 screenSize;
 
 void main() {
+    int fxMask = int(texture(maskTexture, TexCoords).g + 0.5);
+    if ((fxMask & 1) == 0) {
+        FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+
     vec2 texel = 1.0 / screenSize;
     vec4 result = vec4(0.0);
     for (int x = -2; x <= 2; x++) {
@@ -1507,6 +1132,9 @@ in vec2 TexCoords;
 uniform sampler2D depthTexture;
 uniform sampler2D colorTexture;
 uniform sampler2D normalRoughTexture;
+// r = metallic, g = per-instance effect mask written by the `fragment` shader:
+// bit1 (2) = this instance has enableSSR (bit0/SSAO unused here).
+uniform sampler2D maskTexture;
 
 uniform mat4 projection;
 uniform mat4 invProjection;
@@ -1547,6 +1175,15 @@ void main() {
     vec4 nr = texture(normalRoughTexture, TexCoords);
     if (nr.a < 0.0) {
         // Sentinela: pixel pertence a uma malha BLEND (não participa do SSR).
+        FragColor = vec4(0.0, 0.0, 0.0, 0.0);
+        return;
+    }
+
+    int fxMask = int(texture(maskTexture, TexCoords).g + 0.5);
+    if ((fxMask & 2) == 0) {
+        // Esta instância tem enableSSR=false: não recebe reflexo SSR (mas
+        // continua podendo APARECER refletida em outras superfícies, já que
+        // esse teste é só sobre a superfície de origem do raio).
         FragColor = vec4(0.0, 0.0, 0.0, 0.0);
         return;
     }
@@ -1784,35 +1421,9 @@ void main() {
     }
 
     float roughness = clamp(nr.a, 0.0, 1.0);
-    // Reduz a intensidade conforme a rugosidade aumenta: um SSR "espelhado" sobre uma
-    // superfície rugosa não é fisicamente coerente (precisaria de um blur por roughness,
-    // que este passe simples não faz), então deixamos a contribuição morrer suavemente
-    // e o specular_ibl (já calculado por material) assume o protagonismo nesse caso.
-    // Janela mais larga (0.55→0.95) que antes: superfícies de roughness média (chão molhado,
-    // asfalto, poças — tipicamente 0.3~0.6) mantêm reflexo visível em vez de já começarem
-    // esmaecidas a partir de 0.35.
+    
     float roughnessFade = 1.0 - smoothstep(0.55, 0.95, roughness);
 
-    // Fresnel real (Schlick + roughness): sem isso, o reflexo aparece com a mesma força
-    // olhando de frente ou de raspão para a superfície, o que faz a cor refletida (ex.: chão
-    // marrom atrás do carro) parecer um "decalque" colado na lataria em vez de um reflexo que
-    // só deveria se intensificar perto das bordas/ângulos rasantes da carroceria.
-    //
-    // F0 físico (igual ao F0_base do shader de material, mix(0.04, baseColor, metallic)):
-    // dielétrico fica em ~0.04, condutor/metal usa a própria reflectância de banda larga, bem
-    // mais alta mesmo de frente (NdotV alto) — metal não tem termo difuso, então essencialmente
-    // toda a resposta visual do material vem do reflexo. Não temos o baseColor exato aqui (já
-    // foi consumido pelo shading direto/IBL antes deste passe), só o canal metallic do
-    // G-buffer-lite — por isso aproximamos a magnitude do F0 metálico por um escalar alto em
-    // vez de tingir com a cor do material.
-    //
-    // IMPORTANTE: o termo de Fresnel abaixo usa max(1.0 - roughness, F0) em vez de só
-    // (1.0 - F0) como "teto" do realce de borda — é a MESMA fórmula que fresnelSchlickRoughness
-    // já usa pro specular_ibl (logo acima no arquivo, na ambient contribution). Isso faz
-    // roughness e metallic atuarem no MESMO termo, não em dois multiplicadores desconexos:
-    // conforme a superfície fica mais rugosa, o pico de brilho na borda (grazing angle) encolhe
-    // e some — uma superfície 100% rugosa não tem mais aquele "aro" de Fresnel, fica uniforme
-    // em F0 independente do ângulo, exatamente como esperado fisicamente.
     float depth = texture(depthTexture, TexCoords).r;
     vec3 viewPos = ViewPosFromDepth(TexCoords, depth);
     vec3 V = normalize(-viewPos);
@@ -1822,19 +1433,322 @@ void main() {
     float metallic = clamp(texture(metallicTexture, TexCoords).r, 0.0, 1.0);
     float F0_scalar = mix(0.04, 0.9, metallic);
     float fresnel = F0_scalar + (max(1.0 - roughness, F0_scalar) - F0_scalar) * pow(1.0 - NdotV, 5.0);
-    // O termo de Fresnel acima já é fisicamente completo (vai de F0_scalar de frente até
-    // ~(1-roughness) em ângulo rasante). O piso do realce de borda precisa escalar com o
-    // próprio F0_scalar do material, e não ser um valor fixo: um piso fixo (ex.: 0.5)
-    // sobrescreve o F0 baixo de dielétricos (tinta, plástico, ~0.04) e força um reflexo
-    // perceptível mesmo olhando de frente para a lataria — exatamente o "decalque" de chão
-    // refletido indesejavelmente na carroceria. Usando F0_scalar como piso, a reflexão de
-    // frente cai para perto do F0 real do material (quase nula em dielétricos, alta em
-    // metais) e só cresce de fato perto da borda/ângulo rasante, como o Fresnel físico prevê.
+    
     float fresnelFactor = mix(F0_scalar, 1.0, fresnel);
 
     float blend = clamp(ssr.a * roughnessFade * fresnelFactor * reflectionsStrength, 0.0, 1.0);
     vec3 result = mix(sceneColor, ssr.rgb, blend);
 
+    FragColor = vec4(result, 1.0);
+}
+)";
+
+
+
+// ============================================================
+// VOLUMETRIC FOG (screen-space raymarch)
+// ============================================================
+// Three-stage pipeline, same shape as SSR above:
+//   1) raymarch      -> volumetricFogFBO/volumetricFogColorBuffer
+//      (rgb = in-scattered light already premultiplied by transmittance per-step,
+//       a   = total transmittance along the view ray, 1 = no fog at all)
+//   2) depth-aware blur -> volumetricFogBlurFBO/volumetricFogBlurColorBuffer
+//      (cheap box blur that stops at depth discontinuities, so fog doesn't bleed
+//       across silhouettes even with a low step count)
+//   3) composite      -> volumetricFogCompositeFBO/volumetricFogCompositeColorBuffer
+//      (result = sceneColor * transmittance + inscatteredLight, the standard
+//       "over" compositing for participating media), blitted back into
+//       mainColorBuffer by the caller (Core::Draw::PostProcessing), same as SSR.
+const char* volumetricFogFragment = R"(
+#version 330 core
+out vec4 FragColor;
+in vec2 TexCoords;
+
+uniform sampler2D depthTexture;
+uniform sampler2DArray shadowMapDir;
+
+uniform mat4 invProjection;
+uniform mat4 invView;
+uniform mat4 view;
+
+uniform vec3  camPos;
+uniform float nearPlane;
+uniform float farPlane;
+
+// --- fog shape/appearance ---
+uniform vec3  fogColor;
+uniform float density;
+uniform float heightFalloff;
+uniform float heightStart;
+uniform float anisotropy;
+uniform float scattering;
+uniform float ambient;
+uniform float maxDistance;
+uniform int   steps;
+uniform float noiseScale;
+uniform float noiseSpeed;
+uniform float noiseIntensity;
+uniform float time;
+
+// --- sun (directional light) ---
+uniform vec3  lightDirWorld;   // Light::direction as-is: direction the light TRAVELS (sun -> ground)
+uniform vec3  lightColor;
+uniform float lightIntensity;
+uniform int   hasDirLight;
+
+// --- cascaded shadow map (same cascades as the main color pass) ---
+uniform int   cascadeCount;
+uniform float cascadePlaneDistances[16];
+uniform mat4  cascadeLightSpaceMatrices[16];
+
+const float PI = 3.14159265359;
+
+vec3 ViewPosFromDepth(vec2 uv, float depth) {
+    vec4 clip = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    vec4 v = invProjection * clip;
+    return v.xyz / v.w;
+}
+
+float interleavedGradientNoise(vec2 n) {
+    return fract(52.9829189 * fract(dot(n, vec2(0.06711056, 0.00583715))));
+}
+
+// Cheap hash-based 3D value noise + 2-octave fbm, used only to break up the
+// uniform look of the height fog with some drifting turbulence. Not meant to
+// be physically simulated volumetric detail — just enough to sell "wind".
+float hash13(vec3 p) {
+    p = fract(p * 0.1031);
+    p += dot(p, p.yzx + 33.33);
+    return fract((p.x + p.y) * p.z);
+}
+
+float valueNoise3D(vec3 p) {
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float n000 = hash13(i + vec3(0, 0, 0));
+    float n100 = hash13(i + vec3(1, 0, 0));
+    float n010 = hash13(i + vec3(0, 1, 0));
+    float n110 = hash13(i + vec3(1, 1, 0));
+    float n001 = hash13(i + vec3(0, 0, 1));
+    float n101 = hash13(i + vec3(1, 0, 1));
+    float n011 = hash13(i + vec3(0, 1, 1));
+    float n111 = hash13(i + vec3(1, 1, 1));
+    float nx00 = mix(n000, n100, f.x);
+    float nx10 = mix(n010, n110, f.x);
+    float nx01 = mix(n001, n101, f.x);
+    float nx11 = mix(n011, n111, f.x);
+    float nxy0 = mix(nx00, nx10, f.y);
+    float nxy1 = mix(nx01, nx11, f.y);
+    return mix(nxy0, nxy1, f.z);
+}
+
+float fbm(vec3 p) {
+    float sum = valueNoise3D(p) * 0.65;
+    sum += valueNoise3D(p * 2.13) * 0.35;
+    return sum; // ~[0,1]
+}
+
+// Henyey-Greenstein phase function. cosTheta = dot(rayDir, dirToLight): close to 1
+// when the camera ray also points roughly toward the sun (i.e. looking into the
+// light), which is exactly when forward scattering (g > 0) should brighten the
+// fog into visible "god ray" shafts.
+float phaseHG(float cosTheta, float g) {
+    float g2 = g * g;
+    float denom = 1.0 + g2 - 2.0 * g * cosTheta;
+    return (1.0 - g2) / max(4.0 * PI * pow(max(denom, 0.0001), 1.5), 0.0001);
+}
+
+// Single-tap cascaded shadow lookup (no PCF): this runs `steps` times per pixel
+// inside the march below, so it deliberately trades softness for speed — the
+// blur pass afterwards hides most of the resulting noise anyway.
+float SampleShadow(vec3 worldPos) {
+    if (hasDirLight == 0 || cascadeCount == 0) return 0.0;
+
+    vec4 viewSpace = view * vec4(worldPos, 1.0);
+    float depthValue = abs(viewSpace.z);
+
+    int layer = cascadeCount - 1;
+    for (int i = 0; i < cascadeCount; ++i) {
+        if (depthValue < cascadePlaneDistances[i]) {
+            layer = i;
+            break;
+        }
+    }
+
+    vec4 fragPosLS = cascadeLightSpaceMatrices[layer] * vec4(worldPos, 1.0);
+    vec3 projCoords = fragPosLS.xyz / fragPosLS.w;
+    projCoords = projCoords * 0.5 + 0.5;
+    if (projCoords.z > 1.0) return 0.0;
+    if (projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0) return 0.0;
+
+    float closestDepth = texture(shadowMapDir, vec3(projCoords.xy, layer)).r;
+    float bias = 0.0015;
+    return (projCoords.z - bias) > closestDepth ? 1.0 : 0.0;
+}
+
+void main() {
+    float depth = texture(depthTexture, TexCoords).r;
+    vec3 viewPos = ViewPosFromDepth(TexCoords, depth);
+
+    // Sky pixels (depth == far plane) still get fogged out to maxDistance instead
+    // of being skipped entirely — otherwise the horizon would show a hard seam
+    // between "fogged geometry" and "clear sky".
+    float sceneDist = (depth >= 0.9999) ? maxDistance : length(viewPos);
+    float rayLen = min(sceneDist, maxDistance);
+
+    if (rayLen <= 0.001) {
+        FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+
+    vec3 rayDirView = viewPos / max(sceneDist, 0.0001);
+    if (depth >= 0.9999) {
+        // No geometry to derive a direction from — rebuild it from the pixel's
+        // NDC coordinates directly (same projection math as ViewPosFromDepth,
+        // just evaluated at the far plane instead of the stored depth).
+        rayDirView = normalize(ViewPosFromDepth(TexCoords, 0.9999));
+    }
+
+    vec3 rayDirWorld = normalize(mat3(invView) * rayDirView);
+    vec3 lightDirNorm = normalize(lightDirWorld);
+    vec3 dirToLight = -lightDirNorm; // matches `L` convention in the main material shader
+    float cosTheta = dot(rayDirWorld, dirToLight);
+    float phase = phaseHG(cosTheta, clamp(anisotropy, -0.99, 0.99));
+
+    float stepLen = rayLen / float(max(steps, 1));
+
+    // Per-pixel dither on the march start offset hides banding from the low step
+    // count without needing to raise `steps` (which is the dominant cost here).
+    float dither = interleavedGradientNoise(gl_FragCoord.xy);
+
+    // Jittering only the start offset still leaves every ray sampling the exact
+    // same spacing, so neighbouring rays land on near-identical radii and the
+    // banding reforms into concentric shells centered on the camera (most visible
+    // where rayLen is constant, e.g. the sky, and amplified by forward scattering
+    // near the sun). Jittering the spacing itself too (with an independent hash)
+    // decorrelates those shells between pixels so it reads as noise instead of a
+    // ring that seems to hang around the camera and shift as you turn.
+    float spacingJitter = interleavedGradientNoise(gl_FragCoord.xy + vec2(17.0, 41.0));
+    stepLen *= (0.85 + 0.3 * spacingJitter);
+
+    float transmittance = 1.0;
+    vec3  scatteredLight = vec3(0.0);
+
+    for (int i = 0; i < steps; i++) {
+        float t = (float(i) + dither) * stepLen;
+        vec3 samplePosView = rayDirView * t;
+        vec4 samplePosWorld4 = invView * vec4(samplePosView, 1.0);
+        vec3 samplePosWorld = samplePosWorld4.xyz;
+
+        float heightAbove = max(samplePosWorld.y - heightStart, 0.0);
+        float localDensity = density * exp(-heightAbove * max(heightFalloff, 0.0));
+
+        if (noiseScale > 0.0001 && noiseIntensity > 0.0001) {
+            vec3 windOffset = vec3(time * noiseSpeed, 0.0, time * noiseSpeed * 0.6);
+            float n = fbm(samplePosWorld * noiseScale + windOffset);
+            localDensity *= mix(1.0, n * 2.0, clamp(noiseIntensity, 0.0, 1.0));
+        }
+        localDensity = max(localDensity, 0.0);
+
+        float stepTransmittance = exp(-localDensity * stepLen);
+
+        float shadowAmt = SampleShadow(samplePosWorld);
+        float sunVisible = 1.0 - shadowAmt;
+
+        vec3 inscatter = fogColor * ambient; // sky/ambient term: always present
+        if (hasDirLight == 1) {
+            inscatter += lightColor * lightIntensity * scattering * phase * sunVisible * fogColor;
+        }
+
+        // Analytic per-step integration (Sébastien Hillaire-style): assumes
+        // inscatter is roughly constant across the step, which is a good enough
+        // approximation at these step counts.
+        scatteredLight += transmittance * (1.0 - stepTransmittance) * inscatter;
+        transmittance *= stepTransmittance;
+
+        if (transmittance < 0.003) break; // fully opaque fog already, stop marching
+    }
+
+    FragColor = vec4(scatteredLight, clamp(transmittance, 0.0, 1.0));
+}
+)";
+
+// Depth-aware box blur over volumetricFogColorBuffer. Fog density (and therefore
+// this buffer) varies smoothly almost everywhere, so a cheap box filter is enough
+// to hide the raymarch's step/dither noise — the only thing that needs guarding
+// against is bleeding fog across a depth discontinuity (a silhouette edge), which
+// would visibly halo thin foreground objects. The depth weight below rejects
+// neighbours whose scene depth differs too much from the center pixel's.
+const char* volumetricFogBlurFragment = R"(
+#version 330 core
+out vec4 FragColor;
+in vec2 TexCoords;
+
+uniform sampler2D fogInput;
+uniform sampler2D depthTexture;
+uniform vec2  screenSize;
+uniform float blurRadius; // pixels; 0 disables the blur
+uniform float nearPlane;
+uniform float farPlane;
+
+float LinearizeDepth(float d) {
+    float z = d * 2.0 - 1.0;
+    return (2.0 * nearPlane * farPlane) / (farPlane + nearPlane - z * (farPlane - nearPlane));
+}
+
+void main() {
+    vec4 center = texture(fogInput, TexCoords);
+
+    if (blurRadius < 0.5) {
+        FragColor = center;
+        return;
+    }
+
+    float centerDepth = LinearizeDepth(texture(depthTexture, TexCoords).r);
+    vec2 texel = blurRadius / screenSize;
+
+    vec4 sum = center;
+    float weightSum = 1.0;
+
+    for (int x = -2; x <= 2; x++) {
+        for (int y = -2; y <= 2; y++) {
+            if (x == 0 && y == 0) continue;
+            vec2 uv = TexCoords + vec2(float(x), float(y)) * texel;
+            float sampleDepth = LinearizeDepth(texture(depthTexture, uv).r);
+
+            // Falls off fast once the neighbour is meaningfully closer/farther than
+            // the center pixel — cheap edge-stop, not a real bilateral kernel.
+            float depthDiff = abs(sampleDepth - centerDepth);
+            float depthWeight = exp(-depthDiff * 0.05);
+
+            sum += texture(fogInput, uv) * depthWeight;
+            weightSum += depthWeight;
+        }
+    }
+
+    FragColor = sum / max(weightSum, 0.0001);
+}
+)";
+
+// Standard "over" compositing for participating media: sceneColor is attenuated
+// by the accumulated transmittance and the pre-integrated in-scattered light is
+// added on top. Writes to a dedicated FBO for the same reason ssrCompositeFragment
+// does — mainColorBuffer is one of the inputs, so it can't also be the render
+// target in the same draw call.
+const char* volumetricFogCompositeFragment = R"(
+#version 330 core
+out vec4 FragColor;
+in vec2 TexCoords;
+
+uniform sampler2D sceneColorTexture;
+uniform sampler2D fogTexture;
+
+void main() {
+    vec3 sceneColor = texture(sceneColorTexture, TexCoords).rgb;
+    vec4 fog = texture(fogTexture, TexCoords);
+
+    vec3 result = sceneColor * fog.a + fog.rgb;
     FragColor = vec4(result, 1.0);
 }
 )";

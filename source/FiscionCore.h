@@ -26,6 +26,18 @@
 #include <thread>
 #include <Windows.h>
 
+#include <thread>
+#include <vector>
+#include <queue>
+#include <functional>
+#include <mutex>
+#include <condition_variable>
+#include <future>
+#include <atomic>
+#include <memory>
+#include <algorithm>
+#include <type_traits>
+
 #define GLM_ENABLE_EXPERIMENTAL
 #include "dependencies/glad/glad.h"
 #include "dependencies/GLFW/glfw3.h"
@@ -1004,8 +1016,11 @@ namespace FiscionX {
 		// resizes them (only if the LOD-tier count changed) and then just
 		// `.clear()`s each inner vector (keeps capacity) before refilling, so after
 		// the first few frames no further heap allocation happens here at all.
-		mutable std::vector<std::array<std::vector<float>, 4>> colorBatchScratch;
-		mutable std::vector<std::array<int, 4>>                colorBatchCountScratch;
+		// OPTIM: fIdx now packs 4 booleans (isAffectedByLight, acceptsShadows,
+		// enableSSAO, enableSSR) into 4 bits -> 16 combinations. See the fIdx
+		// encoding in Model::draw()'s colorInstanced batching loop (core.cpp).
+		mutable std::vector<std::array<std::vector<float>, 16>> colorBatchScratch;
+		mutable std::vector<std::array<int, 16>>                colorBatchCountScratch;
 		mutable std::vector<std::vector<float>>                depthBatchScratch;
 		mutable std::vector<int>                               depthBatchCountScratch;
 
@@ -1069,6 +1084,7 @@ namespace FiscionX {
 	void generateTangents(std::vector<VertexData>& vertices, const std::vector<uint32_t>& indices);
 
 	struct Model {
+		std::string mpath;
 		std::vector<SubMesh> meshes;
 		bool isSkinned = false;
 
@@ -1110,7 +1126,7 @@ namespace FiscionX {
 		// matriz é que descobria (dentro do loop de submeshes) que o modelo nem tinha
 		// nenhuma submesh BLEND. Com a flag, modelos 100% opacos são pulados de cara.
 		bool hasBlendSubMesh = false;
-		float maxViewDistance = 120;
+		float maxViewDistance = 160;
 
 		// OPTIM: grama (e qualquer instância "achatada": só posição, rotação em
 		// Y e escala uniforme, sem physics sync, sem stretch em X/Z) manda 5
@@ -1191,6 +1207,29 @@ namespace FiscionX {
 			bool isAffectedByLight = true;
 			bool castsShadows = true;
 			bool acceptsShadows = true;
+
+			// FEATURE: liga/desliga SSAO e SSR individualmente por instância. SSAO_ENABLED
+			// e SSR_ENABLED (Core) continuam controlando o passe inteiro; essas flags aqui
+			// só têm efeito enquanto o passe global correspondente estiver ligado, e servem
+			// pra excluir uma instância específica do efeito (ex.: view model da arma preso
+			// na câmera não deve receber SSR; grama não deve receber SSAO).
+			//
+			// Implementação: o `fragment` shader empacota as duas flags no canal g de
+			// mainMetallicBuffer (bit0 = enableSSAO, bit1 = enableSSR) — ver MetallicOut em
+			// FiscionShaders.h. ssaoFragment/ssrFragment leem essa máscara no pixel de
+			// ORIGEM (a superfície que RECEBERIA o efeito) e pulam o efeito quando o bit
+			// correspondente está desligado — igual a acceptsShadows, isso não impede a
+			// instância de OCLUIR (SSAO) ou APARECER refletida (SSR) em outras superfícies,
+			// só de recebê-los ela mesma.
+			//
+			// Restrição: no caminho instanciado (drawSubMeshInstanced/Compact e o
+			// glMultiDrawElementsIndirect de useGPUCulling), essas flags são uniforms
+			// constantes por batch/Model — instâncias só se agrupam no mesmo desenho
+			// (drawInstancedGPUCulled em particular) quando TODAS concordam em
+			// enableSSAO/enableSSR, exatamente como já acontecia com
+			// isAffectedByLight/acceptsShadows.
+			bool enableSSAO = true;
+			bool enableSSR = true;
 
 			// FIX: estava "false" por padrão e nada no código jamais setava essa flag
 			// como true (nem no loader, nem no main.cpp) — ou seja, o frustum culling
@@ -1306,7 +1345,36 @@ namespace FiscionX {
 			void updateOcclusion(const glm::mat4& viewProj);
 			void syncTransformWithBody(Physics::Rigidbody* body, Vector3 positionOffset, Vector3 rotationOffset);
 			void playAnim(const std::string& name, bool repeat, const std::string& next = "");
+
+			// update() is kept as-is for API compatibility: it does the full
+			// poll-occlusion / compute-animation / upload-skin-UBO sequence
+			// synchronously, on whichever thread calls it (must be the GL thread,
+			// since it touches occlusionQueries and uboSkin directly).
 			void update(float deltaTime, bool isSkinned);
+
+			// --- split-out pieces used by Model::update() to fan work out across
+			// FiscionX::Core::WorkerPool while keeping every gl* call on the GL thread ---
+
+			// GL-ONLY. Polls this instance's occlusion queries. Must run on the GL thread.
+			void pollOcclusion();
+
+			// PURE CPU. Advances currentAnim.time, samples the animation channels and
+			// walks the node hierarchy into nodeGlobalTransforms/finalBoneMatrices.
+			// Touches no GL state — safe to run on a FiscionX::Core::WorkerPool worker
+			// thread. Returns true if finalBoneMatrices was (re)computed and needs to be
+			// uploaded to uboSkin via uploadSkinUBO() afterwards.
+			//
+			// EXCEPTION: instances that are currently driving the camera
+			// (cameraNodeIndex >= 0 with an active anim) write into the single shared
+			// FiscionX::Core::Camera — Model::update() keeps those on the calling (GL)
+			// thread instead of handing them to the pool, to avoid a data race on
+			// Core::Camera when more than one instance could drive it in the same frame.
+			bool computeAnimation(float deltaTime, bool isSkinned);
+
+			// GL-ONLY. Uploads finalBoneMatrices computed by computeAnimation() into
+			// uboSkin. Must run on the GL thread, after computeAnimation() has finished
+			// for this instance.
+			void uploadSkinUBO();
 		};
 		std::vector<Instance> instances;
 
@@ -1433,6 +1501,7 @@ namespace FiscionX {
 			GLint environmentStrength = -1, environmentSkyColor = -1, environmentGroundColor = -1;
 			GLint reflectionsStrength = -1;
 			GLint isAffectedByLight = -1, acceptsShadows = -1;
+			GLint enableSSAO = -1, enableSSR = -1;
 			GLint alpha = -1, numLights = -1;
 			GLint hasNormalMap = -1;
 			GLint hdrExposure = -1;
@@ -1593,9 +1662,10 @@ namespace FiscionX {
 		// camera color pass (never depthPass) of STATIC (non-skinned) models.
 		// `instanceData` is interleaved per instance as 16 floats (model, column-
 		// major) + 9 floats (normalMatrix, column-major) = 25 floats/instance.
-		// isAffectedByLight/acceptsShadows are still plain uniforms (unchanged
-		// fragment shader), so callers must only batch together instances that
-		// share both flags — see the grouping in Model::draw().
+		// isAffectedByLight/acceptsShadows/enableSSAO/enableSSR are still plain
+		// uniforms (unchanged fragment shader), so callers must only batch
+		// together instances that share all four flags — see the grouping in
+		// Model::draw().
 		// NOTE: `instanceVBORef` must be the instance buffer handle that actually
 		// belongs to `vao` — SubMesh::instanceVBO when `vao == mesh.vao`, or the
 		// matching SubMesh::LODLevel::instanceVBO when `vao` is a LOD tier's VAO.
@@ -1615,7 +1685,9 @@ namespace FiscionX {
 			const std::vector<float>& instanceData,
 			GLsizei instanceCount,
 			bool isAffectedByLight,
-			bool acceptsShadows
+			bool acceptsShadows,
+			bool enableSSAO,
+			bool enableSSR
 		);
 
 		// FEATURE: (re)uploads `data` into the instance stream buffer owned by
@@ -1647,7 +1719,9 @@ namespace FiscionX {
 			const std::vector<float>& instanceData,
 			GLsizei instanceCount,
 			bool isAffectedByLight,
-			bool acceptsShadows
+			bool acceptsShadows,
+			bool enableSSAO,
+			bool enableSSR
 		);
 
 		// FEATURE: (re)uploads `data` (5 floats/instance: position.xyz, rotationY,
@@ -1683,60 +1757,73 @@ namespace FiscionX {
 		);
 
 		void unload();
-		// FiscionCore.h — dentro de Model
+
+		// Lightweight per-instance spawn parameters used by the bulk addInstances()
+		// API below — kept separate from Instance itself since addInstances() needs
+		// to accept N of these BEFORE any Instance exists yet.
+		struct InstanceDesc {
+			FiscionX::Vector3 position;
+			FiscionX::Vector3 rotation;
+			FiscionX::Vector3 scale;
+		};
+
+		// MULTITHREADING: bulk creation. Reserves+resizes `instances` for the whole
+		// batch UP FRONT (a single allocation, done on the calling thread), then fans
+		// the pure-CPU per-instance setup — deep copies of nodes/skins/animation maps/
+		// occlusion buffers, see the old single-instance comment below for why each
+		// instance needs its own copy — out across Core::WorkerPool::ParallelFor,
+		// exactly like Model::update() fans out computeAnimation(). Each worker only
+		// ever writes its own disjoint instances[base+i] slot, so there's no locking
+		// and no data race, and because the vector was already sized to its final
+		// count before any worker touches it, nothing here can trigger a reallocation
+		// — every Instance* handed out at the end (and any OLDER Instance* obtained
+		// from a previous call) stays valid.
+		//
+		// GL work (skin UBO allocation, skinned models only) can't be parallelized —
+		// OpenGL calls must stay on the GL thread — but IS batched into a single
+		// glGenBuffers(n, ...) call instead of one call per instance, and must only
+		// ever be invoked from the GL thread, same requirement the old single-instance
+		// addInstance() always had.
+		//
+		// Falls back to a plain sequential loop if Core::WorkerPool isn't up yet
+		// (e.g. called before Core::NewWindow) or for a single-element batch, where
+		// the thread-pool dispatch overhead isn't worth paying.
+		std::vector<Instance*> addInstances(const std::vector<InstanceDesc>& descs);
+
+		// Single-instance convenience wrapper around addInstances() — kept for API
+		// compatibility with every existing call site (trees, rocks, grass, props...).
 		inline Instance* addInstance(FiscionX::Vector3 position, FiscionX::Vector3 rotation, FiscionX::Vector3 scale) {
-			Instance inst;
-			inst.position = position;
-			inst.rotation = rotation;
-			inst.scale = scale;
-			inst.model = this;
-			inst.nodes = nodes;
-			inst.skins = skins;
-			inst.physicsSyncTransformMatrix = glm::mat4(1.0f);
-			inst.animTranslations = animTranslations;
-			inst.animRotations = animRotations;
-			inst.animScales = animScales;
-			inst.nodeGlobalTransforms = nodeGlobalTransforms;
-			inst.nodeParents = nodeParents;
-			inst.finalBoneMatrices = finalBoneMatrices;
-			inst.animations = animations;   // cada instância tem sua própria cópia
-			inst.boneTransforms = boneTransforms;
-			inst.occlusionQueries = occlusionQueries;
-			inst.isVisible = isVisible;
-			inst.cameraNodeIndex = cameraNodeIndex;   // FIX: propaga o nó de câmera para a instância
-
-			// Cada instância precisa de seu próprio UBO de skinning independente.
-			// Compartilhar o uboSkin do Model faz com que todas as instâncias
-			// usem os ossos da última a atualizar, quebrando a animação individual.
-			if (isSkinned) {
-				glGenBuffers(1, &inst.uboSkin);
-				glBindBuffer(GL_UNIFORM_BUFFER, inst.uboSkin);
-				std::vector<glm::mat4> identityMats(100, glm::mat4(1.0f));
-				glBufferData(GL_UNIFORM_BUFFER, sizeof(glm::mat4) * 100, identityMats.data(), GL_DYNAMIC_DRAW);
-				glBindBufferBase(GL_UNIFORM_BUFFER, 0, inst.uboSkin);
-			}
-			else {
-				inst.uboSkin = 0;
-			}
-
-			instances.push_back(std::move(inst));
-			// OPTIM: novo índice invalida o grid espacial (ver SpatialGrid acima) —
-			// reconstruído sob demanda na próxima chamada de draw().
-			spatialGrid.dirty = true;
-			// Same idea for the GPU culling raw-instance buffer (useGPUCulling) —
-			// rebuilt on demand in rebuildGPUCullingBuffersIfNeeded().
-			gpuBuffersDirty = true;
-			// FIX (bug crítico): antes retornava "&inst", o endereço da variável
-			// LOCAL da função — um ponteiro pra pilha que já é lixo assim que
-			// addInstance() retorna (push_back move o CONTEÚDO pro vetor, mas
-			// não muda o que "&inst" aponta). Todo Instance* devolvido por esta
-			// função (de qualquer prop: árvore, pedra, grama, etc.) nascia
-			// dangling. "Funcionava" só por sorte de a memória da pilha ainda
-			// não ter sido reescrita — até algo fazer aritmética de ponteiro
-			// com ele (ex: removeInstance), quando o resultado vira lixo.
-			return &instances.back();
+			std::vector<Instance*> result = addInstances({ InstanceDesc{ position, rotation, scale } });
+			return result.empty() ? nullptr : result[0];
 		}
 
+		// MULTITHREADING: bulk deletion. Removes every instance in `insts` (any order)
+		// using the same swap-and-pop-per-slot rule as the old single removeInstance()
+		// below, but converts every input pointer to an index and processes them in
+		// DESCENDING slot order first: a swap-and-pop at slot i only ever touches slot
+		// i and the current back() (both >= i), so processing highest-to-lowest
+		// guarantees no slot still waiting to be removed is ever disturbed by an
+		// earlier removal in the same batch — this is what makes the batch safe
+		// without re-deriving each index one call at a time.
+		//
+		// Every removed instance is MOVED OUT of `instances` (cheap) into a scratch
+		// vector instead of being torn down in place; their GL skin UBOs (skinned
+		// models only) are then freed with a SINGLE batched glDeleteBuffers(n, ...)
+		// call — the old single removeInstance() never freed these at all, which was
+		// a leak (see FIX below) — and finally the scratch vector, now holding no GL
+		// handles at all, is handed off to Core::WorkerPool to actually be destroyed
+		// (freeing its per-instance nodes/skins/animation maps) on a worker thread
+		// instead of paying for that deallocation on the GL thread this frame.
+		//
+		// Returns, for each entry of `insts` (same order, nullptr for anything not
+		// found), the Instance* that ended up displaced into its old slot — same
+		// contract as removeInstance() below, for callers (e.g. TerrainSystem) that
+		// hold long-lived Instance* into this Model and need to repoint them.
+		std::vector<Instance*> removeInstances(const std::vector<Instance*>& insts);
+
+		// Single-instance convenience wrapper around removeInstances() — kept for API
+		// compatibility with every existing call site.
+		//
 		// Remove "inst" do vetor com swap-and-pop (troca com o último elemento
 		// e dá pop_back) em vez de erase() no meio: erase() desloca TODOS os
 		// elementos depois do removido, invalidando os ponteiros que qualquer
@@ -1751,24 +1838,8 @@ namespace FiscionX {
 		// back() — ver TerrainSystem::RemoveGrassForChunk.
 		inline Instance* removeInstance(Instance* inst) {
 			if (!inst) return nullptr;
-			size_t idx = inst - instances.data();
-			if (idx >= instances.size()) return nullptr;
-
-			size_t lastIdx = instances.size() - 1;
-			bool displaced = (idx != lastIdx);
-			if (displaced) {
-				instances[idx] = std::move(instances[lastIdx]);
-			}
-			instances.pop_back();
-
-			// OPTIM: swap-and-pop just changed the index of whichever instance was
-			// at back() (if any), which the spatial grid (keyed by index into
-			// `instances`) has no cheap way to patch incrementally — rebuilt on the
-			// next draw() call instead. See SpatialGrid above.
-			spatialGrid.dirty = true;
-			gpuBuffersDirty = true;
-
-			return displaced ? &instances[idx] : nullptr;
+			std::vector<Instance*> result = removeInstances({ inst });
+			return result.empty() ? nullptr : result[0];
 		}
 
 		void draw(GLuint shader, const glm::mat4& lightSpaceMatrix, GLuint depthMap, bool depthPass, FiscionX::Mat4 view, FiscionX::Mat4 projection,
@@ -1789,9 +1860,236 @@ namespace FiscionX {
 		static bool GetMouseButtonPressed(int button);
 	};
 
+	class ThreadPool {
+	public:
+		// reservedThreads: number of hardware threads intentionally NOT turned into
+		// pool workers. Default is 1, reserved for the thread that owns the OpenGL
+		// context (the "main"/render thread) so it is never starved by the pool.
+		explicit ThreadPool(unsigned int reservedThreads = 1) {
+			unsigned int hw = std::thread::hardware_concurrency();
+			if (hw == 0) hw = 4; // conservative fallback if the platform can't tell us
+			unsigned int workerCount = (hw > reservedThreads) ? (hw - reservedThreads) : 1;
+			start(workerCount);
+		}
+
+		~ThreadPool() {
+			stop();
+		}
+
+		ThreadPool(const ThreadPool&) = delete;
+		ThreadPool& operator=(const ThreadPool&) = delete;
+
+		// Submits a task to whichever worker currently has the fewest pending tasks.
+		// Returns a std::future so the caller can optionally wait on / retrieve the
+		// result later. NEVER call GL functions from f.
+		template <class F, class... Args>
+		auto Submit(F&& f, Args&&... args) -> std::future<typename std::invoke_result<F, Args...>::type> {
+			using ReturnType = typename std::invoke_result<F, Args...>::type;
+
+			auto boundTask = std::make_shared<std::packaged_task<ReturnType()>>(
+				std::bind(std::forward<F>(f), std::forward<Args>(args)...));
+
+			std::future<ReturnType> result = boundTask->get_future();
+
+			size_t workerIndex = pickLeastBusyWorker();
+			Worker& w = *workers[workerIndex];
+			{
+				std::lock_guard<std::mutex> lock(w.queueMutex);
+				w.pendingCount.fetch_add(1, std::memory_order_relaxed);
+				w.tasks.emplace([boundTask]() { (*boundTask)(); });
+			}
+			w.cv.notify_one();
+			return result;
+		}
+
+		// Fire-and-forget submission (no future/allocation overhead of packaged_task).
+		void SubmitDetached(std::function<void()> task) {
+			size_t workerIndex = pickLeastBusyWorker();
+			Worker& w = *workers[workerIndex];
+			{
+				std::lock_guard<std::mutex> lock(w.queueMutex);
+				w.pendingCount.fetch_add(1, std::memory_order_relaxed);
+				w.tasks.emplace(std::move(task));
+			}
+			w.cv.notify_one();
+		}
+
+		// Splits [0, count) into contiguous chunks (at least minChunk items each,
+		// automatically resized so there are roughly WorkerCount() chunks), farms each
+		// chunk out to whichever worker is currently freest, and blocks the CALLING
+		// thread until every chunk has finished. Body signature: void(size_t begin, size_t end).
+		//
+		// This is the go-to helper for "update every instance/entity this frame" style
+		// work: call it from the GL thread, it returns once all CPU work is done and
+		// results are ready to be consumed/uploaded on the GL thread right after.
+		void ParallelFor(size_t count, size_t minChunk, const std::function<void(size_t begin, size_t end)>& body) {
+			if (count == 0) return;
+
+			size_t n = std::max<size_t>(1, workers.size());
+			size_t chunk = std::max<size_t>(minChunk, (count + n - 1) / n);
+
+			std::vector<std::future<void>> futures;
+			futures.reserve((count + chunk - 1) / chunk);
+
+			for (size_t start = 0; start < count; start += chunk) {
+				size_t end = std::min(count, start + chunk);
+				futures.push_back(Submit([&body, start, end]() { body(start, end); }));
+			}
+			for (auto& f : futures) f.get();
+		}
+
+		size_t WorkerCount() const { return workers.size(); }
+
+		// Snapshot of current pending-task counts per worker, for debugging/telemetry.
+		std::vector<int> PendingCounts() const {
+			std::vector<int> counts;
+			counts.reserve(workers.size());
+			for (auto& w : workers) counts.push_back(w->pendingCount.load(std::memory_order_relaxed));
+			return counts;
+		}
+
+	private:
+		struct Worker {
+			std::thread thread;
+			std::queue<std::function<void()>> tasks;
+			std::mutex queueMutex;
+			std::condition_variable cv;
+			std::atomic<int> pendingCount{ 0 };
+			std::atomic<bool> stopFlag{ false };
+		};
+
+		std::vector<std::unique_ptr<Worker>> workers;
+
+		void start(unsigned int count) {
+			workers.reserve(count);
+			for (unsigned int i = 0; i < count; ++i) {
+				workers.push_back(std::make_unique<Worker>());
+				Worker* w = workers.back().get();
+				w->thread = std::thread([w]() {
+					for (;;) {
+						std::function<void()> task;
+						{
+							std::unique_lock<std::mutex> lock(w->queueMutex);
+							w->cv.wait(lock, [w]() { return w->stopFlag.load(std::memory_order_relaxed) || !w->tasks.empty(); });
+							if (w->stopFlag.load(std::memory_order_relaxed) && w->tasks.empty()) return;
+							task = std::move(w->tasks.front());
+							w->tasks.pop();
+						}
+						task();
+						w->pendingCount.fetch_sub(1, std::memory_order_relaxed);
+					}
+					});
+			}
+		}
+
+		// "Automatic allocation to the freest thread": scans every worker's atomic
+		// pending-task counter (no locking needed) and returns the index of the
+		// smallest one. O(numWorkers), which is fine since numWorkers is small
+		// (hardware_concurrency - reservedThreads).
+		size_t pickLeastBusyWorker() const {
+			size_t best = 0;
+			int bestLoad = workers[0]->pendingCount.load(std::memory_order_relaxed);
+			for (size_t i = 1; i < workers.size(); ++i) {
+				int load = workers[i]->pendingCount.load(std::memory_order_relaxed);
+				if (load < bestLoad) {
+					bestLoad = load;
+					best = i;
+				}
+			}
+			return best;
+		}
+
+		void stop() {
+			for (auto& w : workers) w->stopFlag.store(true, std::memory_order_relaxed);
+			for (auto& w : workers) w->cv.notify_all();
+			for (auto& w : workers) if (w->thread.joinable()) w->thread.join();
+		}
+	};
+
+	// Queue of GL-only callbacks produced by worker threads (or anywhere), drained
+	// exclusively by the thread that owns the OpenGL context. This is the ONLY safe
+	// way for background work to eventually touch the GPU: instead of calling GL
+	// directly, a worker pushes a closure here and the GL thread runs it later
+	// (Core::FlushGLThreadTasks(), called once per frame from Core::ClockTick()).
+	class MainThreadQueue {
+	public:
+		void Push(std::function<void()> task) {
+			std::lock_guard<std::mutex> lock(mutex);
+			tasks.push(std::move(task));
+		}
+
+		// Must only ever be called from the GL thread. maxPerFrame == 0 drains
+		// everything currently queued; a positive value caps how many run this call,
+		// so a burst of background completions (e.g. many models finishing loading
+		// the same frame) can be spread across a few frames instead of spiking frame
+		// time.
+		void Flush(size_t maxPerFrame = 0) {
+			std::queue<std::function<void()>> local;
+			{
+				std::lock_guard<std::mutex> lock(mutex);
+				if (maxPerFrame == 0 || tasks.size() <= maxPerFrame) {
+					std::swap(local, tasks);
+				}
+				else {
+					for (size_t i = 0; i < maxPerFrame; ++i) {
+						local.push(std::move(tasks.front()));
+						tasks.pop();
+					}
+				}
+			}
+			while (!local.empty()) {
+				local.front()();
+				local.pop();
+			}
+		}
+
+		bool Empty() const {
+			std::lock_guard<std::mutex> lock(mutex);
+			return tasks.empty();
+		}
+
+	private:
+		std::queue<std::function<void()>> tasks;
+		mutable std::mutex mutex;
+	};
+
 	struct Core {
 		static GLFWwindow* Window;
 		static int SCREEN_WIDTH, SCREEN_HEIGHT;
+
+		// --- MULTITHREADING ---
+		// Pool of background worker threads (hardware_concurrency() - 1 by default,
+		// i.e. every core EXCEPT the one running this GL/main thread). Created in
+		// Core::InitThreadPool() (called from NewWindow) and destroyed in
+		// Core::ShutdownThreadPool() (called from Terminate()).
+		//
+		// The GL thread (this one) must NEVER call any gl*/glfw* function from inside
+		// a task submitted to WorkerPool. Anything that ends up needing the GPU should
+		// instead be pushed onto GLQueue via Core::RunOnGLThread(), which is drained
+		// once per frame, only on the GL thread, by Core::FlushGLThreadTasks()
+		// (called from ClockTick()).
+		static FiscionX::ThreadPool* WorkerPool;
+		static FiscionX::MainThreadQueue GLQueue;
+
+		static void InitThreadPool(unsigned int reservedThreadsForGL = 1);
+		static void ShutdownThreadPool();
+
+		// Convenience wrapper around WorkerPool->Submit — automatically lands on
+		// whichever worker thread currently has the fewest pending tasks. f must not
+		// touch OpenGL; use RunOnGLThread for that part of the work instead.
+		template <class F, class... Args>
+		static auto SubmitTask(F&& f, Args&&... args) -> std::future<typename std::invoke_result<F, Args...>::type> {
+			return WorkerPool->Submit(std::forward<F>(f), std::forward<Args>(args)...);
+		}
+
+		// Queues a callback to run later on the GL thread (inside FlushGLThreadTasks).
+		// Safe to call from any thread, including worker threads finishing background
+		// work that needs to upload a buffer/texture/etc.
+		static void RunOnGLThread(std::function<void()> task);
+
+		// Drains GLQueue on the calling thread. Only ever call this from the thread
+		// that owns the OpenGL context (normally once per frame, from ClockTick()).
+		static void FlushGLThreadTasks(size_t maxPerFrame = 0);
 
 		static GLuint depthShaderStatic;
 		static GLuint depthShaderSkinned;
@@ -1834,7 +2132,10 @@ namespace FiscionX {
 		static GLuint mainFBO;
 		static GLuint mainColorBuffer;
 		static GLuint mainNormalRoughBuffer; // RGBA16F: rgb = view-space normal, a = roughness (opaque pass only)
-		static GLuint mainMetallicBuffer;    // R16F: metallic (opaque pass only) — usado pelo SSR composite p/ F0 físico
+		static GLuint mainMetallicBuffer;    // RG16F: r = metallic (opaque pass only, usado pelo SSR composite p/ F0
+		// físico); g = máscara de efeitos por instância escrita pelo `fragment`
+		// shader (bit0 = enableSSAO, bit1 = enableSSR), lida por ssaoFragment/
+		// ssrFragment pra mascarar SSAO/SSR por instância.
 		static GLuint mainDepthBuffer;
 		static GLuint screenQuadVAO, screenQuadVBO;
 		static GLuint godRaysShader;
@@ -1887,6 +2188,40 @@ namespace FiscionX {
 		static float fogStart;
 		static float fogEnd;
 		static int fogType;
+
+		//---- VOLUMETRIC FOG ----
+		// Screen-space raymarched fog (separate from the cheap analytic `fog*` block above,
+		// which is a per-pixel exp/exp2 fade baked into the forward `fragment` shader).
+		// Marches the view ray per-pixel using the depth buffer, accumulates density from a
+		// height-based falloff (+ optional animated noise for turbulence) and integrates
+		// in-scattered light from the directional light using the same cascaded shadow map
+		// as the main pass, so shafts of light appear where the sun isn't shadowed. Follows
+		// the same 3-stage architecture as SSR (raw pass -> bilateral blur -> composite FBO,
+		// blitted back into mainColorBuffer) — see ssrFBO/ssrBlurFBO/ssrCompositeFBO above.
+		static GLuint volumetricFogFBO;
+		static GLuint volumetricFogColorBuffer;       // rgba16f: rgb = in-scattered light, a = transmittance (1 = no fog)
+		static GLuint volumetricFogBlurFBO;
+		static GLuint volumetricFogBlurColorBuffer;    // depth-aware blurred version of the above
+		static GLuint volumetricFogCompositeFBO;
+		static GLuint volumetricFogCompositeColorBuffer; // scene * transmittance + inscattering, blitted into mainColorBuffer
+		static GLuint volumetricFogShader;
+		static GLuint volumetricFogBlurShader;
+		static GLuint volumetricFogCompositeShader;
+
+		static bool  VOLUMETRIC_FOG_ENABLED;       // liga/desliga o passe inteiro (incl. blur/composite)
+		static Vector3 VOLUMETRIC_FOG_COLOR;       // cor de espalhamento (tint) da neblina volumétrica
+		static float VOLUMETRIC_FOG_DENSITY;       // densidade base (coeficiente de extinção, unidades^-1)
+		static float VOLUMETRIC_FOG_HEIGHT_FALLOFF;// quanto a densidade cai por unidade de altura acima de VOLUMETRIC_FOG_HEIGHT_START (0 = fog homogênea, sem variação por altura)
+		static float VOLUMETRIC_FOG_HEIGHT_START;  // altura (world-space Y) onde a densidade é máxima; acima disso, decai por VOLUMETRIC_FOG_HEIGHT_FALLOFF
+		static float VOLUMETRIC_FOG_ANISOTROPY;    // parâmetro "g" da fase de Henyey-Greenstein, -1..1 (0 = espalhamento isotrópico; >0 = forward scattering, favorece shafts olhando na direção do sol)
+		static float VOLUMETRIC_FOG_SCATTERING;    // multiplicador de intensidade da luz espalhada (in-scattering) vinda da luz direcional
+		static float VOLUMETRIC_FOG_AMBIENT;       // contribuição ambiente mínima (luz espalhada que não depende de estar na sombra ou não)
+		static float VOLUMETRIC_FOG_MAX_DISTANCE;  // distância máxima (view-space) que o raymarch percorre
+		static int   VOLUMETRIC_FOG_STEPS;         // número de amostras do raymarch principal
+		static float VOLUMETRIC_FOG_NOISE_SCALE;   // escala espacial do ruído de turbulência (0 = desliga o ruído)
+		static float VOLUMETRIC_FOG_NOISE_SPEED;   // velocidade com que o ruído "flui" (vento), em unidades/seg
+		static float VOLUMETRIC_FOG_NOISE_INTENSITY; // o quanto o ruído modula a densidade (0..1)
+		static float VOLUMETRIC_FOG_BLUR_RADIUS;   // raio (em pixels) do blur bilateral pós-march
 
 		static float sunDiskSize;
 		static float sunHaloSize;
