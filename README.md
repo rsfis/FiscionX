@@ -109,6 +109,21 @@ int main() {
     FiscionX::Core::fogEnd = 120.0f;
     FiscionX::Core::fogType = 2;
 
+    FiscionX::Core::VOLUMETRIC_FOG_ENABLED = true;
+    FiscionX::Core::VOLUMETRIC_FOG_COLOR = FiscionX::Vector3(0.92f, 1.0f, 1.0f);
+    FiscionX::Core::VOLUMETRIC_FOG_DENSITY = 0.005f;
+    FiscionX::Core::VOLUMETRIC_FOG_HEIGHT_START = 2.9f;
+    FiscionX::Core::VOLUMETRIC_FOG_HEIGHT_FALLOFF = 0.29f;
+    FiscionX::Core::VOLUMETRIC_FOG_ANISOTROPY = 0.081f;
+    FiscionX::Core::VOLUMETRIC_FOG_SCATTERING = 1.87f;
+    FiscionX::Core::VOLUMETRIC_FOG_AMBIENT = 0.015f;
+    FiscionX::Core::VOLUMETRIC_FOG_MAX_DISTANCE = 180.0f;
+    FiscionX::Core::VOLUMETRIC_FOG_STEPS = 40;
+    FiscionX::Core::VOLUMETRIC_FOG_NOISE_SCALE = 0.05f;
+    FiscionX::Core::VOLUMETRIC_FOG_NOISE_SPEED = 0.4f;
+    FiscionX::Core::VOLUMETRIC_FOG_NOISE_INTENSITY = 0.35f;
+    FiscionX::Core::VOLUMETRIC_FOG_BLUR_RADIUS = 3.0f;
+
     dirLight = new FiscionX::Light();
     dirLight->type = FiscionX::LIGHT_DIRECTIONAL;
     dirLight->yaw = 0;
